@@ -18,6 +18,7 @@ from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, News
 from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
+from app.infrastructure.agents.tools import build_advisor_grounding_tools
 from app.infrastructure.embeddings import OpenAIEmbeddings
 from app.infrastructure.llm import OpenAIProvider, build_chat_model
 from app.infrastructure.marketdata import (
@@ -247,6 +248,14 @@ class Container:
         return self._agent_runner
 
     def _get_chat_model(self) -> BaseChatModel:
+        """Build/cache the LangChain chat model used ONLY by the chat/SSE agent graph
+        below. The Analyst signal / Advisor briefing pipelines do NOT use this — they
+        depend on the `LLMProvider` port (`get_llm_provider()`) instead, per the
+        hexagonal rule that `application/` never imports a vendor/framework package
+        directly (see `application/signals/use_cases/generate_signal.py`'s docstring).
+        Kept private for that reason: nothing outside `_get_chat_graph` should reach for
+        a raw `BaseChatModel`.
+        """
         if self._chat_model is None:
             self._chat_model = build_chat_model(self._settings)
         return self._chat_model
@@ -254,7 +263,15 @@ class Container:
     def _get_chat_graph(self) -> Any:
         if self._chat_graph is None:
             checkpointer = self.get_agent_memory().get_checkpointer()
-            self._chat_graph = build_supervisor_graph(self._get_chat_model(), checkpointer)
+            # Signal-only: see `build_advisor_grounding_tools`'s docstring for why
+            # briefing/watchlist grounding tools were removed (unauthenticated chat
+            # route + no per-user ownership check would leak cross-tenant data).
+            advisor_tools = build_advisor_grounding_tools(
+                signal_repository=self.get_signal_repository()
+            )
+            self._chat_graph = build_supervisor_graph(
+                self._get_chat_model(), checkpointer, advisor_tools=advisor_tools
+            )
         return self._chat_graph
 
 
