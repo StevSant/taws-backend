@@ -9,8 +9,9 @@ class ConsequenceNodeDraft(BaseModel):
     """
 
     label: str = Field(
+        min_length=1,
         description=(
             "Short label for this state/event in the causal chain, e.g. "
             "'Fed raises rates 50bps' or 'Mortgage demand falls'."
-        )
+        ),
     )

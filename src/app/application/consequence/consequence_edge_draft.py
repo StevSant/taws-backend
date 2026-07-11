@@ -18,10 +18,11 @@ class ConsequenceEdgeDraft(BaseModel):
         ge=0, description="0-based index into `nodes` for the effect side of this edge."
     )
     mechanism: str = Field(
+        min_length=1,
         description=(
             "One or two sentences explaining *why* the source plausibly leads to the "
             "target. Never invent facts outside general causal reasoning."
-        )
+        ),
     )
     confidence: float = Field(
         ge=0.0, le=1.0, description="Confidence this specific edge holds, from 0.0 to 1.0."

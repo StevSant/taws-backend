@@ -20,14 +20,14 @@ class ConsequenceChainExtraction(BaseModel):
     """
 
     nodes: list[ConsequenceNodeDraft] = Field(
-        min_length=2,
+        min_length=3,
         description=(
             "Ordered causal states from the root event/instrument to its downstream "
             "effects, e.g. X, Y, Z for a second-order chain."
         ),
     )
     edges: list[ConsequenceEdgeDraft] = Field(
-        min_length=1,
+        min_length=2,
         description=(
             "Causal edges connecting the nodes above, each with its own mechanism and confidence."
         ),
