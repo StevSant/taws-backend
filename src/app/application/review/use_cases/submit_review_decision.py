@@ -15,14 +15,21 @@ class SubmitReviewDecision:
     `entity_type`, `entity_id`, `user_id`, `decision`, and `justification`, it:
 
     1. Verifies the target entity exists (via `get()` on the right repository) —
-       raises `ReviewTargetNotFoundError` if not.
+       raises `ReviewTargetNotFoundError` if not, without touching
+       `list_review_states()` at all for a nonexistent entity.
     2. Fetches the entity's existing review states (via `list_review_states()`) to
        determine its current latest decision, if any.
     3. Validates the requested decision is a legal transition from that latest
        decision, per `review_transition_policy.assert_transition_allowed` — raises
-       `IllegalReviewTransitionError` if not.
+       `IllegalReviewTransitionError` if not. This is a fast, friendly check, not a
+       guarantee: it can't see a concurrent request's not-yet-committed insert.
     4. Persists a brand-new `ReviewState` row (via `save_review_state()`) — review
-       states are append-only, so this never mutates a prior row.
+       states are append-only, so this never mutates a prior row. The insert itself
+       is guarded again, atomically, by the `review_states_enforce_transition` DB
+       trigger (`migrations/versions/0002_review_states_transition_trigger.py`), which
+       closes the race between step 3's read and this step's write; the adapter
+       translates that trigger's rejection into the same `IllegalReviewTransitionError`
+       raised by step 3, so callers only ever need to catch one error type.
 
     Escalation is just `ReviewDecision.ESCALATED` on this same `ReviewState` row —
     there is no separate alert/task record and no trade/execution side effect.
@@ -44,13 +51,16 @@ class SubmitReviewDecision:
     ) -> ReviewState:
         if entity_type is ReviewedEntityType.SIGNAL:
             entity_exists = await self._signal_repository.get(entity_id) is not None
-            existing_states = await self._signal_repository.list_review_states(entity_id)
         else:
             entity_exists = await self._briefing_repository.get(entity_id) is not None
-            existing_states = await self._briefing_repository.list_review_states(entity_id)
 
         if not entity_exists:
             raise ReviewTargetNotFoundError(entity_type=entity_type, entity_id=entity_id)
+
+        if entity_type is ReviewedEntityType.SIGNAL:
+            existing_states = await self._signal_repository.list_review_states(entity_id)
+        else:
+            existing_states = await self._briefing_repository.list_review_states(entity_id)
 
         current_decision = existing_states[-1].decision if existing_states else None
         assert_transition_allowed(current=current_decision, requested=decision)

@@ -8,9 +8,10 @@ from app.api.v1.dependencies import (
     require_current_user,
 )
 from app.api.v1.schemas import CurrentUser, ReviewDecisionRequest, ReviewStateResponse
-from app.application.review import IllegalReviewTransitionError, ReviewTargetNotFoundError
+from app.application.review import ReviewTargetNotFoundError
 from app.application.review.use_cases import SubmitReviewDecision
 from app.domain.briefing.ports import BriefingRepository
+from app.domain.review import IllegalReviewTransitionError
 from app.domain.review.entities import ReviewedEntityType, ReviewState
 from app.domain.signals.ports import SignalRepository
 
@@ -27,9 +28,11 @@ async def _submit_review(
     """Run `SubmitReviewDecision`, translating its domain errors to HTTP responses.
 
     `404` when the entity doesn't exist, `409` when the requested decision isn't a
-    legal transition from the entity's current decision (see
-    `application/review/review_transition_policy.py`). `user_id` always comes from
-    the authenticated `user`, never from the request body.
+    legal transition from the entity's current decision — whether caught by the
+    fast app-layer check (`application/review/review_transition_policy.py`) or by
+    the DB-level backstop trigger for a concurrent-request race (migration `0002`);
+    both surface as the same `IllegalReviewTransitionError`. `user_id` always comes
+    from the authenticated `user`, never from the request body.
     """
     try:
         return await use_case.execute(

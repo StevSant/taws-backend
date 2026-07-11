@@ -1,6 +1,4 @@
-from app.application.review.illegal_review_transition_error import (
-    IllegalReviewTransitionError,
-)
+from app.domain.review import IllegalReviewTransitionError
 from app.domain.review.entities import ReviewDecision
 
 _TERMINAL_DECISIONS = frozenset({ReviewDecision.REVIEWED, ReviewDecision.DISCARDED})
@@ -31,6 +29,13 @@ def assert_transition_allowed(current: ReviewDecision | None, requested: ReviewD
     `created_at`), or `None` if it has never been reviewed. Every legal transition
     still inserts a brand-new `ReviewState` row — this workflow never mutates a prior
     row, only decides whether a new one may be added.
+
+    This check alone doesn't close a check-then-insert race between two concurrent
+    requests on the same entity — it's a fast, friendly error path for the common
+    (non-racing) case. The `review_states_enforce_transition` Postgres trigger
+    (`migrations/versions/0002_review_states_transition_trigger.py`) enforces this
+    same rule again, atomically, as the correctness backstop; see
+    `IllegalReviewTransitionError`'s docstring.
     """
     if current is None:
         return
