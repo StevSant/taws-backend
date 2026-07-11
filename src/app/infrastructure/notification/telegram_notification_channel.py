@@ -1,6 +1,6 @@
 import logging
 
-from app.domain.compliance.disclaimer import NOT_PERSONALIZED_ADVICE_DISCLAIMER
+from app.domain.compliance import NOT_PERSONALIZED_ADVICE_DISCLAIMER
 from app.domain.notification.entities import Alert
 from app.domain.notification.ports import NotificationChannel
 from app.domain.telegram.ports import TelegramLinkRepository, TelegramMessenger
