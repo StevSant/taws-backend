@@ -247,10 +247,14 @@ class Container:
             self._agent_runner = LangGraphAgentRunner(graph=self._get_chat_graph())
         return self._agent_runner
 
-    def get_chat_model(self) -> BaseChatModel:
-        """Return the shared LangChain chat model (public: also used by the batch/structured
-        Analyst signal and Advisor briefing pipelines outside the chat graph, not just
-        `_get_chat_graph` below — see `api/v1/dependencies/get_chat_model.py`).
+    def _get_chat_model(self) -> BaseChatModel:
+        """Build/cache the LangChain chat model used ONLY by the chat/SSE agent graph
+        below. The Analyst signal / Advisor briefing pipelines do NOT use this — they
+        depend on the `LLMProvider` port (`get_llm_provider()`) instead, per the
+        hexagonal rule that `application/` never imports a vendor/framework package
+        directly (see `application/signals/use_cases/generate_signal.py`'s docstring).
+        Kept private for that reason: nothing outside `_get_chat_graph` should reach for
+        a raw `BaseChatModel`.
         """
         if self._chat_model is None:
             self._chat_model = build_chat_model(self._settings)
@@ -266,7 +270,7 @@ class Container:
                 signal_repository=self.get_signal_repository()
             )
             self._chat_graph = build_supervisor_graph(
-                self.get_chat_model(), checkpointer, advisor_tools=advisor_tools
+                self._get_chat_model(), checkpointer, advisor_tools=advisor_tools
             )
         return self._chat_graph
 

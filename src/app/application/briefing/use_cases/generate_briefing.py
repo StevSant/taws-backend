@@ -1,9 +1,8 @@
 import uuid
 
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
-
 from app.application.briefing.empty_watchlist_error import EmptyWatchlistError
+from app.domain.agents.entities import Message, MessageRole
+from app.domain.agents.ports import LLMProvider
 from app.domain.briefing.entities import Briefing
 from app.domain.briefing.ports import BriefingRepository
 from app.domain.compliance import NOT_PERSONALIZED_ADVICE_DISCLAIMER
@@ -45,6 +44,10 @@ class GenerateBriefing:
     instead of asking the model to write something with zero grounding data. That keeps the
     "grounded, not free-floating" acceptance criterion true even for a brand-new watchlist,
     and means the model is never invoked without real signal context to ground it in.
+
+    Depends on the `LLMProvider` port (not a LangChain `BaseChatModel` directly) — same
+    `backend/CLAUDE.md` hexagonal rule as `GenerateSignal`; see that use case's docstring
+    for the review finding that corrected an earlier `langchain_core` import here.
     """
 
     def __init__(
@@ -52,12 +55,12 @@ class GenerateBriefing:
         watchlist_repository: WatchlistRepository,
         signal_repository: SignalRepository,
         briefing_repository: BriefingRepository,
-        model: BaseChatModel,
+        llm_provider: LLMProvider,
     ) -> None:
         self._watchlist_repository = watchlist_repository
         self._signal_repository = signal_repository
         self._briefing_repository = briefing_repository
-        self._model = model
+        self._llm_provider = llm_provider
 
     async def execute(self, watchlist_id: str) -> Briefing:
         items = await self._watchlist_repository.list_items(watchlist_id)
@@ -91,13 +94,12 @@ class GenerateBriefing:
         return signals[:_MAX_SIGNALS_IN_CONTEXT]
 
     async def _compose_summary(self, signals: list[Signal]) -> str:
-        response = await self._model.ainvoke(
+        return await self._llm_provider.complete(
             [
-                SystemMessage(content=_BRIEFING_SYSTEM_PROMPT),
-                HumanMessage(content=_format_signal_context(signals)),
+                Message(role=MessageRole.SYSTEM, content=_BRIEFING_SYSTEM_PROMPT),
+                Message(role=MessageRole.USER, content=_format_signal_context(signals)),
             ]
         )
-        return str(response.content)
 
 
 def _format_signal_context(signals: list[Signal]) -> str:

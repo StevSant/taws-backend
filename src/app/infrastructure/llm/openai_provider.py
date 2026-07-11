@@ -1,8 +1,10 @@
+import json
 from collections.abc import AsyncIterator
-from typing import cast
+from typing import Any, cast
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
+from openai.types.shared_params import ResponseFormatJSONSchema
 
 from app.domain.agents.entities import Message
 from app.domain.agents.ports import LLMProvider
@@ -11,6 +13,10 @@ _NO_KEY_MESSAGE = (
     "[OpenAIProvider] No OPENAI_API_KEY configured — this is a placeholder response "
     "so the chat stream keeps working without a real key."
 )
+_NO_KEY_STRUCTURED_ERROR = (
+    "[OpenAIProvider] No OPENAI_API_KEY configured — structured output unavailable."
+)
+_EMPTY_STRUCTURED_RESPONSE_ERROR = "[OpenAIProvider] Structured output response had no content."
 
 
 def _to_openai_messages(messages: list[Message]) -> list[ChatCompletionMessageParam]:
@@ -57,3 +63,26 @@ class OpenAIProvider(LLMProvider):
             delta = chunk.choices[0].delta.content
             if delta:
                 yield delta
+
+    async def complete_structured(
+        self, messages: list[Message], schema: dict[str, Any], schema_name: str
+    ) -> dict[str, Any]:
+        if self._client is None:
+            raise RuntimeError(_NO_KEY_STRUCTURED_ERROR)
+
+        response_format = cast(
+            ResponseFormatJSONSchema,
+            {
+                "type": "json_schema",
+                "json_schema": {"name": schema_name, "schema": schema, "strict": False},
+            },
+        )
+        response = await self._client.chat.completions.create(
+            model=self._model,
+            messages=_to_openai_messages(messages),
+            response_format=response_format,
+        )
+        content = response.choices[0].message.content
+        if not content:
+            raise RuntimeError(_EMPTY_STRUCTURED_RESPONSE_ERROR)
+        return cast(dict[str, Any], json.loads(content))

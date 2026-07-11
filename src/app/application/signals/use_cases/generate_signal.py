@@ -1,16 +1,17 @@
 import uuid
 
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
-
 from app.application.signals.insufficient_evidence_error import InsufficientEvidenceError
 from app.application.signals.signal_classification import SignalClassification
 from app.application.signals.unknown_instrument_error import UnknownInstrumentError
+from app.domain.agents.entities import Message, MessageRole
+from app.domain.agents.ports import LLMProvider
 from app.domain.compliance import NOT_PERSONALIZED_ADVICE_DISCLAIMER
 from app.domain.market.entities import Instrument, NewsItem
 from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, NewsProvider
 from app.domain.signals.entities import ImpactClass, Signal, SignalEvidence
 from app.domain.signals.ports import SignalRepository
+
+_CLASSIFICATION_SCHEMA_NAME = "signal_classification"
 
 # HU1 acceptance criterion: "≥2 news sources with source + date attached to each signal".
 _MIN_DISTINCT_SOURCES = 2
@@ -38,12 +39,19 @@ class GenerateSignal:
     events) — that contract doesn't fit a batch pipeline that takes one instrument symbol and
     returns one persisted structured entity. Modeling this instead as a plain application-layer
     use case (constructor-injected with `NewsProvider`, `MarketDataProvider`,
-    `InstrumentUniverse`, `SignalRepository`, and a LangChain `BaseChatModel` from
-    `infrastructure/llm/chat_model_factory.build_chat_model`) keeps `AgentRunner`'s contract
-    intact for the chat/SSE layer, follows "one port, one responsibility", and can be upgraded to
-    a LangGraph subgraph later behind this same `execute(instrument_symbol)` signature without
-    forcing every future batch pipeline through the streaming contract. See issue #2's design
-    guidance for the full tradeoff discussion.
+    `InstrumentUniverse`, `SignalRepository`, and the `LLMProvider` port) keeps `AgentRunner`'s
+    contract intact for the chat/SSE layer, follows "one port, one responsibility", and can be
+    upgraded to a LangGraph subgraph later behind this same `execute(instrument_symbol)`
+    signature without forcing every future batch pipeline through the streaming contract. See
+    issue #2's design guidance for the full tradeoff discussion.
+
+    Uses `LLMProvider.complete_structured(...)` (not a LangChain `BaseChatModel` directly) for
+    the classification call, per `backend/CLAUDE.md`'s hexagonal rule that `application/` never
+    imports a vendor/framework package directly — an earlier version of this use case imported
+    `langchain_core` here, which review correctly flagged as a hexagonal violation; `LLMProvider`
+    is the existing port built for exactly this ("anything calling the LLMProvider port directly,
+    not via the agent graph" — see `infrastructure/llm/openai_provider.py`'s
+    `complete_structured`).
 
     News-sourcing note (the "≥2 sources" criterion above): fetches news scoped to the
     instrument's symbol first; if fewer than `_MIN_DISTINCT_SOURCES` distinct sources come back
@@ -64,13 +72,13 @@ class GenerateSignal:
         market_data_provider: MarketDataProvider,
         instrument_universe: InstrumentUniverse,
         signal_repository: SignalRepository,
-        model: BaseChatModel,
+        llm_provider: LLMProvider,
     ) -> None:
         self._news_provider = news_provider
         self._market_data_provider = market_data_provider
         self._instrument_universe = instrument_universe
         self._signal_repository = signal_repository
-        self._model = model
+        self._llm_provider = llm_provider
 
     async def execute(self, instrument_symbol: str) -> Signal:
         instrument = self._instrument_universe.by_symbol(instrument_symbol)
@@ -113,21 +121,24 @@ class GenerateSignal:
         self, instrument: Instrument, news_items: list[NewsItem]
     ) -> SignalClassification:
         try:
-            structured_model = self._model.with_structured_output(SignalClassification)
-            result = await structured_model.ainvoke(
-                [
-                    SystemMessage(content=_CLASSIFICATION_SYSTEM_PROMPT),
-                    HumanMessage(content=_format_news_context(instrument, news_items)),
-                ]
+            raw = await self._llm_provider.complete_structured(
+                messages=[
+                    Message(role=MessageRole.SYSTEM, content=_CLASSIFICATION_SYSTEM_PROMPT),
+                    Message(
+                        role=MessageRole.USER,
+                        content=_format_news_context(instrument, news_items),
+                    ),
+                ],
+                schema=SignalClassification.model_json_schema(),
+                schema_name=_CLASSIFICATION_SCHEMA_NAME,
             )
-            if not isinstance(result, SignalClassification):
-                raise TypeError(f"Unexpected structured-output result: {result!r}")
-            return result
+            return SignalClassification.model_validate(raw)
         except Exception:
-            # Mirrors `supervisor_router_node.py`'s guard: the fallback fake chat model
-            # (no OPENAI_API_KEY) raises NotImplementedError on `with_structured_output`,
-            # caught here and downgraded to an explicit "uncertain, zero confidence" call
-            # instead of crashing the pipeline.
+            # `OpenAIProvider.complete_structured` raises when no OPENAI_API_KEY is
+            # configured (see its docstring); a malformed/unparseable response raises
+            # via `.model_validate(raw)` above. Either way, caught here and downgraded
+            # to an explicit "uncertain, zero confidence" call instead of crashing the
+            # pipeline — same broad-catch shape as `supervisor_router_node.py`'s guard.
             return SignalClassification(
                 impact_class=ImpactClass.UNCERTAIN, confidence=0.0, reasoning=_FALLBACK_REASONING
             )

@@ -1,11 +1,10 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from langchain_core.language_models import BaseChatModel
 
 from app.api.v1.dependencies import (
     get_briefing_repository,
-    get_chat_model,
+    get_llm_provider,
     get_signal_repository,
     get_watchlist_repository,
     require_current_user,
@@ -13,6 +12,7 @@ from app.api.v1.dependencies import (
 from app.api.v1.schemas import BriefingResponse, CurrentUser
 from app.application.briefing import EmptyWatchlistError
 from app.application.briefing.use_cases import GenerateBriefing
+from app.domain.agents.ports import LLMProvider
 from app.domain.briefing.ports import BriefingRepository
 from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.ports import WatchlistRepository
@@ -42,7 +42,7 @@ async def generate_briefing(
     watchlist_repository: Annotated[WatchlistRepository, Depends(get_watchlist_repository)],
     signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
     briefing_repository: Annotated[BriefingRepository, Depends(get_briefing_repository)],
-    model: Annotated[BaseChatModel, Depends(get_chat_model)],
+    llm_provider: Annotated[LLMProvider, Depends(get_llm_provider)],
 ) -> BriefingResponse:
     """Trigger the Advisor briefing pipeline on-demand for a watchlist (HU3).
 
@@ -53,7 +53,7 @@ async def generate_briefing(
         watchlist_repository=watchlist_repository,
         signal_repository=signal_repository,
         briefing_repository=briefing_repository,
-        model=model,
+        llm_provider=llm_provider,
     )
     try:
         briefing = await use_case.execute(watchlist_id)
