@@ -157,7 +157,8 @@ chat.py router → StreamReply use case → AgentRunner port → LangGraphAgentR
 
 `infrastructure/agents/supervisor_graph.build_supervisor_graph(model, checkpointer)` builds
 the default chat graph: one **`supervisor`** router node, then a conditional edge to exactly
-one of three specialist nodes (**`analyst`**, **`quant`**, **`advisor`**), then `END`.
+one of six specialist nodes (**`analyst`**, **`quant`**, **`advisor`**, **`consequence`**,
+**`macro`**, **`sentiment`** — `infrastructure/agents/supervisor_graph.py:67-103`), then `END`.
 
 - **State**: `SupervisorState` (`infrastructure/agents/supervisor_state.py`) —
   `langgraph.graph.MessagesState` (`{"messages": Annotated[list, add_messages]}`) plus a
@@ -171,15 +172,15 @@ one of three specialist nodes (**`analyst`**, **`quant`**, **`advisor`**), then 
   to `SupervisorRoute.ADVISOR` with detail `"fallback routing (no API key)"`, so routing degrades
   gracefully instead of crashing.
 - **Specialist nodes** (`infrastructure/agents/specialist_node_factory.build_specialist_node`):
-  one factory shared by all three — only `agent_name` and `persona` differ. Each persona is a
+  one factory shared by all six — only `agent_name` and `persona` differ. Each persona is a
   module-level string constant in its own file under `infrastructure/agents/personas/`
-  (`analyst_persona.py`, `quant_persona.py`, `advisor_persona.py`), re-exported from
-  `personas/__init__.py`. The node prepends the persona as a `SystemMessage` for that one
+  (`analyst_persona.py`, `quant_persona.py`, `advisor_persona.py`, `consequence_persona.py`,
+  `macro_persona.py`, `sentiment_persona.py`), re-exported from `personas/__init__.py`. The node prepends the persona as a `SystemMessage` for that one
   `model.ainvoke(...)` call only (never returned in state, so it doesn't accumulate across
   turns) and returns just the new `AIMessage` — same "let `add_messages` append it" pattern as
   the old single-node graph.
-- **Routes** live in `SupervisorRoute` (`infrastructure/agents/supervisor_route.py`, a `StrEnum`:
-  `analyst` / `quant` / `advisor`).
+- **Routes** live in `SupervisorRoute` (`infrastructure/agents/supervisor_route.py:11-16`, a
+  `StrEnum`: `analyst` / `quant` / `advisor` / `consequence` / `macro` / `sentiment`).
 
 **To add a new specialist:** add a value to `SupervisorRoute`, add a persona file under
 `personas/`, add a `graph.add_node(...)` + `graph.add_edge(<route>, END)` call in
@@ -230,7 +231,7 @@ these three values; `AgentTrace` (`domain/agents/entities/agent_trace.py`) is th
   `thread_id`.
 - **The model itself** comes from `infrastructure/llm/chat_model_factory.build_chat_model`
   — see "Swap the LLM provider used by agent graphs" above for how to change it. The Supervisor
-  and all three specialists share this one model instance; only the system prompt differs.
+  and all six specialists share this one model instance; only the system prompt differs.
 - **Container caching**: `Container` (`core/di/container.py`) lazily builds and caches each
   adapter (including the chat model, compiled graph, and `AgentRunner`) on first access, so
   they're process-wide singletons — don't reintroduce a "build a new one every call" pattern
