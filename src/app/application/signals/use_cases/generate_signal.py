@@ -1,5 +1,6 @@
 import uuid
 
+from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
 from app.application.signals.insufficient_evidence_error import InsufficientEvidenceError
 from app.application.signals.signal_classification import SignalClassification
 from app.application.signals.unknown_instrument_error import UnknownInstrumentError
@@ -61,9 +62,10 @@ class GenerateSignal:
     sourced from CoinDesk, so crypto signals generated in dev without a live `NewsProvider` API
     key configured (`MARKETAUX_API_KEY` / `NEWSAPI_API_KEY` / `FINNHUB_API_KEY`) may still ship
     with a single distinct source — configuring any one of those keys resolves it. Only a hard
-    floor of >=1 real news item is enforced (`InsufficientEvidenceError` otherwise); no evidence
-    is ever fabricated, and no historical-analogs evidence is fabricated either — that placeholder
-    is intentionally omitted until the T1 RAG issue lands real analog data.
+    floor of >=1 real news item is enforced (`InsufficientEvidenceError` otherwise); no news
+    evidence is ever fabricated. Historical-analog evidence (issue #15) is retrieved via
+    `FindHistoricalAnalogs` below, and is likewise never fabricated — it degrades to "no
+    analogs" rather than inventing a match; see that class's docstring.
     """
 
     def __init__(
@@ -73,12 +75,16 @@ class GenerateSignal:
         instrument_universe: InstrumentUniverse,
         signal_repository: SignalRepository,
         llm_provider: LLMProvider,
+        find_historical_analogs: FindHistoricalAnalogs,
+        index_signal_analog: IndexSignalAnalog,
     ) -> None:
         self._news_provider = news_provider
         self._market_data_provider = market_data_provider
         self._instrument_universe = instrument_universe
         self._signal_repository = signal_repository
         self._llm_provider = llm_provider
+        self._find_historical_analogs = find_historical_analogs
+        self._index_signal_analog = index_signal_analog
 
     async def execute(self, instrument_symbol: str) -> Signal:
         instrument = self._instrument_universe.by_symbol(instrument_symbol)
@@ -91,17 +97,34 @@ class GenerateSignal:
 
         classification = await self._classify_impact(instrument, news_items)
         price_delta = await self._compute_price_delta(instrument)
+        evidence = [_to_evidence(item) for item in news_items]
+
+        # --- Historical analogs RAG (issue #15) ---------------------------------------
+        # Retrieve up to N semantically similar past signals and attach them as
+        # `[análogo histórico]`-tagged evidence before finalizing the signal. Never blocks
+        # or fails signal generation — see `FindHistoricalAnalogs.execute`'s guard.
+        analog_summary = news_items[0].title
+        evidence += await self._find_historical_analogs.execute(
+            instrument.symbol, classification.impact_class, analog_summary
+        )
+        # --------------------------------------------------------------------------------
 
         signal = Signal(
             id=str(uuid.uuid4()),
             instrument_symbol=instrument.symbol,
             impact_class=classification.impact_class,
             confidence=classification.confidence,
-            evidence=[_to_evidence(item) for item in news_items],
+            evidence=evidence,
             disclaimer=NOT_PERSONALIZED_ADVICE_DISCLAIMER,
             price_delta=price_delta,
         )
-        return await self._signal_repository.create(signal)
+        persisted = await self._signal_repository.create(signal)
+
+        # Index this signal as a future historical analog (issue #15) — best-effort side
+        # effect run after persistence, so a RAG-indexing failure never loses the signal.
+        await self._index_signal_analog.execute(persisted, analog_summary)
+
+        return persisted
 
     async def _gather_news(self, instrument: Instrument) -> list[NewsItem]:
         """Fetch instrument-specific news, broadening to asset-class context if too thin.
