@@ -23,7 +23,7 @@ from app.domain.agents.ports import (
     LLMProvider,
     VectorStore,
 )
-from app.domain.briefing.ports import BriefingRepository
+from app.domain.briefing.ports import BriefingDocumentRenderer, BriefingRepository
 from app.domain.chat.ports import ConversationRepository
 from app.domain.market.ports import (
     FundamentalsProvider,
@@ -32,7 +32,7 @@ from app.domain.market.ports import (
     MarketDataProvider,
     NewsProvider,
 )
-from app.domain.notification.ports import NotificationChannel
+from app.domain.notification.ports import EmailSender, NotificationChannel
 from app.domain.scenario.ports import ScenarioRepository
 from app.domain.signals.ports import SignalRepository
 from app.domain.telegram.ports import (
@@ -49,6 +49,7 @@ from app.infrastructure.agents.tools import (
     build_quant_grounding_tools,
     build_scenario_tools,
 )
+from app.infrastructure.briefing import ReportLabBriefingPdfRenderer
 from app.infrastructure.embeddings import OpenAIEmbeddings
 from app.infrastructure.fundamentals import (
     FixtureFundamentalsProvider,
@@ -76,7 +77,11 @@ from app.infrastructure.news import (
     NewsApiNewsProvider,
     RssNewsProvider,
 )
-from app.infrastructure.notification import LoggingNotificationChannel, TelegramNotificationChannel
+from app.infrastructure.notification import (
+    LoggingEmailSender,
+    LoggingNotificationChannel,
+    TelegramNotificationChannel,
+)
 from app.infrastructure.persistence import (
     SupabaseBriefingRepository,
     SupabaseConversationRepository,
@@ -141,6 +146,8 @@ class Container:
         self._briefing_command_handler: BriefingCommandHandler | None = None
         self._signal_command_handler: SignalCommandHandler | None = None
         self._simulate_command_handler: SimulateCommandHandler | None = None
+        self._briefing_document_renderer: BriefingDocumentRenderer | None = None
+        self._email_sender: EmailSender | None = None
 
     def get_llm_provider(self) -> LLMProvider:
         if self._llm_provider is None:
@@ -214,6 +221,30 @@ class Container:
                 supabase_key=self._settings.supabase_key,
             )
         return self._briefing_repository
+
+    def get_briefing_document_renderer(self) -> BriefingDocumentRenderer:
+        """Return the cached PDF renderer for briefing export (issue #22).
+
+        `ReportLabBriefingPdfRenderer` is the only adapter — see its docstring for why
+        `reportlab` was chosen over `weasyprint` in this sandbox.
+        """
+        if self._briefing_document_renderer is None:
+            self._briefing_document_renderer = ReportLabBriefingPdfRenderer()
+        return self._briefing_document_renderer
+
+    def get_email_sender(self) -> EmailSender:
+        """Return the cached `EmailSender` for briefing export's "send by email" path.
+
+        Always `LoggingEmailSender` today — no real SMTP/email-service integration is
+        wired yet (see that adapter's docstring for why this is a deliberate scope
+        decision, not an oversight). Swap this method to gate on a future `Settings`
+        field (e.g. an SES/SendGrid API key) once a real adapter lands, same
+        "unconfigured -> logging fallback" pattern as `get_notification_channel`'s
+        Telegram gate.
+        """
+        if self._email_sender is None:
+            self._email_sender = LoggingEmailSender()
+        return self._email_sender
 
     def get_notification_channel(self) -> NotificationChannel:
         """Return the cached Watchdog alert delivery channel.
