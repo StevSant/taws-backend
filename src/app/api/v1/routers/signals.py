@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.v1.dependencies import (
     get_embedding_provider,
@@ -22,6 +22,21 @@ from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, News
 from app.domain.signals.ports import SignalRepository
 
 router = APIRouter(prefix="/signals", tags=["signals"])
+
+
+@router.get("")
+async def list_signals(
+    signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
+    instrument: Annotated[str, Query()],
+) -> list[SignalResponse]:
+    """Return every signal recorded for an instrument (Radar UI).
+
+    Not user-scoped (no `require_current_user`): a `Signal` is an Analyst-produced market
+    observation about an instrument, not per-user data — same visibility model as
+    `GET /api/v1/news`.
+    """
+    signals = await signal_repository.list_for_instrument(instrument.upper())
+    return [SignalResponse.model_validate(s) for s in signals]
 
 
 @router.post("/generate", status_code=status.HTTP_201_CREATED)
