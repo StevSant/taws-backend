@@ -4,6 +4,7 @@ from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 
+from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.core.config import Settings, get_settings
 from app.domain.agents.ports import (
     AgentMemory,
@@ -18,7 +19,7 @@ from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, News
 from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
-from app.infrastructure.agents.tools import build_advisor_grounding_tools
+from app.infrastructure.agents.tools import build_advisor_grounding_tools, build_consequence_tools
 from app.infrastructure.embeddings import OpenAIEmbeddings
 from app.infrastructure.llm import OpenAIProvider, build_chat_model
 from app.infrastructure.marketdata import (
@@ -77,6 +78,7 @@ class Container:
         self._chat_model: BaseChatModel | None = None
         self._chat_graph: Any | None = None
         self._agent_runner: AgentRunner | None = None
+        self._generate_consequence_chain_use_case: GenerateConsequenceChain | None = None
 
     def get_llm_provider(self) -> LLMProvider:
         if self._llm_provider is None:
@@ -235,6 +237,23 @@ class Container:
             )
         return self._market_data_provider
 
+    def get_generate_consequence_chain_use_case(self) -> GenerateConsequenceChain:
+        """Return the cached Consequence Chain Analyst use case (issue #8).
+
+        Shared between the `consequence` chat specialist's tool
+        (`_get_chat_graph` below, via `build_consequence_tools`) and
+        `POST /api/v1/consequence-chains/generate`
+        (`api/v1/dependencies/get_generate_consequence_chain_use_case.py`) — both surfaces
+        call the exact same `GenerateConsequenceChain.execute(subject)`. Only depends on
+        `LLMProvider`, so — unlike `GenerateSignal`, which the signals router builds
+        per-request from several ports — caching one instance here is safe and cheap.
+        """
+        if self._generate_consequence_chain_use_case is None:
+            self._generate_consequence_chain_use_case = GenerateConsequenceChain(
+                llm_provider=self.get_llm_provider()
+            )
+        return self._generate_consequence_chain_use_case
+
     def get_agent_runner(self) -> AgentRunner:
         """Return the cached `AgentRunner`, built from the chat model + checkpointer.
 
@@ -269,8 +288,14 @@ class Container:
             advisor_tools = build_advisor_grounding_tools(
                 signal_repository=self.get_signal_repository()
             )
+            consequence_tools = build_consequence_tools(
+                use_case=self.get_generate_consequence_chain_use_case()
+            )
             self._chat_graph = build_supervisor_graph(
-                self._get_chat_model(), checkpointer, advisor_tools=advisor_tools
+                self._get_chat_model(),
+                checkpointer,
+                advisor_tools=advisor_tools,
+                consequence_tools=consequence_tools,
             )
         return self._chat_graph
 
