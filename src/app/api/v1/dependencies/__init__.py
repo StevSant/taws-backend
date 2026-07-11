@@ -1,9 +1,11 @@
 from app.api.v1.dependencies.decode_bearer_token import decode_bearer_token
 from app.api.v1.dependencies.get_agent_runner import get_agent_runner
 from app.api.v1.dependencies.get_alerted_signal_tracker import get_alerted_signal_tracker
+from app.api.v1.dependencies.get_briefing_document_renderer import get_briefing_document_renderer
 from app.api.v1.dependencies.get_briefing_repository import get_briefing_repository
 from app.api.v1.dependencies.get_conversation_repository import get_conversation_repository
 from app.api.v1.dependencies.get_current_user import get_current_user
+from app.api.v1.dependencies.get_email_sender import get_email_sender
 from app.api.v1.dependencies.get_embedding_provider import get_embedding_provider
 from app.api.v1.dependencies.get_fundamentals_provider import get_fundamentals_provider
 from app.api.v1.dependencies.get_generate_consequence_chain_use_case import (
@@ -34,9 +36,11 @@ __all__ = [
     "decode_bearer_token",
     "get_agent_runner",
     "get_alerted_signal_tracker",
+    "get_briefing_document_renderer",
     "get_briefing_repository",
     "get_conversation_repository",
     "get_current_user",
+    "get_email_sender",
     "get_embedding_provider",
     "get_fundamentals_provider",
     "get_generate_consequence_chain_use_case",
