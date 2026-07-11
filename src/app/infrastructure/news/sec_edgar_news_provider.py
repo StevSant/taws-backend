@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from datetime import UTC, datetime
 from time import mktime
@@ -8,6 +9,8 @@ import feedparser
 
 from app.domain.market.entities import AssetClass, NewsItem
 from app.domain.market.ports import NewsProvider
+
+logger = logging.getLogger(__name__)
 
 _SOURCE_NAME = "SEC EDGAR"
 _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
@@ -35,11 +38,18 @@ class SecEdgarNewsProvider(NewsProvider):
     Returns items with empty `related_symbols`: EDGAR's feed identifies filers by company
     name + CIK, not ticker, so linking is done centrally by `AggregatingNewsProvider`
     (naive company-name word match against the curated universe), same as `RssNewsProvider`.
+
+    `timeout_seconds` (configured via `Settings.sec_edgar_feed_timeout_seconds`) bounds
+    each feed fetch/parse — same rationale as `RssNewsProvider.timeout_seconds`:
+    `feedparser.parse` has no timeout of its own, so an unbounded call can hang
+    `fetch_news` indefinitely if EDGAR (or a proxy in front of it) stalls the connection
+    instead of erroring.
     """
 
-    def __init__(self, feed_urls: list[str], user_agent: str) -> None:
+    def __init__(self, feed_urls: list[str], user_agent: str, timeout_seconds: float) -> None:
         self._feed_urls = feed_urls
         self._user_agent = user_agent
+        self._timeout_seconds = timeout_seconds
 
     async def fetch_news(
         self,
@@ -56,12 +66,25 @@ class SecEdgarNewsProvider(NewsProvider):
             return []
 
         results = await asyncio.gather(
-            *(asyncio.to_thread(self._parse_feed, url) for url in self._feed_urls),
+            *(
+                asyncio.wait_for(
+                    asyncio.to_thread(self._parse_feed, url),
+                    timeout=self._timeout_seconds,
+                )
+                for url in self._feed_urls
+            ),
             return_exceptions=True,
         )
 
         items: list[NewsItem] = []
-        for result in results:
+        for feed_url, result in zip(self._feed_urls, results, strict=True):
+            if isinstance(result, TimeoutError):
+                logger.warning(
+                    "SEC EDGAR feed %s timed out after %.0fs; treating it as empty for this fetch.",
+                    feed_url,
+                    self._timeout_seconds,
+                )
+                continue
             if isinstance(result, BaseException):
                 continue
             items.extend(self._to_news_items(result))

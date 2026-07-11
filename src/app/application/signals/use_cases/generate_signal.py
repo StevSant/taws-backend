@@ -17,9 +17,6 @@ from app.domain.signals.ports import SignalRepository
 
 _CLASSIFICATION_SCHEMA_NAME = "signal_classification"
 
-# HU1 acceptance criterion: "≥2 news sources with source + date attached to each signal".
-_MIN_DISTINCT_SOURCES = 2
-
 _CLASSIFICATION_SYSTEM_PROMPT = """You are the Analyst — a market-intelligence agent that \
 classifies how recent news impacts a single financial instrument.
 
@@ -64,11 +61,13 @@ class GenerateSignal:
     following the exact same "raise, don't silently degrade" precedent as
     `InsufficientEvidenceError` below.
 
-    News-sourcing note (the "≥2 sources" criterion above): fetches news scoped to the
-    instrument's symbol first; if fewer than `_MIN_DISTINCT_SOURCES` distinct sources come back,
-    broadens to the instrument's asset class as supplementary market-context evidence rather
-    than failing outright. The distinct-source count is re-checked after broadening (issue #25):
-    a hard floor of >=1 real news item AND >=`_MIN_DISTINCT_SOURCES` distinct sources is
+    News-sourcing note (HU1 acceptance criterion: "≥2 news sources with source + date attached
+    to each signal", configured via `Settings.min_distinct_news_sources` and injected here as
+    `min_distinct_sources`): fetches news scoped to the instrument's symbol first; if fewer than
+    `self._min_distinct_sources` distinct sources come back, broadens to the instrument's asset
+    class as supplementary market-context evidence rather than failing outright. The
+    distinct-source count is re-checked after broadening (issue #25):
+    a hard floor of >=1 real news item AND >=`self._min_distinct_sources` distinct sources is
     enforced — `InsufficientEvidenceError` is raised for either shortfall, before classification
     or persistence — so a signal can never ship with fewer than 2 distinct sources, even in dev.
     The packaged fixture (`infrastructure/seeds/news_fixture.json`) seeds >=2 distinct sources
@@ -90,6 +89,7 @@ class GenerateSignal:
         llm_provider: LLMProvider,
         find_historical_analogs: FindHistoricalAnalogs,
         index_signal_analog: IndexSignalAnalog,
+        min_distinct_sources: int,
     ) -> None:
         self._news_provider = news_provider
         self._market_data_provider = market_data_provider
@@ -98,6 +98,7 @@ class GenerateSignal:
         self._llm_provider = llm_provider
         self._find_historical_analogs = find_historical_analogs
         self._index_signal_analog = index_signal_analog
+        self._min_distinct_sources = min_distinct_sources
         # No ports/I-O behind `ReviewCompliance` (pure rule-based checks), so it's a plain
         # private collaborator rather than a constructor-injected dependency — nothing to
         # swap, and routers don't need to resolve/pass it via `Depends`.
@@ -118,7 +119,7 @@ class GenerateSignal:
         # any classification or persistence work happens, per HU1's "≥2 news sources"
         # acceptance criterion.
         distinct_sources = len({item.source for item in news_items})
-        if distinct_sources < _MIN_DISTINCT_SOURCES:
+        if distinct_sources < self._min_distinct_sources:
             raise InsufficientEvidenceError(instrument.symbol, distinct_sources)
 
         classification = await self._classify_impact(instrument, news_items, locale)
@@ -173,7 +174,7 @@ class GenerateSignal:
         known dev-fixture limitation for crypto instruments.
         """
         direct = await self._news_provider.fetch_news(symbols=[instrument.symbol])
-        if len({item.source for item in direct}) >= _MIN_DISTINCT_SOURCES:
+        if len({item.source for item in direct}) >= self._min_distinct_sources:
             return direct
 
         context = await self._news_provider.fetch_news(asset_class=instrument.asset_class)

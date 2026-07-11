@@ -1,9 +1,11 @@
 name: backend-deploy
 
-# Builds the image, pushes to Amazon ECR; AWS App Runner auto-deploys the new image.
+# Builds the image, pushes to Amazon ECR, then explicitly triggers and waits for an AWS App Runner
+# deployment (App Runner's own auto-deploy-on-push is not relied upon, so a bad deploy fails this
+# job instead of silently leaving the previous revision live).
 # DISABLED until AWS is wired: set repo variable DEPLOY_ENABLED=true and the secrets/vars below.
 #   Secrets: AWS_ROLE_ARN (OIDC role to assume)
-#   Vars:    AWS_REGION, ECR_REPOSITORY, DEPLOY_ENABLED
+#   Vars:    AWS_REGION, ECR_REPOSITORY, APPRUNNER_SERVICE_ARN, DEPLOY_ENABLED
 # Until then this workflow is a no-op (the guard skips the job), so it never breaks CI.
 
 on:
@@ -28,13 +30,55 @@ jobs:
       - name: Login to Amazon ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
       - name: Build and push image
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
-          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-          IMAGE_TAG: ${{ github.sha }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Start App Runner deployment
+        id: start-deployment
         run: |
-          docker build -t "$REGISTRY/$REPOSITORY:$IMAGE_TAG" -t "$REGISTRY/$REPOSITORY:latest" .
-          docker push "$REGISTRY/$REPOSITORY:$IMAGE_TAG"
-          docker push "$REGISTRY/$REPOSITORY:latest"
-      # App Runner is configured (in the AWS console) to auto-deploy on new :latest push.
+          operation_id=$(aws apprunner start-deployment \
+            --service-arn "${{ vars.APPRUNNER_SERVICE_ARN }}" \
+            --query 'OperationId' --output text)
+          echo "operation_id=$operation_id" >> "$GITHUB_OUTPUT"
+          echo "Started App Runner deployment, OperationId=$operation_id"
+      - name: Wait for App Runner deployment to complete
+        env:
+          SERVICE_ARN: ${{ vars.APPRUNNER_SERVICE_ARN }}
+          OPERATION_ID: ${{ steps.start-deployment.outputs.operation_id }}
+        run: |
+          max_attempts=60   # 60 * 10s = ~10 minutes
+          interval=10
+
+          for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+            status=$(aws apprunner list-operations \
+              --service-arn "$SERVICE_ARN" \
+              --query "OperationSummaryList[?Id=='$OPERATION_ID'].Status" \
+              --output text)
+
+            echo "Attempt $attempt/$max_attempts: deployment status=$status"
+
+            case "$status" in
+              SUCCEEDED)
+                echo "App Runner deployment succeeded."
+                exit 0
+                ;;
+              FAILED|ROLLBACK_SUCCEEDED|ROLLBACK_FAILED)
+                echo "::error::App Runner deployment ended in terminal failure status: $status"
+                exit 1
+                ;;
+            esac
+
+            sleep "$interval"
+          done
+
+          echo "::error::Timed out waiting for App Runner deployment to reach a terminal status"
+          exit 1

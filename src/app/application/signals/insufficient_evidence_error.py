@@ -3,10 +3,11 @@ class InsufficientEvidenceError(RuntimeError):
 
     Covers both triggers checked in `GenerateSignal.execute` (`generate_signal.py`):
     - No news evidence at all (`_gather_news` returned zero items).
-    - Fewer than `_MIN_DISTINCT_SOURCES` distinct sources even after `_gather_news` broadens
-      the search to asset-class context — HU1's acceptance criterion requires "≥2 news
-      sources with source + date visible per signal card", so a signal grounded in only one
-      distinct source must not be persisted either.
+    - Fewer than `GenerateSignal._min_distinct_sources` (configured via
+      `Settings.min_distinct_news_sources`) distinct sources even after `_gather_news`
+      broadens the search to asset-class context — HU1's acceptance criterion requires "≥2
+      news sources with source + date visible per signal card", so a signal grounded in only
+      one distinct source must not be persisted either.
 
     Never resolved by fabricating evidence — `_gather_news` only ever broadens the search to
     real, sourced/dated news; if the floor still isn't met after broadening, generation is
