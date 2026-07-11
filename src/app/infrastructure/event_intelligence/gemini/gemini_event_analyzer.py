@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -7,6 +8,8 @@ from google.genai import types
 
 from app.domain.event_intelligence.entities import EnrichedEvent, NewsEvent
 from app.domain.event_intelligence.ports import EventAnalyzerPort
+
+logger = logging.getLogger(__name__)
 
 _ANALYSIS_SYSTEM_PROMPT = """You are a financial intelligence analyst. Your job is to analyze \
 news events and determine their relevance and potential impact on financial markets.
@@ -94,6 +97,7 @@ class GeminiEventAnalyzer(EventAnalyzerPort):
                 return _fallback_enriched(event)
             data = json.loads(text)
         except Exception:
+            logger.exception("Gemini analysis failed for event: %s", event.title)
             return _fallback_enriched(event)
 
         return EnrichedEvent(
@@ -130,6 +134,7 @@ class GeminiEventAnalyzer(EventAnalyzerPort):
                 return _fallback_impact_analysis(sector)
             return text.strip()
         except Exception:
+            logger.exception("Gemini impact analysis failed for sector: %s", sector)
             return _fallback_impact_analysis(sector)
 
 
