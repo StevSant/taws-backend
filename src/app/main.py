@@ -16,6 +16,7 @@ from app.api.v1.routers import (
     news_router,
     quant_router,
     reviews_router,
+    scenarios_router,
     signals_router,
     telegram_router,
     watchdog_router,
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(watchlists_router, prefix="/api/v1")
     app.include_router(briefings_router, prefix="/api/v1")
     app.include_router(consequence_chains_router, prefix="/api/v1")
+    app.include_router(scenarios_router, prefix="/api/v1")
     app.include_router(watchdog_router, prefix="/api/v1")
     app.include_router(macro_router, prefix="/api/v1")
     app.include_router(fundamentals_router, prefix="/api/v1")

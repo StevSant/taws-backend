@@ -8,6 +8,7 @@ from app.api.v1.routers.macro import router as macro_router
 from app.api.v1.routers.news import router as news_router
 from app.api.v1.routers.quant import router as quant_router
 from app.api.v1.routers.reviews import router as reviews_router
+from app.api.v1.routers.scenarios import router as scenarios_router
 from app.api.v1.routers.signals import router as signals_router
 from app.api.v1.routers.telegram import router as telegram_router
 from app.api.v1.routers.watchdog import router as watchdog_router
@@ -24,6 +25,7 @@ __all__ = [
     "news_router",
     "quant_router",
     "reviews_router",
+    "scenarios_router",
     "signals_router",
     "telegram_router",
     "watchdog_router",
