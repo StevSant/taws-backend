@@ -14,6 +14,10 @@ class GenerateScenarioRequest(BaseModel):
 
     preset_id: str | None = Field(default=None, min_length=1, max_length=100)
     free_text: str | None = Field(default=None, min_length=1, max_length=1000)
+    # BCP-47-ish locale tag (e.g. "en", "es", "es-MX") the synthesized narrative and
+    # recommended actions should be written in. Falls back to `Settings.default_locale`
+    # when omitted.
+    locale: str | None = Field(default=None, min_length=2, max_length=35)
 
     @model_validator(mode="after")
     def _require_preset_or_free_text(self) -> "GenerateScenarioRequest":

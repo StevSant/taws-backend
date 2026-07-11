@@ -314,7 +314,7 @@ async def _generate_demo_signals(container: Container) -> None:
             ),
         )
         try:
-            signal = await use_case.execute(symbol)
+            signal = await use_case.execute(symbol, settings.default_locale)
         except (UnknownInstrumentError, InsufficientEvidenceError, ComplianceViolationError) as exc:
             logger.warning("Skipped signal for %s: %s", symbol, exc)
             continue
