@@ -32,7 +32,17 @@ ENV PATH="/app/.venv/bin:${PATH}" \
 
 USER appuser
 
-# AWS App Runner listens on 8000.
+# Configurable via env so this image isn't tied to one platform's port convention (App
+# Runner, local docker run, etc. can each set HOST/PORT without an image rebuild) — same
+# "no hardcoded values" rule the app's own `Settings` class follows. Defaults match App
+# Runner's default listening port (8000, as configured on the service).
+ENV HOST=0.0.0.0 \
+    PORT=8000
+
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form so $HOST/$PORT are expanded at container start; `exec` replaces the shell
+# process with uvicorn (instead of running it as a child) so SIGTERM reaches uvicorn
+# directly for a clean shutdown, rather than the shell swallowing it until Docker's stop
+# timeout forces a SIGKILL.
+CMD exec uvicorn app.main:app --host "$HOST" --port "$PORT"

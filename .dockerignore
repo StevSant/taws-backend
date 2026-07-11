@@ -8,5 +8,7 @@ __pycache__
 .env
 .env.*
 !.env.example
-README.md
+# README.md is NOT excluded: `pyproject.toml` declares `readme = "README.md"`, and the
+# Dockerfile's builder stage COPYs it in because `uv sync` (hatchling) requires the file
+# to exist to build the local project — excluding it breaks `docker build` entirely.
 CLAUDE.md
