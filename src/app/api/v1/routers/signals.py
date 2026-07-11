@@ -57,8 +57,9 @@ async def generate_signal(
             embedding_provider=embedding_provider, vector_store=vector_store
         ),
     )
+    locale = payload.locale or settings.default_locale
     try:
-        signal = await use_case.execute(payload.instrument_symbol.upper())
+        signal = await use_case.execute(payload.instrument_symbol.upper(), locale=locale)
     except UnknownInstrumentError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except InsufficientEvidenceError as exc:

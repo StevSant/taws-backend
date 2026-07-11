@@ -1,6 +1,7 @@
 import uuid
 
 from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
+from app.application.common import build_locale_instruction
 from app.application.compliance import ComplianceViolationError
 from app.application.compliance.use_cases import ReviewCompliance
 from app.application.signals.insufficient_evidence_error import InsufficientEvidenceError
@@ -99,7 +100,7 @@ class GenerateSignal:
         # swap, and routers don't need to resolve/pass it via `Depends`.
         self._compliance_reviewer = ReviewCompliance()
 
-    async def execute(self, instrument_symbol: str) -> Signal:
+    async def execute(self, instrument_symbol: str, locale: str) -> Signal:
         instrument = self._instrument_universe.by_symbol(instrument_symbol)
         if instrument is None:
             raise UnknownInstrumentError(instrument_symbol)
@@ -108,7 +109,7 @@ class GenerateSignal:
         if not news_items:
             raise InsufficientEvidenceError(instrument.symbol)
 
-        classification = await self._classify_impact(instrument, news_items)
+        classification = await self._classify_impact(instrument, news_items, locale)
         price_delta = await self._compute_price_delta(instrument)
         evidence = [_to_evidence(item) for item in news_items]
 
@@ -168,12 +169,15 @@ class GenerateSignal:
         return direct + [item for item in context if item.id not in seen_ids]
 
     async def _classify_impact(
-        self, instrument: Instrument, news_items: list[NewsItem]
+        self, instrument: Instrument, news_items: list[NewsItem], locale: str
     ) -> SignalClassification:
         try:
             raw = await self._llm_provider.complete_structured(
                 messages=[
-                    Message(role=MessageRole.SYSTEM, content=_CLASSIFICATION_SYSTEM_PROMPT),
+                    Message(
+                        role=MessageRole.SYSTEM,
+                        content=_CLASSIFICATION_SYSTEM_PROMPT + build_locale_instruction(locale),
+                    ),
                     Message(
                         role=MessageRole.USER,
                         content=_format_news_context(instrument, news_items),
