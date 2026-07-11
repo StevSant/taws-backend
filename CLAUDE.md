@@ -116,13 +116,16 @@ endpoints in this same shape unless there's a strong reason to change it.
 
 Shared engineering rules live in the root repo's `CLAUDE.md` — everyone follows the same
 conventions (Conventional Commits in English, no hardcoded values, one class/function per file,
-direct-to-main in pairs, keep CI green). Backend is led by Miquel, with Bryan on the AI/agent layer
-and Marco supporting; see `CODEOWNERS`.
+direct-to-main in pairs, keep CI green). Backend is led by Miquel, with Bryan on the AI/agent layer;
+Marco assists with data engineering as a cross-functional floater. See `CODEOWNERS`.
 
 | Dev | Primary area | GitHub |
 |-----|--------------|--------|
 | Bryan | AI agent dev & project coordination | `@StevSant` |
 | Miquel | Backend | `@lesquel` |
 | Luis Figueroa | Frontend | `@DweskZ` |
-| Kevin Alonso | Branding & UI/UX | `@Tokioh` |
-| Marco Zambrano | Backend / Frontend / Data support | `@marco-zambrano` |
+| Kevin Alonso | Branding & UI/UX Design | `@Tokioh` |
+| Marco Zambrano | Branding & UI/UX Design & Data Engineering support | `@marco-zambrano` |
+
+**Collaboration:** Kevin and Marco alternate between their primary responsibilities and assisting
+other areas as needed, based on project priorities and workload.

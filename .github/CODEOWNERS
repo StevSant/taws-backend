@@ -1,10 +1,9 @@
 # taws-backend code owners.
-#   Bryan  @StevSant        — AI/agent layer & coordination
-#   Miquel @lesquel         — backend lead
-#   Marco  @marco-zambrano  — backend/data support
+#   Miquel @lesquel          — backend lead (primary reviewer)
+#   Bryan  @StevSant         — AI/agent layer & coordination
+#   Marco  @marco-zambrano   — data engineering SUPPORT (cross-functional floater, not a fixed owner)
+# CODEOWNERS lists primary reviewers only; Kevin & Marco float across areas per workload.
 
-*                                   @lesquel @StevSant
-/src/app/infrastructure/llm/        @StevSant
-/src/app/infrastructure/agents/     @StevSant
-/src/app/infrastructure/persistence/ @marco-zambrano
-/src/app/infrastructure/vectorstore/ @marco-zambrano
+*                                @lesquel
+/src/app/infrastructure/llm/     @StevSant
+/src/app/infrastructure/agents/  @StevSant
