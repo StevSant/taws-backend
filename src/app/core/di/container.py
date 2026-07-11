@@ -4,6 +4,7 @@ from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 
+from app.application.watchdog import AlertedSignalTracker
 from app.core.config import Settings, get_settings
 from app.domain.agents.ports import (
     AgentMemory,
@@ -15,6 +16,7 @@ from app.domain.agents.ports import (
 from app.domain.briefing.ports import BriefingRepository
 from app.domain.chat.ports import ConversationRepository
 from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, NewsProvider
+from app.domain.notification.ports import NotificationChannel
 from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
@@ -36,6 +38,7 @@ from app.infrastructure.news import (
     NewsApiNewsProvider,
     RssNewsProvider,
 )
+from app.infrastructure.notification import LoggingNotificationChannel
 from app.infrastructure.persistence import (
     SupabaseBriefingRepository,
     SupabaseConversationRepository,
@@ -77,6 +80,8 @@ class Container:
         self._chat_model: BaseChatModel | None = None
         self._chat_graph: Any | None = None
         self._agent_runner: AgentRunner | None = None
+        self._notification_channel: NotificationChannel | None = None
+        self._alerted_signal_tracker: AlertedSignalTracker | None = None
 
     def get_llm_provider(self) -> LLMProvider:
         if self._llm_provider is None:
@@ -150,6 +155,29 @@ class Container:
                 supabase_key=self._settings.supabase_key,
             )
         return self._briefing_repository
+
+    def get_notification_channel(self) -> NotificationChannel:
+        """Return the cached Watchdog alert delivery channel.
+
+        `LoggingNotificationChannel` today (no-op/logging stand-in) — swap in
+        `TelegramNotificationChannel` here once issue #14 lands; nothing in
+        `application/` or `api/` needs to change, since both depend on the
+        `NotificationChannel` port, not this adapter.
+        """
+        if self._notification_channel is None:
+            self._notification_channel = LoggingNotificationChannel()
+        return self._notification_channel
+
+    def get_alerted_signal_tracker(self) -> AlertedSignalTracker:
+        """Return the cached, process-wide `AlertedSignalTracker` singleton.
+
+        Shared between the scheduler's periodic Watchdog scan job and the manual
+        "Scan now" endpoint so both draw from the same in-process novelty/dedup state —
+        see `AlertedSignalTracker`'s docstring for why this isn't persisted.
+        """
+        if self._alerted_signal_tracker is None:
+            self._alerted_signal_tracker = AlertedSignalTracker()
+        return self._alerted_signal_tracker
 
     def get_news_provider(self) -> NewsProvider:
         """Return the aggregated news source for the radar/agents.

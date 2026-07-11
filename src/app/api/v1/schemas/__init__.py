@@ -1,3 +1,4 @@
+from app.api.v1.schemas.alert_response import AlertResponse
 from app.api.v1.schemas.briefing_response import BriefingResponse
 from app.api.v1.schemas.chat_request import ChatRequest
 from app.api.v1.schemas.chat_response import ChatResponse
@@ -17,6 +18,7 @@ from app.api.v1.schemas.watchlist_rename_request import WatchlistRenameRequest
 from app.api.v1.schemas.watchlist_response import WatchlistResponse
 
 __all__ = [
+    "AlertResponse",
     "BriefingResponse",
     "ChatRequest",
     "ChatResponse",

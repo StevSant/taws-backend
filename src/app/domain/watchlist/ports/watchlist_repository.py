@@ -22,6 +22,16 @@ class WatchlistRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def list_all(self) -> list[Watchlist]:
+        """Return every watchlist across every user.
+
+        Used by the Watchdog/Notifier agent's global scheduled scan and daily briefing run
+        (issue #10), neither of which has a single request-bound user to scope to — unlike
+        `list_for_user`, which backs the per-user watchlist API.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def rename(self, watchlist_id: str, name: str) -> Watchlist:
         """Rename an existing watchlist and return it as persisted."""
         raise NotImplementedError
