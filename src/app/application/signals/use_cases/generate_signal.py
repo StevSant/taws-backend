@@ -65,18 +65,18 @@ class GenerateSignal:
     `InsufficientEvidenceError` below.
 
     News-sourcing note (the "≥2 sources" criterion above): fetches news scoped to the
-    instrument's symbol first; if fewer than `_MIN_DISTINCT_SOURCES` distinct sources come back
-    (common with the packaged dev fixture, which seeds ~1 article per symbol), broadens to the
-    instrument's asset class as supplementary market-context evidence rather than failing
-    outright. The distinct-source count is re-checked after broadening (issue #25): a hard floor
-    of >=1 real news item AND >=`_MIN_DISTINCT_SOURCES` distinct sources is enforced —
-    `InsufficientEvidenceError` is raised for either shortfall, before classification or
-    persistence — so a signal can never ship with fewer than 2 distinct sources, even in dev. In
-    practice this means crypto signals generated in dev without a live `NewsProvider` API key
-    configured (`MARKETAUX_API_KEY` / `NEWSAPI_API_KEY` / `FINNHUB_API_KEY`) will fail to
-    generate rather than ship under-sourced, since the packaged fixture's crypto articles are all
-    sourced from CoinDesk — configuring any one of those keys resolves it. No news evidence is
-    ever fabricated to satisfy the floor. Historical-analog evidence (issue #15) is retrieved via
+    instrument's symbol first; if fewer than `_MIN_DISTINCT_SOURCES` distinct sources come back,
+    broadens to the instrument's asset class as supplementary market-context evidence rather
+    than failing outright. The distinct-source count is re-checked after broadening (issue #25):
+    a hard floor of >=1 real news item AND >=`_MIN_DISTINCT_SOURCES` distinct sources is
+    enforced — `InsufficientEvidenceError` is raised for either shortfall, before classification
+    or persistence — so a signal can never ship with fewer than 2 distinct sources, even in dev.
+    The packaged fixture (`infrastructure/seeds/news_fixture.json`) seeds >=2 distinct sources
+    per asset class (including crypto and forex, each with only one instrument's worth of
+    direct-symbol coverage) precisely so this floor doesn't make every fixture-only signal
+    generation call fail without a live `NewsProvider` API key configured
+    (`MARKETAUX_API_KEY` / `NEWSAPI_API_KEY` / `FINNHUB_API_KEY`). No news evidence is ever
+    fabricated to satisfy the floor. Historical-analog evidence (issue #15) is retrieved via
     `FindHistoricalAnalogs` below, and is likewise never fabricated — it degrades to "no
     analogs" rather than inventing a match; see that class's docstring.
     """

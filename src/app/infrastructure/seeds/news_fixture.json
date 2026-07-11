@@ -36,6 +36,51 @@
     "related_symbols": ["ETH"]
   },
   {
+    "id": "fixture-021",
+    "title": "Bitcoin ETF issuers report record custody assets under management",
+    "summary": "Custody assets held by spot Bitcoin ETF issuers reached a new record, reinforcing the ETF-driven demand narrative.",
+    "url": "https://example.com/news/bitcoin-etf-custody-record",
+    "source": "Bloomberg",
+    "hours_ago": 4,
+    "related_symbols": ["BTC"]
+  },
+  {
+    "id": "fixture-022",
+    "title": "Ethereum staking yield ticks up as validator queue shortens",
+    "summary": "On-chain data shows Ethereum staking yields edging higher as the validator activation queue shortened following the latest upgrade.",
+    "url": "https://example.com/news/ethereum-staking-yield-up",
+    "source": "Reuters",
+    "hours_ago": 10,
+    "related_symbols": ["ETH"]
+  },
+  {
+    "id": "fixture-023",
+    "title": "Solana DeFi total value locked climbs to yearly high",
+    "summary": "Total value locked across Solana DeFi protocols climbed to its highest level this year, driven by renewed trading activity.",
+    "url": "https://example.com/news/solana-defi-tvl-high",
+    "source": "Bloomberg",
+    "hours_ago": 6,
+    "related_symbols": ["SOL"]
+  },
+  {
+    "id": "fixture-024",
+    "title": "BNB burn event reduces circulating supply further",
+    "summary": "The exchange behind BNB completed its latest quarterly burn event, trimming circulating supply in line with its published schedule.",
+    "url": "https://example.com/news/bnb-burn-event",
+    "source": "Reuters",
+    "hours_ago": 34,
+    "related_symbols": ["BNB"]
+  },
+  {
+    "id": "fixture-025",
+    "title": "XRP trading volume jumps on renewed institutional interest",
+    "summary": "XRP trading volume jumped across major venues as institutional desks reported renewed interest following the regulatory clarity signal.",
+    "url": "https://example.com/news/xrp-volume-jump",
+    "source": "Bloomberg",
+    "hours_ago": 12,
+    "related_symbols": ["XRP"]
+  },
+  {
     "id": "fixture-005",
     "title": "Tesla recalls select vehicles over software glitch, no injuries reported",
     "summary": "Tesla issued a voluntary recall affecting a batch of vehicles due to a software issue with the autopilot display; the company says the fix is a remote update.",
@@ -178,5 +223,14 @@
     "source": "CNBC",
     "hours_ago": 1,
     "related_symbols": ["MSFT", "GOOGL", "META", "AMZN"]
+  },
+  {
+    "id": "fixture-026",
+    "title": "Dollar index slips as traders trim rate-cut odds ahead of Fed meeting",
+    "summary": "The US dollar index eased against a basket of peers, including the euro, as traders pared back expectations for near-term Fed rate cuts.",
+    "url": "https://example.com/news/dollar-index-slips-fed-meeting",
+    "source": "Reuters",
+    "hours_ago": 7,
+    "related_symbols": ["EURUSD"]
   }
 ]
