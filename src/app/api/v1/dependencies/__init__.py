@@ -5,6 +5,7 @@ from app.api.v1.dependencies.get_analyze_sentiment_use_case import get_analyze_s
 from app.api.v1.dependencies.get_briefing_command_handler import get_briefing_command_handler
 from app.api.v1.dependencies.get_briefing_document_renderer import get_briefing_document_renderer
 from app.api.v1.dependencies.get_briefing_repository import get_briefing_repository
+from app.api.v1.dependencies.get_chat_message_handler import get_chat_message_handler
 from app.api.v1.dependencies.get_conversation_repository import get_conversation_repository
 from app.api.v1.dependencies.get_current_user import get_current_user
 from app.api.v1.dependencies.get_email_sender import get_email_sender
@@ -51,6 +52,7 @@ __all__ = [
     "get_analyze_sentiment_use_case",
     "get_briefing_command_handler",
     "get_briefing_document_renderer",
+    "get_chat_message_handler",
     "get_briefing_repository",
     "get_conversation_repository",
     "get_current_user",

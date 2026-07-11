@@ -114,6 +114,7 @@ from app.infrastructure.sentiment import (
 )
 from app.infrastructure.telegram import (
     BriefingCommandHandler,
+    ChatMessageHandler,
     ImpactCommandHandler,
     SignalCommandHandler,
     SimulateCommandHandler,
@@ -168,6 +169,7 @@ class Container:
         self._signal_command_handler: SignalCommandHandler | None = None
         self._simulate_command_handler: SimulateCommandHandler | None = None
         self._impact_command_handler: ImpactCommandHandler | None = None
+        self._chat_message_handler: ChatMessageHandler | None = None
         self._briefing_document_renderer: BriefingDocumentRenderer | None = None
         self._email_sender: EmailSender | None = None
         self._fear_greed_provider: FearGreedProvider | None = None
@@ -418,6 +420,19 @@ class Container:
                 messenger=messenger,
             )
         return self._impact_command_handler
+
+    def get_chat_message_handler(self) -> ChatMessageHandler | None:
+        """Return the cached conversational chat handler, or `None` when Telegram
+        isn't configured — same pattern as `get_briefing_command_handler`."""
+        messenger = self.get_telegram_messenger()
+        if messenger is None:
+            return None
+        if self._chat_message_handler is None:
+            self._chat_message_handler = ChatMessageHandler(
+                agent_runner=self.get_agent_runner(),
+                messenger=messenger,
+            )
+        return self._chat_message_handler
 
     def get_news_provider(self) -> NewsProvider:
         """Return the aggregated news source for the radar/agents.

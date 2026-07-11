@@ -4,6 +4,7 @@ from app.infrastructure.telegram.extract_message_text_and_chat_id import (
     extract_message_text_and_chat_id,
 )
 from app.infrastructure.telegram.parse_briefing_command import parse_briefing_command
+from app.infrastructure.telegram.parse_chat_message import parse_chat_message
 from app.infrastructure.telegram.parse_impact_command import parse_impact_command
 from app.infrastructure.telegram.parse_signal_command import parse_signal_command
 from app.infrastructure.telegram.parse_simulate_command import parse_simulate_command
@@ -24,10 +25,8 @@ def parse_telegram_command(update_payload: dict[str, Any]) -> TelegramCommand | 
 
     Three-way result, not two-way:
     - A typed command object: recognized and well-formed.
-    - `None`: not a command at all (no message/chat/text on the update, or ordinary
-      chat text that doesn't start with `/`) — genuinely nothing to do, so the webhook
-      silently acks 200 without replying. Replying to every non-command message this
-      bot receives would be noisy, not helpful.
+    - `ChatMessage`: ordinary chat text (not a command) — routed to the conversational
+      agent instead of being silently ignored.
     - `UnknownCommand`: text that LOOKS like a command attempt (starts with `/`) but
       matched nothing above — either a command this bot doesn't support, or a known
       command missing a required argument (`parse_signal_command`/
@@ -63,5 +62,9 @@ def parse_telegram_command(update_payload: dict[str, Any]) -> TelegramCommand | 
 
     if text.strip().startswith("/"):
         return UnknownCommand(chat_id=chat_id, raw_text=text.strip())
+
+    chat_msg = parse_chat_message(chat_id, text)
+    if chat_msg is not None:
+        return chat_msg
 
     return None

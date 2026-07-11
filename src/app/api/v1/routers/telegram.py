@@ -7,6 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 
 from app.api.v1.dependencies import (
     get_briefing_command_handler,
+    get_chat_message_handler,
     get_impact_command_handler,
     get_link_telegram_account_use_case,
     get_signal_command_handler,
@@ -28,6 +29,8 @@ from app.domain.telegram.ports import (
 from app.infrastructure.telegram import (
     BriefingCommand,
     BriefingCommandHandler,
+    ChatMessage,
+    ChatMessageHandler,
     ImpactCommand,
     ImpactCommandHandler,
     SignalCommand,
@@ -37,6 +40,7 @@ from app.infrastructure.telegram import (
     StartCommand,
     UnknownCommand,
     format_unknown_command_reply,
+    format_welcome_reply,
     parse_telegram_command,
 )
 
@@ -112,6 +116,9 @@ async def telegram_webhook(
     impact_handler: Annotated[
         ImpactCommandHandler | None, Depends(get_impact_command_handler)
     ],
+    chat_handler: Annotated[
+        ChatMessageHandler | None, Depends(get_chat_message_handler)
+    ],
     messenger: Annotated[TelegramMessenger | None, Depends(get_telegram_messenger)],
 ) -> dict[str, bool]:
     """Telegram webhook endpoint: Telegram POSTs every `Update` here once `setWebhook` is
@@ -162,8 +169,12 @@ async def telegram_webhook(
     try:
         match command:
             case StartCommand():
-                linked = await use_case.execute(token=command.token, chat_id=command.chat_id)
-                return {"ok": linked}
+                if command.token:
+                    linked = await use_case.execute(token=command.token, chat_id=command.chat_id)
+                    return {"ok": linked}
+                if messenger is not None:
+                    await messenger.send_text(command.chat_id, format_welcome_reply())
+                return {"ok": True}
             case BriefingCommand():
                 if briefing_handler is not None:
                     await briefing_handler.handle(command)
@@ -181,6 +192,10 @@ async def telegram_webhook(
             case ImpactCommand():
                 if impact_handler is not None:
                     await impact_handler.handle(command)
+                return {"ok": True}
+            case ChatMessage():
+                if chat_handler is not None:
+                    await chat_handler.handle(command)
                 return {"ok": True}
             case UnknownCommand():
                 if messenger is not None:
