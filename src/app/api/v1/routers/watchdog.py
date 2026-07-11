@@ -4,15 +4,20 @@ from fastapi import APIRouter, Depends, status
 
 from app.api.v1.dependencies import (
     get_alerted_signal_tracker,
+    get_instrument_universe,
+    get_market_data_provider,
     get_notification_channel,
+    get_scenario_repository,
     get_signal_repository,
     get_watchlist_repository,
 )
-from app.api.v1.schemas import AlertResponse
+from app.api.v1.schemas import AlertResponse, ScenarioMonitorResponse
 from app.application.watchdog import AlertedSignalTracker
-from app.application.watchdog.use_cases import RunWatchdogScan
+from app.application.watchdog.use_cases import EvaluateScenarioMonitors, RunWatchdogScan
 from app.core.config import Settings, get_settings
+from app.domain.market.ports import InstrumentUniverse, MarketDataProvider
 from app.domain.notification.ports import NotificationChannel
+from app.domain.scenario.ports import ScenarioRepository
 from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.ports import WatchlistRepository
 
@@ -44,3 +49,32 @@ async def scan_now(
     )
     alerts = await use_case.execute()
     return [AlertResponse.model_validate(alert) for alert in alerts]
+
+
+@router.post("/evaluate-scenarios", status_code=status.HTTP_200_OK)
+async def evaluate_scenario_monitors_now(
+    settings: Annotated[Settings, Depends(get_settings)],
+    scenario_repository: Annotated[ScenarioRepository, Depends(get_scenario_repository)],
+    signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
+    market_data_provider: Annotated[MarketDataProvider, Depends(get_market_data_provider)],
+    instrument_universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
+    notification_channel: Annotated[NotificationChannel, Depends(get_notification_channel)],
+) -> list[ScenarioMonitorResponse]:
+    """Trigger one Scenario Monitor evaluation pass immediately (issue #18) — demo-safe
+    manual trigger, same "on-demand endpoint runs the exact scheduled-job use case" pattern
+    `POST /api/v1/watchdog/scan` establishes for `RunWatchdogScan`.
+    """
+    use_case = EvaluateScenarioMonitors(
+        scenario_repository=scenario_repository,
+        signal_repository=signal_repository,
+        market_data_provider=market_data_provider,
+        instrument_universe=instrument_universe,
+        notification_channel=notification_channel,
+        frontend_base_url=settings.frontend_base_url,
+        price_move_threshold_low_pct=settings.scenario_monitor_price_move_threshold_low_pct,
+        price_move_threshold_medium_pct=settings.scenario_monitor_price_move_threshold_medium_pct,
+        price_move_threshold_high_pct=settings.scenario_monitor_price_move_threshold_high_pct,
+        price_window_max_days=settings.scenario_monitor_price_window_max_days,
+    )
+    matched_monitors = await use_case.execute()
+    return [ScenarioMonitorResponse.model_validate(monitor) for monitor in matched_monitors]
