@@ -58,11 +58,13 @@ class SimulateCommandHandler:
         scenario_simulation_runner: ScenarioSimulationRunner,
         messenger: TelegramMessenger,
         frontend_base_url: str,
+        default_locale: str,
     ) -> None:
         self._link_repository = link_repository
         self._scenario_simulation_runner = scenario_simulation_runner
         self._messenger = messenger
         self._frontend_base_url = frontend_base_url
+        self._default_locale = default_locale
 
     async def send_acknowledgement(self, command: SimulateCommand) -> bool:
         """Fast, synchronous path — awaited by the router BEFORE it responds to
@@ -88,7 +90,9 @@ class SimulateCommandHandler:
         `TelegramNotificationChannel` follows for the Watchdog scan loop.
         """
         try:
-            result = await self._scenario_simulation_runner.execute(free_text=command.text)
+            result = await self._scenario_simulation_runner.execute(
+                free_text=command.text, locale=self._default_locale
+            )
         except Exception:  # noqa: BLE001 — runs detached from any request; must never raise.
             logger.exception(
                 "Scenario simulation failed for Telegram /simular, chat_id=%s", command.chat_id
