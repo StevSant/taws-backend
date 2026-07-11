@@ -6,6 +6,7 @@ from langchain_core.language_models import BaseChatModel
 
 from app.application.analogs.use_cases import FindHistoricalAnalogs
 from app.application.consequence.use_cases import GenerateConsequenceChain
+from app.application.event_intelligence.use_cases import ProcessIncomingEvent
 from app.application.macro.use_cases import InterpretMacroEvent
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
 from app.application.scenario.use_cases import (
@@ -27,6 +28,11 @@ from app.domain.agents.ports import (
 )
 from app.domain.briefing.ports import BriefingDocumentRenderer, BriefingRepository
 from app.domain.chat.ports import ConversationRepository
+from app.domain.event_intelligence.ports import (
+    EventAnalyzerPort,
+    EventRepositoryPort,
+    NewsProviderPort,
+)
 from app.domain.market.ports import (
     FundamentalsProvider,
     InstrumentUniverse,
@@ -56,6 +62,9 @@ from app.infrastructure.agents.tools import (
 )
 from app.infrastructure.briefing import ReportLabBriefingPdfRenderer
 from app.infrastructure.embeddings import OpenAIEmbeddings
+from app.infrastructure.event_intelligence.gemini import GeminiEventAnalyzer
+from app.infrastructure.event_intelligence.providers import DemoNewsProvider
+from app.infrastructure.event_intelligence.repositories import MemoryEventRepository
 from app.infrastructure.fundamentals import (
     FixtureFundamentalsProvider,
     RoutingFundamentalsProvider,
@@ -162,6 +171,10 @@ class Container:
         self._fear_greed_provider: FearGreedProvider | None = None
         self._analyze_sentiment_use_case: AnalyzeSentiment | None = None
         self._interpret_macro_event_use_case: InterpretMacroEvent | None = None
+        self._event_analyzer: EventAnalyzerPort | None = None
+        self._event_repository: EventRepositoryPort | None = None
+        self._event_news_provider: NewsProviderPort | None = None
+        self._process_incoming_event_use_case: ProcessIncomingEvent | None = None
 
     def get_llm_provider(self) -> LLMProvider:
         if self._llm_provider is None:
@@ -549,6 +562,53 @@ class Container:
                 llm_provider=self.get_llm_provider(),
             )
         return self._interpret_macro_event_use_case
+
+    def get_event_analyzer(self) -> EventAnalyzerPort:
+        """Return the cached Gemini-based event analyzer for the Sentinel pipeline.
+
+        Falls back to a zero-signal result when `GEMINI_API_KEY` is unset —
+        same graceful-degradation pattern as `get_agent_memory`'s Redis fallback.
+        """
+        if self._event_analyzer is None:
+            self._event_analyzer = GeminiEventAnalyzer(
+                api_key=self._settings.gemini_api_key,
+                model=self._settings.gemini_model,
+            )
+        return self._event_analyzer
+
+    def get_event_repository(self) -> EventRepositoryPort:
+        """Return the cached in-memory event repository for the Sentinel pipeline.
+
+        Always `MemoryEventRepository` today — no Supabase adapter is wired yet.
+        Swap this method to gate on a future `Settings` field (e.g. a Supabase
+        connection) once a real adapter lands, same "unconfigured -> in-memory
+        fallback" pattern as `get_agent_memory`'s Redis gate.
+        """
+        if self._event_repository is None:
+            self._event_repository = MemoryEventRepository()
+        return self._event_repository
+
+    def get_event_news_provider(self) -> NewsProviderPort:
+        """Return the cached demo news provider for the Sentinel pipeline.
+
+        Always `DemoNewsProvider` today — swap to a real provider (e.g.
+        YahooNewsProvider) once implemented, gated by a `Settings` field.
+        """
+        if self._event_news_provider is None:
+            self._event_news_provider = DemoNewsProvider()
+        return self._event_news_provider
+
+    def get_process_incoming_event_use_case(self) -> ProcessIncomingEvent:
+        """Return the cached Event Intelligence use case (Sentinel pipeline).
+
+        Wires the Gemini analyzer and in-memory repository together.
+        """
+        if self._process_incoming_event_use_case is None:
+            self._process_incoming_event_use_case = ProcessIncomingEvent(
+                analyzer=self.get_event_analyzer(),
+                repository=self.get_event_repository(),
+            )
+        return self._process_incoming_event_use_case
 
     def get_fear_greed_provider(self) -> FearGreedProvider:
         """Return the routing FearGreedProvider (alternative.me + fixture fallback).
