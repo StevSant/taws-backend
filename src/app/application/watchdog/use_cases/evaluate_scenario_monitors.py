@@ -12,9 +12,14 @@ from app.domain.scenario.ports import ScenarioRepository
 from app.domain.signals.entities import ImpactClass
 from app.domain.signals.ports import SignalRepository
 
-# Minimum price-history window handed to `ComputeMarketStats` — a shorter window can't
-# produce 2 candles to diff, so `price_delta_pct` would always be `None`. See
-# `_price_window_days` below for how this combines with "since arming".
+# Minimum REAL elapsed time (in days) since a monitor was armed before the price-move
+# match branch is evaluated at all. Below this, there's no honest way to measure "price
+# movement since arming": the shortest lookback `ComputeMarketStats` can produce 2
+# candles from would extend before the monitor existed, misattributing pre-arming price
+# history to "since arming" (see `_price_window_is_eligible` below — found in review of
+# issue #18, a monitor armed 3 hours ago was still claiming a 2-day move happened "since
+# armed"). Also happens to be the minimum window `ComputeMarketStats` needs for 2
+# candles to diff, but the timing-honesty reason is the one that matters here.
 _MIN_PRICE_WINDOW_DAYS = 2
 
 
@@ -44,9 +49,14 @@ class EvaluateScenarioMonitors:
        matched this way (there's nothing directional to confirm) — falls through to the
        price check.
 
-    2. **Price-move match**: `ComputeMarketStats.execute(symbol, window_days=...)`'s
-       `price_delta_pct` (issue #7 — reused as-is, not reimplemented) has an absolute value
-       at or above the threshold mapped from the scenario's OWN `spec.magnitude`:
+    2. **Price-move match**: only evaluated once at least `_MIN_PRICE_WINDOW_DAYS` have
+       ACTUALLY elapsed since arming (`_price_window_is_eligible`) — before that, there is
+       no honest way to measure "price movement since arming" without the lookback window
+       extending before the monitor existed, so this branch is skipped entirely and a
+       freshly-armed monitor can only match via the signal-based rule above. Once
+       eligible, `ComputeMarketStats.execute(symbol, window_days=...)`'s `price_delta_pct`
+       (issue #7 — reused as-is, not reimplemented) has an absolute value at or above the
+       threshold mapped from the scenario's OWN `spec.magnitude`:
 
        | magnitude | threshold |
        |-----------|-----------|
@@ -59,8 +69,7 @@ class EvaluateScenarioMonitors:
        deliberately NOT checked for this branch: a large move either way on an affected
        symbol is itself evidence "something dramatic is happening" there, which is what
        the price-move criterion is for — direction confirmation is the signal check's job.
-       The window is "since arming" (`(now - monitor.armed_at).days`, floored at
-       `_MIN_PRICE_WINDOW_DAYS` so there's a chance of 2 candles, capped at
+       The window is "since arming" (`(now - monitor.armed_at).days`, capped at
        `Settings.scenario_monitor_price_window_max_days` so a monitor armed months ago
        doesn't request an enormous history fetch).
 
@@ -190,6 +199,11 @@ class EvaluateScenarioMonitors:
     async def _check_price_match(
         self, monitor: ScenarioMonitor, scenario: ScenarioResult, instrument: Instrument
     ) -> str | None:
+        if not _price_window_is_eligible(monitor.armed_at):
+            # Too soon since arming to measure an honest "since arming" price window
+            # — see `_price_window_is_eligible`'s docstring. Signal-based matching
+            # (`_check_signal_match`) is unaffected and can still fire during this gap.
+            return None
         threshold_pct = self._price_move_threshold_pct[scenario.spec.magnitude]
         window_days = _price_window_days(monitor.armed_at, self._price_window_max_days)
         try:
@@ -223,9 +237,30 @@ def _expected_direction_for_asset_class(
     return None
 
 
+def _price_window_is_eligible(armed_at: datetime) -> bool:
+    """Whether enough REAL time has passed since arming to make "price move since
+    arming" a claim the monitor can actually stand behind.
+
+    A monitor armed only hours (or less than `_MIN_PRICE_WINDOW_DAYS`) ago still needs
+    at least `_MIN_PRICE_WINDOW_DAYS` of lookback for `ComputeMarketStats` to have 2
+    candles to diff — but that lookback would then extend BEFORE the monitor was armed,
+    so a match on it would report a price move that partly (or entirely) predates
+    arming as if it happened "since the monitor was armed" (confirmed bug: a monitor
+    armed 3 hours ago requesting a 2-day window whose move mostly predates arming).
+    Rather than floor the window and risk that false claim, the price-move branch is
+    skipped entirely until real elapsed time catches up to the minimum window. The
+    monitor can still match via the signal-based rule (`_check_signal_match`) during
+    this gap — only price-move matching is suppressed.
+    """
+    return (datetime.now(UTC) - armed_at).days >= _MIN_PRICE_WINDOW_DAYS
+
+
 def _price_window_days(armed_at: datetime, max_days: int) -> int:
-    """ "Since arming" window, floored so there's a chance of 2 candles to diff and capped
-    so a long-armed monitor doesn't request an unbounded price history."""
+    """ "Since arming" window in days, capped so a long-armed monitor doesn't request an
+    unbounded price history. Only called once `_price_window_is_eligible` has confirmed
+    at least `_MIN_PRICE_WINDOW_DAYS` have actually elapsed since arming, so the lower
+    bound here is a defensive floor (belt-and-suspenders), not the mechanism that makes
+    the window honest — `_price_window_is_eligible` is."""
     days_since_armed = (datetime.now(UTC) - armed_at).days
     return max(_MIN_PRICE_WINDOW_DAYS, min(days_since_armed, max_days))
 
