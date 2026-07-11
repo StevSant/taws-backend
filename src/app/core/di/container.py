@@ -87,7 +87,12 @@ from app.infrastructure.persistence import (
     SupabaseWatchlistRepository,
 )
 from app.infrastructure.seeds import load_preset_scenarios_seed, load_universe_seed
-from app.infrastructure.telegram import TelegramBotClient
+from app.infrastructure.telegram import (
+    BriefingCommandHandler,
+    SignalCommandHandler,
+    SimulateCommandHandler,
+    TelegramBotClient,
+)
 from app.infrastructure.universe import JsonInstrumentUniverse
 from app.infrastructure.vectorstore import PgvectorStore
 
@@ -133,6 +138,9 @@ class Container:
         self._link_telegram_account_use_case: LinkTelegramAccount | None = None
         self._scenario_repository: ScenarioRepository | None = None
         self._scenario_simulation_runner: ScenarioSimulationRunner | None = None
+        self._briefing_command_handler: BriefingCommandHandler | None = None
+        self._signal_command_handler: SignalCommandHandler | None = None
+        self._simulate_command_handler: SimulateCommandHandler | None = None
 
     def get_llm_provider(self) -> LLMProvider:
         if self._llm_provider is None:
@@ -282,6 +290,57 @@ class Container:
                 messenger=messenger,
             )
         return self._link_telegram_account_use_case
+
+    def get_briefing_command_handler(self) -> BriefingCommandHandler | None:
+        """Return the cached `/briefing` command handler, or `None` when Telegram isn't
+        configured — same unconfigured-integration fallback shape as
+        `get_link_telegram_account_use_case` (issue #19).
+        """
+        messenger = self.get_telegram_messenger()
+        if messenger is None:
+            return None
+        if self._briefing_command_handler is None:
+            self._briefing_command_handler = BriefingCommandHandler(
+                link_repository=self.get_telegram_link_repository(),
+                watchlist_repository=self.get_watchlist_repository(),
+                briefing_repository=self.get_briefing_repository(),
+                messenger=messenger,
+                frontend_base_url=self._settings.frontend_base_url,
+            )
+        return self._briefing_command_handler
+
+    def get_signal_command_handler(self) -> SignalCommandHandler | None:
+        """Return the cached `/signal <TICKER>` command handler, or `None` when
+        Telegram isn't configured (issue #19)."""
+        messenger = self.get_telegram_messenger()
+        if messenger is None:
+            return None
+        if self._signal_command_handler is None:
+            self._signal_command_handler = SignalCommandHandler(
+                link_repository=self.get_telegram_link_repository(),
+                instrument_universe=self.get_instrument_universe(),
+                signal_repository=self.get_signal_repository(),
+                messenger=messenger,
+            )
+        return self._signal_command_handler
+
+    def get_simulate_command_handler(self) -> SimulateCommandHandler | None:
+        """Return the cached `/simular <text>` command handler, or `None` when
+        Telegram isn't configured (issue #19). Reuses the same cached
+        `ScenarioSimulationRunner` as `POST /api/v1/scenarios/generate` and the
+        `run_scenario_simulation` chat tool — see `get_scenario_simulation_runner`.
+        """
+        messenger = self.get_telegram_messenger()
+        if messenger is None:
+            return None
+        if self._simulate_command_handler is None:
+            self._simulate_command_handler = SimulateCommandHandler(
+                link_repository=self.get_telegram_link_repository(),
+                scenario_simulation_runner=self.get_scenario_simulation_runner(),
+                messenger=messenger,
+                frontend_base_url=self._settings.frontend_base_url,
+            )
+        return self._simulate_command_handler
 
     def get_news_provider(self) -> NewsProvider:
         """Return the aggregated news source for the radar/agents.

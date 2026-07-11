@@ -1,6 +1,7 @@
 from app.api.v1.dependencies.decode_bearer_token import decode_bearer_token
 from app.api.v1.dependencies.get_agent_runner import get_agent_runner
 from app.api.v1.dependencies.get_alerted_signal_tracker import get_alerted_signal_tracker
+from app.api.v1.dependencies.get_briefing_command_handler import get_briefing_command_handler
 from app.api.v1.dependencies.get_briefing_repository import get_briefing_repository
 from app.api.v1.dependencies.get_conversation_repository import get_conversation_repository
 from app.api.v1.dependencies.get_current_user import get_current_user
@@ -21,11 +22,14 @@ from app.api.v1.dependencies.get_notification_channel import get_notification_ch
 from app.api.v1.dependencies.get_preset_scenario_rows import get_preset_scenario_rows
 from app.api.v1.dependencies.get_scenario_repository import get_scenario_repository
 from app.api.v1.dependencies.get_scenario_simulation_runner import get_scenario_simulation_runner
+from app.api.v1.dependencies.get_signal_command_handler import get_signal_command_handler
 from app.api.v1.dependencies.get_signal_repository import get_signal_repository
+from app.api.v1.dependencies.get_simulate_command_handler import get_simulate_command_handler
 from app.api.v1.dependencies.get_telegram_link_repository import get_telegram_link_repository
 from app.api.v1.dependencies.get_telegram_link_token_repository import (
     get_telegram_link_token_repository,
 )
+from app.api.v1.dependencies.get_telegram_messenger import get_telegram_messenger
 from app.api.v1.dependencies.get_vector_store import get_vector_store
 from app.api.v1.dependencies.get_watchlist_repository import get_watchlist_repository
 from app.api.v1.dependencies.require_current_user import require_current_user
@@ -34,6 +38,7 @@ __all__ = [
     "decode_bearer_token",
     "get_agent_runner",
     "get_alerted_signal_tracker",
+    "get_briefing_command_handler",
     "get_briefing_repository",
     "get_conversation_repository",
     "get_current_user",
@@ -50,9 +55,12 @@ __all__ = [
     "get_preset_scenario_rows",
     "get_scenario_repository",
     "get_scenario_simulation_runner",
+    "get_signal_command_handler",
     "get_signal_repository",
+    "get_simulate_command_handler",
     "get_telegram_link_repository",
     "get_telegram_link_token_repository",
+    "get_telegram_messenger",
     "get_vector_store",
     "get_watchlist_repository",
     "require_current_user",
