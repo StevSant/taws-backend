@@ -1,6 +1,23 @@
 from app.domain.agents.entities.agent_run import AgentRun
 from app.domain.agents.entities.agent_run_status import AgentRunStatus
+from app.domain.agents.entities.agent_stream_event import AgentStreamEvent
+from app.domain.agents.entities.agent_trace import AgentTrace
+from app.domain.agents.entities.agent_trace_event import AgentTraceEvent
+from app.domain.agents.entities.error_event import ErrorEvent
 from app.domain.agents.entities.message import Message
 from app.domain.agents.entities.message_role import MessageRole
+from app.domain.agents.entities.token_event import TokenEvent
+from app.domain.agents.entities.trace_event import TraceEvent
 
-__all__ = ["AgentRun", "AgentRunStatus", "Message", "MessageRole"]
+__all__ = [
+    "AgentRun",
+    "AgentRunStatus",
+    "AgentStreamEvent",
+    "AgentTrace",
+    "AgentTraceEvent",
+    "ErrorEvent",
+    "Message",
+    "MessageRole",
+    "TokenEvent",
+    "TraceEvent",
+]

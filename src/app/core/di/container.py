@@ -1,3 +1,4 @@
+import logging
 from functools import lru_cache
 from typing import Any
 
@@ -13,7 +14,7 @@ from app.domain.agents.ports import (
 )
 from app.domain.chat.ports import ConversationRepository
 from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, NewsProvider
-from app.infrastructure.agents import LangGraphAgentRunner, build_chat_graph
+from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
 from app.infrastructure.embeddings import OpenAIEmbeddings
 from app.infrastructure.llm import OpenAIProvider, build_chat_model
 from app.infrastructure.marketdata import (
@@ -87,10 +88,21 @@ class Container:
 
     def get_agent_memory(self) -> AgentMemory:
         if self._agent_memory is None:
-            # Key fallback logic: Redis (Upstash) when configured, in-memory otherwise —
-            # so local/offline dev and CI never break for lack of a Redis URL.
+            # Key fallback logic: Redis (Upstash) when configured AND reachable,
+            # in-memory otherwise — a missing URL, a bad URL, or a server without the
+            # required modules must never break chat, only lose durable memory.
             if self._settings.redis_url:
-                self._agent_memory = RedisCheckpointer(redis_url=self._settings.redis_url)
+                redis_memory = RedisCheckpointer(redis_url=self._settings.redis_url)
+                try:
+                    redis_memory.get_checkpointer()  # probe: connects + creates indices
+                    self._agent_memory = redis_memory
+                except Exception:  # noqa: BLE001 — any Redis failure degrades, never breaks
+                    logging.getLogger(__name__).warning(
+                        "REDIS_URL is set but the Redis checkpointer failed to "
+                        "initialize; falling back to InMemoryCheckpointer",
+                        exc_info=True,
+                    )
+                    self._agent_memory = InMemoryCheckpointer()
             else:
                 self._agent_memory = InMemoryCheckpointer()
         return self._agent_memory
@@ -191,9 +203,9 @@ class Container:
         """Return the cached `AgentRunner`, built from the chat model + checkpointer.
 
         See `infrastructure/llm/chat_model_factory.build_chat_model` to swap the LLM
-        provider behind agent graphs, and `infrastructure/agents/chat_graph.
-        build_chat_graph` to change the graph shape — this method only wires them
-        together.
+        provider behind agent graphs, and `infrastructure/agents/supervisor_graph.
+        build_supervisor_graph` to change the graph shape — this method only wires
+        them together.
         """
         if self._agent_runner is None:
             self._agent_runner = LangGraphAgentRunner(graph=self._get_chat_graph())
@@ -207,7 +219,7 @@ class Container:
     def _get_chat_graph(self) -> Any:
         if self._chat_graph is None:
             checkpointer = self.get_agent_memory().get_checkpointer()
-            self._chat_graph = build_chat_graph(self._get_chat_model(), checkpointer)
+            self._chat_graph = build_supervisor_graph(self._get_chat_model(), checkpointer)
         return self._chat_graph
 
 

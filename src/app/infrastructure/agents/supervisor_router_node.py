@@ -1,0 +1,60 @@
+from typing import Any
+
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import SystemMessage
+from langgraph.config import get_stream_writer
+
+from app.domain.agents.entities import AgentTraceEvent
+from app.infrastructure.agents.route_decision import RouteDecision
+from app.infrastructure.agents.supervisor_route import SupervisorRoute
+from app.infrastructure.agents.supervisor_state import SupervisorState
+
+_ROUTER_SYSTEM_PROMPT = """You are the Supervisor of a team of financial-research \
+specialists. Read the conversation and pick exactly one specialist to handle the \
+latest user turn:
+- analyst: news, filings, market-signal, and impact-classification questions.
+- quant: prices, price deltas, volatility, and numeric/statistical questions.
+- advisor: recommendations, briefings, summaries, and everything else.
+Give a one-sentence reason for your choice."""
+
+_FALLBACK_ROUTE = SupervisorRoute.ADVISOR
+_FALLBACK_DETAIL = "fallback routing (no API key)"
+
+
+def build_supervisor_router_node(model: BaseChatModel) -> Any:
+    """Build the "supervisor" node: picks a specialist via structured output.
+
+    Uses `model.with_structured_output(RouteDecision)` to force the model to return
+    one of `SupervisorRoute` plus a short reason. The fallback fake chat model (used
+    when no API key is configured, see `chat_model_factory.build_chat_model`) doesn't
+    implement `bind_tools`/structured output and raises `NotImplementedError` as soon
+    as `with_structured_output` is called — caught here and routed to `advisor` by
+    default so the graph keeps working without a key.
+
+    Emits one `ROUTING` trace via `get_stream_writer()` before returning the chosen
+    route in `SupervisorState.route`, which `select_specialist_route` reads to choose
+    the conditional edge.
+
+    Returns `Any` (not a `Callable[[SupervisorState], ...]` alias): `StateGraph.add_node`
+    expects its callable's `state` parameter to accept the keyword name `state`, which a
+    `Callable[...]` type alias erases — annotating with one here makes pyright reject a
+    perfectly valid callable at the `add_node` call site in `supervisor_graph.py`.
+    """
+
+    async def supervisor_node(state: SupervisorState) -> dict[str, Any]:
+        writer = get_stream_writer()
+        try:
+            structured_model = model.with_structured_output(RouteDecision)
+            decision = await structured_model.ainvoke(
+                [SystemMessage(content=_ROUTER_SYSTEM_PROMPT), *state["messages"]]
+            )
+            if not isinstance(decision, RouteDecision):
+                raise TypeError(f"Unexpected structured-output result: {decision!r}")
+            route, detail = decision.route, decision.reason
+        except Exception:
+            route, detail = _FALLBACK_ROUTE, _FALLBACK_DETAIL
+
+        writer({"agent": "supervisor", "event": AgentTraceEvent.ROUTING.value, "detail": detail})
+        return {"route": route.value}
+
+    return supervisor_node

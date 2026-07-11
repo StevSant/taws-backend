@@ -6,11 +6,12 @@ from app.domain.agents.ports import AgentMemory
 class RedisCheckpointer(AgentMemory):
     """AgentMemory adapter backed by Redis (Upstash) via a LangGraph checkpointer.
 
-    Built lazily on purpose: `langgraph-checkpoint-redis` is an optional dependency
-    not installed by default in this skeleton. Importing this module always
-    succeeds; only `get_checkpointer()` needs the package, and only once the DI
-    container has already decided (via `settings.redis_url`) to use Redis at all.
-    Install with `uv add langgraph-checkpoint-redis` to enable it for real.
+    Built lazily: `get_checkpointer()` constructs the `RedisSaver` and runs its
+    `setup()` (which creates the required RedisJSON/RediSearch indices) on first
+    use. If the server does not support those modules (some managed Redis
+    providers don't) or the URL is wrong, this raises — the DI container catches
+    that and falls back to `InMemoryCheckpointer`, so chat never breaks on a
+    Redis problem.
     """
 
     def __init__(self, redis_url: str) -> None:
@@ -23,15 +24,8 @@ class RedisCheckpointer(AgentMemory):
         return self._checkpointer
 
     def _build_checkpointer(self) -> Any:
-        try:
-            from langgraph.checkpoint.redis import (  # pyright: ignore[reportMissingImports]
-                RedisSaver,
-            )
-        except ImportError as exc:
-            raise RuntimeError(
-                "RedisCheckpointer requires the optional 'langgraph-checkpoint-redis' "
-                "package. Install it with `uv add langgraph-checkpoint-redis`, or "
-                "unset REDIS_URL to use the InMemoryCheckpointer fallback instead."
-            ) from exc
+        from langgraph.checkpoint.redis import RedisSaver
 
-        return RedisSaver.from_conn_string(self._redis_url)
+        saver = RedisSaver(redis_url=self._redis_url)
+        saver.setup()
+        return saver

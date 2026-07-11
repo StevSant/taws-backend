@@ -127,47 +127,119 @@ uv run pyright
 
 Never use bare `pip`, `python -m`, or a bare `python` invocation — always `uv run`.
 
-## Agent layer (LangGraph) and streaming (SSE)
+## Agent layer (LangGraph Supervisor) and streaming (SSE v2)
 
 `POST /api/v1/chat/stream` is routed through the agent layer end to end:
 
 ```
 chat.py router → StreamReply use case → AgentRunner port → LangGraphAgentRunner adapter
-                                                              → compiled LangGraph graph
+                                                              → compiled Supervisor graph
 ```
+
+### The Supervisor graph
+
+`infrastructure/agents/supervisor_graph.build_supervisor_graph(model, checkpointer)` builds
+the default chat graph: one **`supervisor`** router node, then a conditional edge to exactly
+one of three specialist nodes (**`analyst`**, **`quant`**, **`advisor`**), then `END`.
+
+- **State**: `SupervisorState` (`infrastructure/agents/supervisor_state.py`) —
+  `langgraph.graph.MessagesState` (`{"messages": Annotated[list, add_messages]}`) plus a
+  `route: NotRequired[str]` key. The supervisor node writes `route`; `select_specialist_route`
+  (`infrastructure/agents/select_specialist_route.py`) reads it to pick the conditional edge.
+- **Supervisor node** (`infrastructure/agents/supervisor_router_node.build_supervisor_router_node`):
+  calls `model.with_structured_output(RouteDecision)` (`infrastructure/agents/route_decision.py`
+  — `{route: SupervisorRoute, reason: str}`) to pick one specialist. The fallback fake chat
+  model (no `OPENAI_API_KEY`, see below) doesn't implement `bind_tools`, so
+  `with_structured_output(...)` raises `NotImplementedError` immediately — caught and defaulted
+  to `SupervisorRoute.ADVISOR` with detail `"fallback routing (no API key)"`, so routing degrades
+  gracefully instead of crashing.
+- **Specialist nodes** (`infrastructure/agents/specialist_node_factory.build_specialist_node`):
+  one factory shared by all three — only `agent_name` and `persona` differ. Each persona is a
+  module-level string constant in its own file under `infrastructure/agents/personas/`
+  (`analyst_persona.py`, `quant_persona.py`, `advisor_persona.py`), re-exported from
+  `personas/__init__.py`. The node prepends the persona as a `SystemMessage` for that one
+  `model.ainvoke(...)` call only (never returned in state, so it doesn't accumulate across
+  turns) and returns just the new `AIMessage` — same "let `add_messages` append it" pattern as
+  the old single-node graph.
+- **Routes** live in `SupervisorRoute` (`infrastructure/agents/supervisor_route.py`, a `StrEnum`:
+  `analyst` / `quant` / `advisor`).
+
+**To add a new specialist:** add a value to `SupervisorRoute`, add a persona file under
+`personas/`, add a `graph.add_node(...)` + `graph.add_edge(<route>, END)` call in
+`supervisor_graph.build_supervisor_graph`, and add the route to the conditional-edge mapping.
+Nothing else in the codebase needs to change.
+
+`chat_graph.build_chat_graph` (the original single-node graph) still exists but is no longer
+wired into `Container` — kept only as a minimal reference shape.
+
+### Trace events
+
+Every node emits `AgentTrace` frames via LangGraph's `get_stream_writer()`
+(`from langgraph.config import get_stream_writer`), passing a plain dict shaped
+`{"agent": str, "event": "routing" | "start" | "done", "detail": str | None}`:
+- supervisor emits one `ROUTING` trace (with the chosen route as `detail`);
+- each specialist emits `START` before its `model.ainvoke(...)` and `DONE` after.
+
+`AgentTraceEvent` (`domain/agents/entities/agent_trace_event.py`) is the pure `StrEnum` for
+these three values; `AgentTrace` (`domain/agents/entities/agent_trace.py`) is the pure entity
+`{agent, event, detail}`. Both are domain — no vendor import needed to model them.
+
+### Runner: consuming two stream modes at once
 
 - **`AgentRunner`** (`domain/agents/ports/agent_runner.py`) is the port; **
   `LangGraphAgentRunner`** (`infrastructure/agents/langgraph_agent_runner.py`) is its only
   adapter. `LangGraphAgentRunner.stream(thread_id, message)` runs `graph.astream(...,
-  config={"configurable": {"thread_id": thread_id}}, stream_mode="messages")`, which
-  yields `(message_chunk, metadata)` tuples per LLM token; the adapter extracts
-  `AIMessageChunk.content` (see `extract_ai_message_token.py`) and skips everything else.
-- **The graph** (`infrastructure/agents/chat_graph.build_chat_graph(model, checkpointer)`)
-  is a single-node graph over `langgraph.graph.MessagesState`
-  (`{"messages": Annotated[list, add_messages]}`), compiled with `graph.compile(checkpointer=
-  checkpointer)`. The node does `await model.ainvoke(state["messages"])` and returns only the
-  new `AIMessage` — the `add_messages` reducer appends it to the thread's history instead of
-  replacing it.
+  config={"configurable": {"thread_id": thread_id}}, stream_mode=["messages", "custom"])`.
+  **Passing a list of stream modes changes the yielded shape**: instead of the bare per-mode
+  payload, LangGraph yields `(mode, payload)` tuples —
+  - `mode == "messages"`: `payload` is the same `(message_chunk, metadata)` tuple as the
+    single-mode case; the adapter extracts `AIMessageChunk.content` (see
+    `extract_ai_message_token.py`) and skips everything else.
+  - `mode == "custom"`: `payload` is exactly the dict a node passed to
+    `get_stream_writer()(...)`, untouched by LangGraph — turned into a domain `AgentTrace` by
+    `build_agent_trace_from_payload.py`.
+- The adapter yields typed **`AgentStreamEvent`**s (`domain/agents/entities/agent_stream_event.py`
+  — a union of `TokenEvent | TraceEvent | ErrorEvent`, one dataclass per file) instead of raw
+  strings, so the domain layer stays pure while still describing every SSE v2 frame kind.
+  **Any exception during the run is caught and yielded as a single `ErrorEvent`** instead of
+  propagating — a mid-stream failure still reaches the client as a well-formed frame instead of
+  dropping the connection.
 - **Per-thread history is the checkpointer's job**, not the application layer's: the
   `AgentMemory` port (`Container.get_agent_memory()`, in-memory or Redis) supplies the
   checkpointer, which persists/replays each thread's accumulated `messages` list keyed by
   `thread_id`. `StreamReply.execute(thread_id, message)` only forwards a single new
-  `Message` — it does not build or persist a message list itself, so multi-turn
-  conversations aren't amnesiac between calls with the same `thread_id`.
+  `Message` and passes `AgentStreamEvent`s straight through — it does not build or persist a
+  message list itself, so multi-turn conversations aren't amnesiac between calls with the same
+  `thread_id`.
 - **The model itself** comes from `infrastructure/llm/chat_model_factory.build_chat_model`
-  — see "Swap the LLM provider used by agent graphs" above for how to change it.
+  — see "Swap the LLM provider used by agent graphs" above for how to change it. The Supervisor
+  and all three specialists share this one model instance; only the system prompt differs.
 - **Container caching**: `Container` (`core/di/container.py`) lazily builds and caches each
   adapter (including the chat model, compiled graph, and `AgentRunner`) on first access, so
   they're process-wide singletons — don't reintroduce a "build a new one every call" pattern
-  when adding new `get_*`/`_get_*` methods.
+  when adding new `get_*`/`_get_*` methods. `Container._get_chat_graph()` now builds the
+  Supervisor graph (`build_supervisor_graph`), not `build_chat_graph`.
 
-SSE wire format: each frame is JSON-encoded, not a raw token —
-`data: {"t": "<token>"}\n\n`, ending with `data: {"done": true}\n\n`. This is deliberate:
-a raw `data: <token>\n\n` frame breaks if a token itself contains a newline, corrupting SSE
-framing. The Angular frontend (`SseChatRepository`) reads this with `fetch` +
-`ReadableStream`, not `EventSource` (so it can send a POST body), parses each `data:` line
-as JSON, yields `.t`, and stops on `.done`. Keep new streaming endpoints in this same JSON
-frame shape unless there's a strong reason to change it.
+### SSE wire format (protocol v2)
+
+Each frame is JSON-encoded, not a raw token, and is one of exactly four shapes:
+
+```
+data: {"t": "<token>"}\n\n
+data: {"trace": {"agent": "<name>", "event": "routing"|"start"|"done", "detail": "<optional text>"}}\n\n
+data: {"error": "<message>"}\n\n
+data: {"done": true}\n\n
+```
+
+`api/v1/routers/chat.py`'s `_to_sse_frame` maps each `AgentStreamEvent` variant to exactly one
+of these (`detail` is omitted from the trace object when `None`, never sent as `null`), and
+`_to_sse` always appends a final `{"done": true}` frame — even after an `{"error": ...}` frame —
+so clients can rely on `done` to know the stream is over either way. This is deliberate: a raw
+`data: <token>\n\n` frame breaks if a token itself contains a newline, corrupting SSE framing.
+The Angular frontend (`SseChatRepository`) reads this with `fetch` + `ReadableStream`, not
+`EventSource` (so it can send a POST body), parses each `data:` line as JSON, and maps it to a
+`ChatStreamEvent` (`{kind: 'token'|'trace'|'error'}`). Keep new streaming endpoints in this same
+JSON frame shape unless there's a strong reason to change it.
 
 ## Team & ownership
 
