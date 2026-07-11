@@ -335,7 +335,7 @@ async def _generate_demo_briefing(container: Container, watchlist_id: str) -> No
         llm_provider=container.get_llm_provider(),
     )
     try:
-        briefing = await use_case.execute(watchlist_id)
+        briefing = await use_case.execute(watchlist_id, get_settings().default_locale)
     except (EmptyWatchlistError, ComplianceViolationError) as exc:
         logger.warning("Skipped briefing: %s", exc)
         return
@@ -345,7 +345,7 @@ async def _generate_demo_briefing(container: Container, watchlist_id: str) -> No
 async def _generate_and_arm_demo_scenario(container: Container) -> None:
     settings = get_settings()
     runner = container.get_scenario_simulation_runner()
-    result = await runner.execute(preset_id=DEMO_SCENARIO_PRESET_ID)
+    result = await runner.execute(preset_id=DEMO_SCENARIO_PRESET_ID, locale=settings.default_locale)
     logger.info("Generated scenario %s (preset=%s)", result.id, DEMO_SCENARIO_PRESET_ID)
 
     arm_use_case = ArmScenarioMonitor(
