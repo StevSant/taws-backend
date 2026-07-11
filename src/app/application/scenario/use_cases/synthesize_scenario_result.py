@@ -1,5 +1,6 @@
 import uuid
 
+from app.application.common import build_locale_instruction
 from app.application.quant.event_study_stats import EventStudyStats
 from app.application.quant.market_stats import MarketStats
 from app.application.scenario.format_scenario_evidence import format_scenario_evidence
@@ -82,9 +83,10 @@ class SynthesizeScenarioResult:
         consequence_chain: ConsequenceChain,
         context: ScenarioContext,
         quant_results: dict[str, EventStudyStats],
+        locale: str,
     ) -> ScenarioResult:
         evidence_pool = self._build_evidence_pool(spec, context, quant_results)
-        extraction = await self._synthesize(spec, consequence_chain, evidence_pool)
+        extraction = await self._synthesize(spec, consequence_chain, evidence_pool, locale)
 
         impact_map = self._build_impact_map(spec, evidence_pool, extraction.impact_map)
 
@@ -104,11 +106,15 @@ class SynthesizeScenarioResult:
         spec: ScenarioSpec,
         consequence_chain: ConsequenceChain,
         evidence_pool: dict[AssetClass, list[ScenarioEvidence]],
+        locale: str,
     ) -> ScenarioSynthesisExtraction:
         try:
             raw = await self._llm_provider.complete_structured(
                 messages=[
-                    Message(role=MessageRole.SYSTEM, content=_SYNTHESIS_SYSTEM_PROMPT),
+                    Message(
+                        role=MessageRole.SYSTEM,
+                        content=_SYNTHESIS_SYSTEM_PROMPT + build_locale_instruction(locale),
+                    ),
                     Message(
                         role=MessageRole.USER,
                         content=_build_synthesis_prompt(spec, consequence_chain, evidence_pool),

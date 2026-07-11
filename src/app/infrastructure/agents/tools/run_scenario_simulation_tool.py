@@ -27,6 +27,7 @@ class _RunScenarioSimulationArgs(BaseModel):
 
 def build_run_scenario_simulation_tool(
     scenario_simulation_runner: ScenarioSimulationRunner,
+    default_locale: str,
 ) -> StructuredTool:
     """Build a LangChain tool wrapping the full Scenario Simulation graph (issue #12) for
     the `advisor` specialist — thin wrapper, same shape as
@@ -49,7 +50,7 @@ def build_run_scenario_simulation_tool(
     async def _run(preset_id: str | None = None, free_text: str | None = None) -> str:
         try:
             result = await scenario_simulation_runner.execute(
-                preset_id=preset_id, free_text=free_text
+                preset_id=preset_id, free_text=free_text, locale=default_locale
             )
         except InvalidScenarioIntakeError as exc:
             return str(exc)

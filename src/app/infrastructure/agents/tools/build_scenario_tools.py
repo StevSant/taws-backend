@@ -6,7 +6,9 @@ from app.infrastructure.agents.tools.run_scenario_simulation_tool import (
 )
 
 
-def build_scenario_tools(scenario_simulation_runner: ScenarioSimulationRunner) -> list[BaseTool]:
+def build_scenario_tools(
+    scenario_simulation_runner: ScenarioSimulationRunner, default_locale: str
+) -> list[BaseTool]:
     """Build the tools bound to the `advisor` specialist node for triggering the Scenario
     Simulation graph (issue #12) from chat.
 
@@ -17,4 +19,4 @@ def build_scenario_tools(scenario_simulation_runner: ScenarioSimulationRunner) -
     concatenates this with (kept in a separate builder since this isn't "grounding an
     answer in persisted signals", it's "trigger a whole pipeline").
     """
-    return [build_run_scenario_simulation_tool(scenario_simulation_runner)]
+    return [build_run_scenario_simulation_tool(scenario_simulation_runner, default_locale)]

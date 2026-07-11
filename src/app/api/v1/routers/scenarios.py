@@ -45,6 +45,7 @@ async def generate_scenario(
     scenario_simulation_runner: Annotated[
         ScenarioSimulationRunner, Depends(get_scenario_simulation_runner)
     ],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> ScenarioResultResponse:
     """Run the Scenario Simulation graph end to end (issue #12) — Intake -> Context
     gathering -> Causal chain -> Quantification -> Synthesis -> Compliance — for either a
@@ -54,9 +55,10 @@ async def generate_scenario(
     not per-user data — same visibility model as `POST /api/v1/signals/generate`. See
     `ScenarioRepository`'s docstring for the full ownership rationale.
     """
+    locale = payload.locale or settings.default_locale
     try:
         result = await scenario_simulation_runner.execute(
-            preset_id=payload.preset_id, free_text=payload.free_text
+            preset_id=payload.preset_id, free_text=payload.free_text, locale=locale
         )
     except InvalidScenarioIntakeError as exc:
         raise HTTPException(

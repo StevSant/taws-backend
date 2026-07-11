@@ -23,9 +23,14 @@ class ScenarioSimulationRunner:
         self._graph = graph
 
     async def execute(
-        self, *, preset_id: str | None = None, free_text: str | None = None
+        self, *, preset_id: str | None = None, free_text: str | None = None, locale: str
     ) -> ScenarioResult:
         """Run one scenario end to end and return its persisted `ScenarioResult`.
+
+        `locale` is required (no built-in default): every caller (REST router, chat
+        tool, Telegram `/simular` handler) resolves its own fallback from
+        `Settings.default_locale` before calling this, so a default locale is never
+        hardcoded here.
 
         Raises `InvalidScenarioIntakeError` if neither `preset_id` nor `free_text` is
         given, `UnknownPresetError` for an unrecognized `preset_id`, and
@@ -36,7 +41,9 @@ class ScenarioSimulationRunner:
         if not preset_id and not (free_text and free_text.strip()):
             raise InvalidScenarioIntakeError
 
-        final_state = await self._graph.ainvoke({"preset_id": preset_id, "free_text": free_text})
+        final_state = await self._graph.ainvoke(
+            {"preset_id": preset_id, "free_text": free_text, "locale": locale}
+        )
         result = final_state.get("result")
         if result is None:
             # Should be unreachable: the Compliance node either raises or returns a

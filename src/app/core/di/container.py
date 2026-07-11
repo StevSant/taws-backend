@@ -384,6 +384,7 @@ class Container:
                 scenario_simulation_runner=self.get_scenario_simulation_runner(),
                 messenger=messenger,
                 frontend_base_url=self._settings.frontend_base_url,
+                default_locale=self._settings.default_locale,
             )
         return self._simulate_command_handler
 
@@ -709,7 +710,8 @@ class Container:
             advisor_tools = build_advisor_grounding_tools(
                 signal_repository=self.get_signal_repository()
             ) + build_scenario_tools(
-                scenario_simulation_runner=self.get_scenario_simulation_runner()
+                scenario_simulation_runner=self.get_scenario_simulation_runner(),
+                default_locale=self._settings.default_locale,
             )
             consequence_tools = build_consequence_tools(
                 use_case=self.get_generate_consequence_chain_use_case()
