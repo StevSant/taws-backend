@@ -4,12 +4,13 @@ from app.application.briefing.briefing_composition import BriefingComposition, I
 from app.application.briefing.empty_watchlist_error import EmptyWatchlistError
 from app.application.compliance import ComplianceViolationError
 from app.application.compliance.use_cases import ReviewCompliance
+from app.application.review.review_transition_policy import _TERMINAL_DECISIONS
 from app.domain.agents.entities import Message, MessageRole
 from app.domain.agents.ports import LLMProvider
 from app.domain.briefing.entities import Briefing, BriefingInstrumentSection
 from app.domain.briefing.ports import BriefingRepository
 from app.domain.compliance import NOT_PERSONALIZED_ADVICE_DISCLAIMER
-from app.domain.review.entities import OpenReviewItem, ReviewedEntityType
+from app.domain.review.entities import OpenReviewItem, ReviewedEntityType, ReviewState
 from app.domain.signals.entities import Signal
 from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.ports import WatchlistRepository
@@ -206,14 +207,20 @@ class GenerateBriefing:
     async def _gather_open_review_items(
         self, watchlist_id: str, signals: list[Signal]
     ) -> list[OpenReviewItem]:
-        """Surface signals and prior briefings for this watchlist that have no recorded
-        reviewer decision yet ("pending action") — issue #16's "open review items"
+        """Surface signals and prior briefings for this watchlist whose LATEST reviewer
+        decision is non-terminal ("pending action") — issue #16's "open review items"
         acceptance criterion.
 
         Reuses the existing review-state primitives from issue #4
         (`SignalRepository`/`BriefingRepository.list_review_states`) rather than adding a
-        new persisted review-status column: an entity with an empty review-state list IS an
-        open item, no separate "reviewed" flag needed.
+        new persisted review-status column: openness is a read-time projection over the
+        audit trail, not a separate "reviewed" flag. An entity is open when it has no
+        review states at all (never reviewed), OR its latest decision (by `created_at`,
+        i.e. the last element — same convention `SubmitReviewDecision` relies on) is not
+        one of `review_transition_policy._TERMINAL_DECISIONS`. In particular, `ESCALATED`
+        is non-terminal (see that policy's docstring), so an escalated-but-unresolved item
+        stays open here — it must NOT be treated the same as a terminal `REVIEWED`/
+        `DISCARDED` decision just because "some review state exists".
 
         Known N+1 tradeoff: one `list_review_states` call per candidate signal/briefing,
         since neither port exposes a bulk "review states for many entities" query.
@@ -223,7 +230,7 @@ class GenerateBriefing:
         items: list[OpenReviewItem] = []
         for signal in signals:
             review_states = await self._signal_repository.list_review_states(signal.id)
-            if not review_states:
+            if _is_open(review_states):
                 items.append(
                     OpenReviewItem(entity_type=ReviewedEntityType.SIGNAL, entity_id=signal.id)
                 )
@@ -231,12 +238,26 @@ class GenerateBriefing:
         prior_briefings = await self._briefing_repository.list_for_watchlist(watchlist_id)
         for prior in prior_briefings:
             review_states = await self._briefing_repository.list_review_states(prior.id)
-            if not review_states:
+            if _is_open(review_states):
                 items.append(
                     OpenReviewItem(entity_type=ReviewedEntityType.BRIEFING, entity_id=prior.id)
                 )
 
         return items
+
+
+def _is_open(review_states: list[ReviewState]) -> bool:
+    """An entity is an "open review item" when it has no review states yet, or its
+    latest decision (the last element, per `list_review_states`'s "most recent last"
+    contract) is not terminal. Reuses `review_transition_policy._TERMINAL_DECISIONS`
+    directly rather than re-deriving which decisions count as "closed", so this stays
+    consistent with the state machine `SubmitReviewDecision`/`assert_transition_allowed`
+    already enforce — `ESCALATED` is deliberately excluded from that set, so an
+    escalated-but-unresolved item is still open.
+    """
+    if not review_states:
+        return True
+    return review_states[-1].decision not in _TERMINAL_DECISIONS
 
 
 def _flatten_sorted(signals_by_symbol: dict[str, list[Signal]]) -> list[Signal]:
