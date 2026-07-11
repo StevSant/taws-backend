@@ -59,6 +59,35 @@ class Settings(BaseSettings):
     # --- CoinGecko (crypto prices, behind the MarketDataProvider port); no key required ---
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"
 
+    # --- FRED (macro: rates, CPI; behind the MacroDataProvider port) ---
+    # Free key at https://fred.stlouisfed.org/docs/api/api_key.html. Leave empty to serve
+    # fixture rates/CPI instead (see RoutingMacroDataProvider/FixtureMacroDataProvider).
+    fred_api_key: str | None = None
+    fred_base_url: str = "https://api.stlouisfed.org/fred"
+    fred_rates_series_id: str = "FEDFUNDS"
+    fred_cpi_series_id: str = "CPIAUCSL"
+    fred_timeout_seconds: float = 10.0
+
+    # --- VIX (volatility regime, MacroDataProvider port; via yfinance, no key needed) ---
+    vix_symbol: str = "^VIX"
+    vix_low_threshold: float = 15.0
+    vix_elevated_threshold: float = 20.0
+    vix_high_threshold: float = 30.0
+
+    # --- Fixture macro fallback values (used when FRED_API_KEY is unset or a live call fails) ---
+    fixture_macro_rate: float = 5.25
+    fixture_macro_cpi: float = 3.2
+    fixture_macro_vix: float = 18.5
+
+    # --- Fundamentals / earnings calendar (behind the FundamentalsProvider port); yfinance,
+    # no key required ---
+    # "Upcoming earnings risk" is flagged when the next earnings date falls within this many
+    # days of now — a simple derived tag, not a risk model.
+    upcoming_earnings_risk_window_days: int = 7
+
+    # --- Historical analogs RAG (behind the VectorStore port, pgvector-backed) ---
+    historical_analogs_top_k: int = 3
+
     # --- Track-5 seed data paths (packaged with the app; override for custom fixtures) ---
     universe_seed_path: Path = _MARKET_SEEDS_DIR / "universe.json"
     news_fixture_seed_path: Path = _MARKET_SEEDS_DIR / "news_fixture.json"

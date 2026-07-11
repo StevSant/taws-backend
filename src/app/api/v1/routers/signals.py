@@ -3,17 +3,21 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.v1.dependencies import (
+    get_embedding_provider,
     get_instrument_universe,
     get_llm_provider,
     get_market_data_provider,
     get_news_provider,
     get_signal_repository,
+    get_vector_store,
 )
 from app.api.v1.schemas import GenerateSignalRequest, SignalResponse
+from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
 from app.application.compliance import ComplianceViolationError
 from app.application.signals import InsufficientEvidenceError, UnknownInstrumentError
 from app.application.signals.use_cases import GenerateSignal
-from app.domain.agents.ports import LLMProvider
+from app.core.config import Settings, get_settings
+from app.domain.agents.ports import EmbeddingProvider, LLMProvider, VectorStore
 from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, NewsProvider
 from app.domain.signals.ports import SignalRepository
 
@@ -28,6 +32,9 @@ async def generate_signal(
     instrument_universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
     signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
     llm_provider: Annotated[LLMProvider, Depends(get_llm_provider)],
+    embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
+    vector_store: Annotated[VectorStore, Depends(get_vector_store)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> SignalResponse:
     """Trigger the Analyst pipeline on-demand for one instrument (HU1/HU2).
 
@@ -41,6 +48,14 @@ async def generate_signal(
         instrument_universe=instrument_universe,
         signal_repository=signal_repository,
         llm_provider=llm_provider,
+        find_historical_analogs=FindHistoricalAnalogs(
+            embedding_provider=embedding_provider,
+            vector_store=vector_store,
+            top_k=settings.historical_analogs_top_k,
+        ),
+        index_signal_analog=IndexSignalAnalog(
+            embedding_provider=embedding_provider, vector_store=vector_store
+        ),
     )
     try:
         signal = await use_case.execute(payload.instrument_symbol.upper())

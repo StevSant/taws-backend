@@ -17,7 +17,13 @@ from app.domain.agents.ports import (
 )
 from app.domain.briefing.ports import BriefingRepository
 from app.domain.chat.ports import ConversationRepository
-from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, NewsProvider
+from app.domain.market.ports import (
+    FundamentalsProvider,
+    InstrumentUniverse,
+    MacroDataProvider,
+    MarketDataProvider,
+    NewsProvider,
+)
 from app.domain.notification.ports import NotificationChannel
 from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.ports import WatchlistRepository
@@ -28,7 +34,17 @@ from app.infrastructure.agents.tools import (
     build_quant_grounding_tools,
 )
 from app.infrastructure.embeddings import OpenAIEmbeddings
+from app.infrastructure.fundamentals import (
+    FixtureFundamentalsProvider,
+    RoutingFundamentalsProvider,
+    YFinanceFundamentalsProvider,
+)
 from app.infrastructure.llm import OpenAIProvider, build_chat_model
+from app.infrastructure.macro import (
+    FixtureMacroDataProvider,
+    FredMacroDataProvider,
+    RoutingMacroDataProvider,
+)
 from app.infrastructure.marketdata import (
     CoinGeckoMarketDataProvider,
     FixtureMarketDataProvider,
@@ -83,6 +99,8 @@ class Container:
         self._news_provider: NewsProvider | None = None
         self._instrument_universe: InstrumentUniverse | None = None
         self._market_data_provider: MarketDataProvider | None = None
+        self._macro_data_provider: MacroDataProvider | None = None
+        self._fundamentals_provider: FundamentalsProvider | None = None
         self._chat_model: BaseChatModel | None = None
         self._chat_graph: Any | None = None
         self._agent_runner: AgentRunner | None = None
@@ -286,6 +304,54 @@ class Container:
                 llm_provider=self.get_llm_provider()
             )
         return self._generate_consequence_chain_use_case
+
+    def get_macro_data_provider(self) -> MacroDataProvider:
+        """Return the routing MacroDataProvider (FRED rates/CPI + yfinance VIX + fixture fallback).
+
+        `FRED_API_KEY` gates live rates/CPI (VIX needs no key); any live failure — including a
+        missing key — falls back to `FixtureMacroDataProvider`, per method. See
+        `infrastructure/macro/routing_macro_data_provider.py`.
+        """
+        if self._macro_data_provider is None:
+            live_provider = FredMacroDataProvider(
+                api_key=self._settings.fred_api_key,
+                base_url=self._settings.fred_base_url,
+                rates_series_id=self._settings.fred_rates_series_id,
+                cpi_series_id=self._settings.fred_cpi_series_id,
+                vix_symbol=self._settings.vix_symbol,
+                low_threshold=self._settings.vix_low_threshold,
+                elevated_threshold=self._settings.vix_elevated_threshold,
+                high_threshold=self._settings.vix_high_threshold,
+                timeout_seconds=self._settings.fred_timeout_seconds,
+            )
+            fixture_provider = FixtureMacroDataProvider(
+                rates_series_id=self._settings.fred_rates_series_id,
+                cpi_series_id=self._settings.fred_cpi_series_id,
+                fixture_rate=self._settings.fixture_macro_rate,
+                fixture_cpi=self._settings.fixture_macro_cpi,
+                fixture_vix=self._settings.fixture_macro_vix,
+                low_threshold=self._settings.vix_low_threshold,
+                elevated_threshold=self._settings.vix_elevated_threshold,
+                high_threshold=self._settings.vix_high_threshold,
+            )
+            self._macro_data_provider = RoutingMacroDataProvider(
+                live_provider=live_provider, fixture_provider=fixture_provider
+            )
+        return self._macro_data_provider
+
+    def get_fundamentals_provider(self) -> FundamentalsProvider:
+        """Return the routing FundamentalsProvider (yfinance + fixture fallback).
+
+        Any live `yfinance` failure falls back to `FixtureFundamentalsProvider`, per method —
+        see `infrastructure/fundamentals/routing_fundamentals_provider.py`.
+        """
+        if self._fundamentals_provider is None:
+            risk_window_days = self._settings.upcoming_earnings_risk_window_days
+            self._fundamentals_provider = RoutingFundamentalsProvider(
+                live_provider=YFinanceFundamentalsProvider(risk_window_days=risk_window_days),
+                fixture_provider=FixtureFundamentalsProvider(risk_window_days=risk_window_days),
+            )
+        return self._fundamentals_provider
 
     def get_agent_runner(self) -> AgentRunner:
         """Return the cached `AgentRunner`, built from the chat model + checkpointer.
