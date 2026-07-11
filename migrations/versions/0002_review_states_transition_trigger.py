@@ -24,6 +24,22 @@ Postgrest error this trigger raises and re-raises it as the same
 `IllegalReviewTransitionError` the app-layer check raises, so the router's existing
 `409` handling covers both paths uniformly.
 
+The trigger also overwrites `new.created_at` with `clock_timestamp()` immediately
+after acquiring the advisory lock, making the DB — not the client — authoritative for
+ordering. `ReviewState.created_at` is stamped in Python at construction time
+(`domain/review/entities/review_state.py`), before the request reaches this lock, so
+it does not reflect true insert/commit order under concurrent request latency: a
+slower request can still acquire the lock and commit later while carrying an earlier
+client-side timestamp than a faster request that already committed. Left unfixed,
+`ORDER BY created_at DESC LIMIT 1` — both this trigger's own re-derivation and every
+app-layer "latest state" read (`SupabaseSignalRepository`/`SupabaseBriefingRepository`)
+— can pick the wrong row as "latest", silently defeating the very invariant this
+migration exists to protect. Overwriting `created_at` with `clock_timestamp()` right
+after the lock is acquired guarantees it is monotonically increasing in true
+lock-acquisition (and therefore commit) order per `(entity_type, entity_id)`, since a
+second concurrent request cannot acquire the lock — and therefore cannot evaluate
+`clock_timestamp()` here — until the first has committed and released it.
+
 Revision ID: 0002
 Revises: 0001
 Create Date: 2026-07-11
@@ -50,6 +66,11 @@ _UPGRADE_SQL = """
 -- (entity_type, entity_id): a second concurrent request blocks until the first
 -- commits, then re-reads the now-current latest decision and is correctly
 -- rejected if the first request just terminated the entity.
+--
+-- Correctness of the re-derivation below assumes READ COMMITTED isolation
+-- (Postgres/Supabase default): each statement inside this trigger sees rows
+-- committed as of that statement's start, so the SELECT below observes any row
+-- committed by a prior lock holder before this transaction acquired the lock.
 -- =============================================================================
 create or replace function public.enforce_review_transition()
 returns trigger as $$
@@ -59,6 +80,13 @@ begin
     perform pg_advisory_xact_lock(
         hashtextextended(new.entity_type || ':' || new.entity_id::text, 0)
     );
+
+    -- The trigger, not the client, is authoritative for `created_at` ordering — see
+    -- the module docstring above for why the client-stamped timestamp can't be
+    -- trusted. Evaluating clock_timestamp() here, immediately after acquiring the
+    -- per-entity advisory lock and before re-deriving "latest", guarantees this
+    -- column is monotonically increasing in true lock-acquisition/commit order.
+    new.created_at := clock_timestamp();
 
     select decision into latest_decision
     from public.review_states
