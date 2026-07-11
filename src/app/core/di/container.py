@@ -12,11 +12,28 @@ from app.domain.agents.ports import (
     VectorStore,
 )
 from app.domain.chat.ports import ConversationRepository
+from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, NewsProvider
 from app.infrastructure.agents import LangGraphAgentRunner, build_chat_graph
 from app.infrastructure.embeddings import OpenAIEmbeddings
 from app.infrastructure.llm import OpenAIProvider, build_chat_model
+from app.infrastructure.marketdata import (
+    CoinGeckoMarketDataProvider,
+    FixtureMarketDataProvider,
+    RoutingMarketDataProvider,
+    YFinanceMarketDataProvider,
+)
 from app.infrastructure.memory import InMemoryCheckpointer, RedisCheckpointer
+from app.infrastructure.news import (
+    AggregatingNewsProvider,
+    FinnhubNewsProvider,
+    FixtureNewsProvider,
+    MarketauxNewsProvider,
+    NewsApiNewsProvider,
+    RssNewsProvider,
+)
 from app.infrastructure.persistence import SupabaseConversationRepository
+from app.infrastructure.seeds import load_universe_seed
+from app.infrastructure.universe import JsonInstrumentUniverse
 from app.infrastructure.vectorstore import PgvectorStore
 
 
@@ -41,6 +58,9 @@ class Container:
         self._vector_store: VectorStore | None = None
         self._agent_memory: AgentMemory | None = None
         self._conversation_repository: ConversationRepository | None = None
+        self._news_provider: NewsProvider | None = None
+        self._instrument_universe: InstrumentUniverse | None = None
+        self._market_data_provider: MarketDataProvider | None = None
         self._chat_model: BaseChatModel | None = None
         self._chat_graph: Any | None = None
         self._agent_runner: AgentRunner | None = None
@@ -82,6 +102,90 @@ class Container:
                 supabase_key=self._settings.supabase_key,
             )
         return self._conversation_repository
+
+    def get_news_provider(self) -> NewsProvider:
+        """Return the aggregated news source for the radar/agents.
+
+        Fans out to every configured live source (Marketaux, NewsAPI, Finnhub,
+        RSS) concurrently; a source with no API key configured is left out of
+        the fan-out entirely. Falls back to `FixtureNewsProvider` whenever no
+        live source is configured, or all of them fail / return nothing — see
+        `AggregatingNewsProvider` for the merge/dedupe/link/filter pipeline.
+        """
+        if self._news_provider is None:
+            live_providers: list[NewsProvider] = []
+            if self._settings.marketaux_api_key:
+                live_providers.append(
+                    MarketauxNewsProvider(
+                        api_key=self._settings.marketaux_api_key,
+                        base_url=self._settings.marketaux_base_url,
+                        languages=self._settings.marketaux_languages,
+                        timeout_seconds=self._settings.marketaux_timeout_seconds,
+                        max_pages=self._settings.marketaux_max_pages,
+                    )
+                )
+            if self._settings.newsapi_api_key:
+                live_providers.append(
+                    NewsApiNewsProvider(
+                        api_key=self._settings.newsapi_api_key,
+                        base_url=self._settings.newsapi_base_url,
+                        default_query=self._settings.newsapi_default_query,
+                    )
+                )
+            if self._settings.finnhub_api_key:
+                live_providers.append(
+                    FinnhubNewsProvider(
+                        api_key=self._settings.finnhub_api_key,
+                        base_url=self._settings.finnhub_base_url,
+                    )
+                )
+            if self._settings.rss_feed_urls:
+                live_providers.append(RssNewsProvider(feed_urls=self._settings.rss_feed_urls))
+
+            fixture_provider = FixtureNewsProvider(seed_path=self._settings.news_fixture_seed_path)
+            self._news_provider = AggregatingNewsProvider(
+                providers=live_providers,
+                fixture_provider=fixture_provider,
+                instrument_universe=self.get_instrument_universe(),
+            )
+        return self._news_provider
+
+    def get_instrument_universe(self) -> InstrumentUniverse:
+        if self._instrument_universe is None:
+            self._instrument_universe = JsonInstrumentUniverse(
+                seed_path=self._settings.universe_seed_path
+            )
+        return self._instrument_universe
+
+    def get_market_data_provider(self) -> MarketDataProvider:
+        """Return the routing MarketDataProvider (CoinGecko/yfinance + fixture fallback).
+
+        `yfinance`/CoinGecko symbol overrides come straight from the universe
+        seed's optional `yfinance_symbol` / `coingecko_id` rows — those vendor
+        details never touch the pure `Instrument` entity.
+        """
+        if self._market_data_provider is None:
+            universe_rows = load_universe_seed(self._settings.universe_seed_path)
+            yfinance_overrides = {
+                row["symbol"]: row["yfinance_symbol"]
+                for row in universe_rows
+                if row.get("yfinance_symbol")
+            }
+            coingecko_overrides = {
+                row["symbol"]: row["coingecko_id"]
+                for row in universe_rows
+                if row.get("coingecko_id")
+            }
+            fixture_provider = FixtureMarketDataProvider()
+            self._market_data_provider = RoutingMarketDataProvider(
+                yfinance_provider=YFinanceMarketDataProvider(symbol_overrides=yfinance_overrides),
+                coingecko_provider=CoinGeckoMarketDataProvider(
+                    base_url=self._settings.coingecko_base_url,
+                    coingecko_id_overrides=coingecko_overrides,
+                ),
+                fixture_provider=fixture_provider,
+            )
+        return self._market_data_provider
 
     def get_agent_runner(self) -> AgentRunner:
         """Return the cached `AgentRunner`, built from the chat model + checkpointer.

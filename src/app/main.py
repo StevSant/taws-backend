@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.middleware import RequestIDMiddleware, unhandled_exception_handler
-from app.api.v1.routers import chat_router, health_router
+from app.api.v1.routers import chat_router, health_router, instruments_router, news_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 
@@ -34,6 +34,8 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(chat_router, prefix="/api/v1")
+    app.include_router(instruments_router, prefix="/api/v1")
+    app.include_router(news_router, prefix="/api/v1")
 
     return app
 

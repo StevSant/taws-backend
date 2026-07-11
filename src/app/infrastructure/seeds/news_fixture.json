@@ -1,0 +1,182 @@
+[
+  {
+    "id": "fixture-001",
+    "title": "NVIDIA unveils next-gen AI chip, shares jump in pre-market trading",
+    "summary": "NVIDIA announced its next-generation AI accelerator with claimed 2x throughput gains over the prior generation, sending shares higher in pre-market trading.",
+    "url": "https://example.com/news/nvidia-next-gen-ai-chip",
+    "source": "Reuters",
+    "hours_ago": 3,
+    "related_symbols": ["NVDA"]
+  },
+  {
+    "id": "fixture-002",
+    "title": "Apple supplier reports strong iPhone component demand ahead of holiday quarter",
+    "summary": "A key Apple supplier raised its shipment forecast, citing stronger-than-expected iPhone component orders heading into the holiday quarter.",
+    "url": "https://example.com/news/apple-supplier-demand",
+    "source": "Bloomberg",
+    "hours_ago": 6,
+    "related_symbols": ["AAPL"]
+  },
+  {
+    "id": "fixture-003",
+    "title": "Bitcoin ETF inflows hit multi-week high as institutional demand returns",
+    "summary": "Spot Bitcoin ETFs recorded their largest weekly inflow in over a month, signaling renewed institutional appetite for crypto exposure.",
+    "url": "https://example.com/news/bitcoin-etf-inflows",
+    "source": "CoinDesk",
+    "hours_ago": 2,
+    "related_symbols": ["BTC"]
+  },
+  {
+    "id": "fixture-004",
+    "title": "Ethereum network upgrade goes live, gas fees drop sharply",
+    "summary": "The latest Ethereum network upgrade activated on mainnet, with early data showing a sharp drop in average transaction fees.",
+    "url": "https://example.com/news/ethereum-upgrade-live",
+    "source": "CoinDesk",
+    "hours_ago": 9,
+    "related_symbols": ["ETH"]
+  },
+  {
+    "id": "fixture-005",
+    "title": "Tesla recalls select vehicles over software glitch, no injuries reported",
+    "summary": "Tesla issued a voluntary recall affecting a batch of vehicles due to a software issue with the autopilot display; the company says the fix is a remote update.",
+    "url": "https://example.com/news/tesla-recall-software",
+    "source": "Reuters",
+    "hours_ago": 14,
+    "related_symbols": ["TSLA"]
+  },
+  {
+    "id": "fixture-006",
+    "title": "Amazon expands same-day delivery to more metro areas",
+    "summary": "Amazon announced an expansion of its same-day delivery network to a dozen additional metro areas, part of a broader logistics investment push.",
+    "url": "https://example.com/news/amazon-same-day-expansion",
+    "source": "Yahoo Finance",
+    "hours_ago": 18,
+    "related_symbols": ["AMZN"]
+  },
+  {
+    "id": "fixture-007",
+    "title": "Alphabet's cloud unit signs multi-year AI infrastructure deal",
+    "summary": "Alphabet's Google Cloud division announced a multi-year agreement to supply AI compute infrastructure to a large enterprise customer.",
+    "url": "https://example.com/news/alphabet-cloud-ai-deal",
+    "source": "Financial Times",
+    "hours_ago": 21,
+    "related_symbols": ["GOOGL"]
+  },
+  {
+    "id": "fixture-008",
+    "title": "Meta ramps ad pricing as engagement rebounds across core apps",
+    "summary": "Meta reported improving ad pricing trends and rising engagement across its family of apps, according to a preview ahead of its next earnings report.",
+    "url": "https://example.com/news/meta-ad-pricing-rebound",
+    "source": "CNBC",
+    "hours_ago": 25,
+    "related_symbols": ["META"]
+  },
+  {
+    "id": "fixture-009",
+    "title": "JPMorgan raises full-year net interest income guidance",
+    "summary": "JPMorgan Chase lifted its full-year net interest income guidance, citing resilient loan demand and a stable deposit base.",
+    "url": "https://example.com/news/jpmorgan-nii-guidance",
+    "source": "The Wall Street Journal",
+    "hours_ago": 30,
+    "related_symbols": ["JPM"]
+  },
+  {
+    "id": "fixture-010",
+    "title": "Solana network posts record daily transaction volume",
+    "summary": "Solana's blockchain processed a record number of daily transactions, driven by renewed activity in decentralized exchanges and NFT marketplaces.",
+    "url": "https://example.com/news/solana-record-volume",
+    "source": "CoinDesk",
+    "hours_ago": 5,
+    "related_symbols": ["SOL"]
+  },
+  {
+    "id": "fixture-011",
+    "title": "Binance Coin steady as exchange announces new compliance hires",
+    "summary": "BNB traded in a tight range after the exchange behind it announced a round of senior compliance hires as part of an ongoing regulatory push.",
+    "url": "https://example.com/news/bnb-compliance-hires",
+    "source": "CoinDesk",
+    "hours_ago": 33,
+    "related_symbols": ["BNB"]
+  },
+  {
+    "id": "fixture-012",
+    "title": "Ripple's XRP gains after favorable regulatory clarity signal",
+    "summary": "XRP rose after a regulator signaled a more permissive stance toward payment-focused digital assets in prepared remarks.",
+    "url": "https://example.com/news/xrp-regulatory-signal",
+    "source": "CoinDesk",
+    "hours_ago": 11,
+    "related_symbols": ["XRP"]
+  },
+  {
+    "id": "fixture-013",
+    "title": "Investment-grade corporate bond ETFs see steady inflows as rate cut bets build",
+    "summary": "Investment-grade corporate bond ETFs, including major benchmarks, drew steady inflows this week as markets priced in a higher chance of near-term rate cuts.",
+    "url": "https://example.com/news/ig-bond-etf-inflows",
+    "source": "MarketWatch",
+    "hours_ago": 27,
+    "related_symbols": ["LQD"]
+  },
+  {
+    "id": "fixture-014",
+    "title": "High-yield credit spreads widen slightly amid growth concerns",
+    "summary": "High-yield corporate bond spreads widened modestly this week as investors weighed softer growth data against still-solid corporate earnings.",
+    "url": "https://example.com/news/high-yield-spreads-widen",
+    "source": "Bloomberg",
+    "hours_ago": 40,
+    "related_symbols": ["HYG"]
+  },
+  {
+    "id": "fixture-015",
+    "title": "Long-dated Treasuries rally as investors weigh softer inflation data",
+    "summary": "Long-duration Treasury bonds rallied after a cooler-than-expected inflation print reinforced bets on rate cuts later this year.",
+    "url": "https://example.com/news/long-treasuries-rally",
+    "source": "Reuters",
+    "hours_ago": 8,
+    "related_symbols": ["TLT"]
+  },
+  {
+    "id": "fixture-016",
+    "title": "Gold hits fresh multi-month high on safe-haven demand",
+    "summary": "Gold prices touched a fresh multi-month high as investors sought safe-haven assets amid renewed geopolitical uncertainty.",
+    "url": "https://example.com/news/gold-multi-month-high",
+    "source": "Reuters",
+    "hours_ago": 4,
+    "related_symbols": ["GLD"]
+  },
+  {
+    "id": "fixture-017",
+    "title": "Oil prices slip as OPEC+ signals possible output increase",
+    "summary": "Crude oil prices fell after OPEC+ delegates signaled the group could consider raising output at its next meeting, easing supply concerns.",
+    "url": "https://example.com/news/opec-output-signal",
+    "source": "Bloomberg",
+    "hours_ago": 16,
+    "related_symbols": ["USO"]
+  },
+  {
+    "id": "fixture-018",
+    "title": "Euro firms against the dollar after stronger Eurozone PMI data",
+    "summary": "The euro strengthened against the US dollar following a stronger-than-expected Eurozone manufacturing PMI reading.",
+    "url": "https://example.com/news/euro-pmi-strength",
+    "source": "Financial Times",
+    "hours_ago": 12,
+    "related_symbols": ["EURUSD"]
+  },
+  {
+    "id": "fixture-019",
+    "title": "Federal Reserve officials signal patience on next rate move",
+    "summary": "Several Federal Reserve officials struck a cautious tone on the timing of the next interest-rate move, citing mixed signals in recent economic data.",
+    "url": "https://example.com/news/fed-officials-patience",
+    "source": "The Wall Street Journal",
+    "hours_ago": 20,
+    "related_symbols": ["TLT", "GLD"]
+  },
+  {
+    "id": "fixture-020",
+    "title": "Big tech earnings week ahead: what investors are watching",
+    "summary": "A wave of big tech earnings is due this week, with investors focused on AI capital spending plans and cloud growth trends across the sector.",
+    "url": "https://example.com/news/big-tech-earnings-week",
+    "source": "CNBC",
+    "hours_ago": 1,
+    "related_symbols": ["MSFT", "GOOGL", "META", "AMZN"]
+  }
+]
