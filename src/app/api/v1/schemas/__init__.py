@@ -13,12 +13,18 @@ from app.api.v1.schemas.current_user import CurrentUser
 from app.api.v1.schemas.earnings_calendar_entry_response import EarningsCalendarEntryResponse
 from app.api.v1.schemas.event_study_event_response import EventStudyEventResponse
 from app.api.v1.schemas.event_study_response import EventStudyResponse
+from app.api.v1.schemas.fear_greed_reading_response import FearGreedReadingResponse
 from app.api.v1.schemas.fundamentals_response import FundamentalsResponse
 from app.api.v1.schemas.generate_consequence_chain_request import GenerateConsequenceChainRequest
 from app.api.v1.schemas.generate_scenario_request import GenerateScenarioRequest
 from app.api.v1.schemas.generate_signal_request import GenerateSignalRequest
 from app.api.v1.schemas.instrument_fundamentals_response import InstrumentFundamentalsResponse
 from app.api.v1.schemas.instrument_response import InstrumentResponse
+from app.api.v1.schemas.interpret_macro_event_request import InterpretMacroEventRequest
+from app.api.v1.schemas.macro_asset_class_impact_response import MacroAssetClassImpactResponse
+from app.api.v1.schemas.macro_event_interpretation_response import (
+    MacroEventInterpretationResponse,
+)
 from app.api.v1.schemas.macro_observation_response import MacroObservationResponse
 from app.api.v1.schemas.macro_state_response import MacroStateResponse
 from app.api.v1.schemas.market_stats_response import MarketStatsResponse
@@ -33,6 +39,7 @@ from app.api.v1.schemas.scenario_evidence_response import ScenarioEvidenceRespon
 from app.api.v1.schemas.scenario_preset_response import ScenarioPresetResponse
 from app.api.v1.schemas.scenario_result_response import ScenarioResultResponse
 from app.api.v1.schemas.scenario_spec_response import ScenarioSpecResponse
+from app.api.v1.schemas.sentiment_reading_response import SentimentReadingResponse
 from app.api.v1.schemas.signal_evidence_response import SignalEvidenceResponse
 from app.api.v1.schemas.signal_response import SignalResponse
 from app.api.v1.schemas.telegram_link_status_response import TelegramLinkStatusResponse
@@ -59,12 +66,16 @@ __all__ = [
     "EarningsCalendarEntryResponse",
     "EventStudyEventResponse",
     "EventStudyResponse",
+    "FearGreedReadingResponse",
     "FundamentalsResponse",
     "GenerateConsequenceChainRequest",
     "GenerateScenarioRequest",
     "GenerateSignalRequest",
     "InstrumentFundamentalsResponse",
     "InstrumentResponse",
+    "InterpretMacroEventRequest",
+    "MacroAssetClassImpactResponse",
+    "MacroEventInterpretationResponse",
     "MacroObservationResponse",
     "MacroStateResponse",
     "MarketStatsResponse",
@@ -77,6 +88,7 @@ __all__ = [
     "ScenarioPresetResponse",
     "ScenarioResultResponse",
     "ScenarioSpecResponse",
+    "SentimentReadingResponse",
     "SignalEvidenceResponse",
     "SignalResponse",
     "TelegramLinkStatusResponse",

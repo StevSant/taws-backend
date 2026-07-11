@@ -1,11 +1,14 @@
+from app.infrastructure.agents.tools.analyze_sentiment_tool import build_analyze_sentiment_tool
 from app.infrastructure.agents.tools.build_advisor_grounding_tools import (
     build_advisor_grounding_tools,
 )
 from app.infrastructure.agents.tools.build_consequence_tools import build_consequence_tools
+from app.infrastructure.agents.tools.build_macro_tools import build_macro_tools
 from app.infrastructure.agents.tools.build_quant_grounding_tools import (
     build_quant_grounding_tools,
 )
 from app.infrastructure.agents.tools.build_scenario_tools import build_scenario_tools
+from app.infrastructure.agents.tools.build_sentiment_tools import build_sentiment_tools
 from app.infrastructure.agents.tools.generate_consequence_chain_tool import (
     build_generate_consequence_chain_tool,
 )
@@ -16,18 +19,25 @@ from app.infrastructure.agents.tools.get_market_stats_tool import build_get_mark
 from app.infrastructure.agents.tools.get_signals_for_instrument_tool import (
     build_get_signals_for_instrument_tool,
 )
+from app.infrastructure.agents.tools.interpret_macro_event_tool import (
+    build_interpret_macro_event_tool,
+)
 from app.infrastructure.agents.tools.run_scenario_simulation_tool import (
     build_run_scenario_simulation_tool,
 )
 
 __all__ = [
     "build_advisor_grounding_tools",
+    "build_analyze_sentiment_tool",
     "build_consequence_tools",
     "build_generate_consequence_chain_tool",
     "build_get_event_study_stats_tool",
     "build_get_market_stats_tool",
     "build_get_signals_for_instrument_tool",
+    "build_interpret_macro_event_tool",
+    "build_macro_tools",
     "build_quant_grounding_tools",
     "build_run_scenario_simulation_tool",
     "build_scenario_tools",
+    "build_sentiment_tools",
 ]
