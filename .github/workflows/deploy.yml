@@ -1,27 +1,10 @@
 name: backend-deploy
 
-# Builds the image, pushes it to Amazon ECR, then explicitly triggers an AWS App Runner
-# deployment of the new image (issue #23 — demo readiness). DISABLED until AWS is wired:
-# set repo variable DEPLOY_ENABLED=true and configure the secrets/vars below.
-#
-#   Secrets (repo Settings -> Secrets and variables -> Actions -> Secrets):
-#     AWS_ROLE_ARN              IAM role ARN this workflow assumes via OIDC (no long-lived
-#                                AWS access keys are used — see `configure-aws-credentials`
-#                                below). The role needs ECR push permissions on
-#                                ECR_REPOSITORY and `apprunner:StartDeployment` on the
-#                                service identified by AWS_APPRUNNER_SERVICE_ARN.
-#
-#   Variables (repo Settings -> Secrets and variables -> Actions -> Variables):
-#     DEPLOY_ENABLED             Set to "true" to turn this workflow on (guards every job
-#                                below so it's a safe no-op — and never breaks CI — until
-#                                explicitly enabled).
-#     AWS_REGION                 e.g. "us-east-1".
-#     ECR_REPOSITORY              Target ECR repository name (must already exist).
-#     AWS_APPRUNNER_SERVICE_ARN   ARN of the pre-provisioned App Runner service to deploy.
-#
-# NOT executed or verified in this environment — no AWS account access is available here.
-# A human with AWS console/CLI access must configure the secrets/vars above, verify the
-# IAM role's permissions, and confirm a real run end to end before relying on this.
+# Builds the image, pushes to Amazon ECR; AWS App Runner auto-deploys the new image.
+# DISABLED until AWS is wired: set repo variable DEPLOY_ENABLED=true and the secrets/vars below.
+#   Secrets: AWS_ROLE_ARN (OIDC role to assume)
+#   Vars:    AWS_REGION, ECR_REPOSITORY, DEPLOY_ENABLED
+# Until then this workflow is a no-op (the guard skips the job), so it never breaks CI.
 
 on:
   push:
@@ -32,7 +15,7 @@ permissions:
   contents: read
 
 jobs:
-  build-push-deploy:
+  build-push:
     if: ${{ vars.DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     steps:
@@ -54,13 +37,4 @@ jobs:
           docker build -t "$REGISTRY/$REPOSITORY:$IMAGE_TAG" -t "$REGISTRY/$REPOSITORY:latest" .
           docker push "$REGISTRY/$REPOSITORY:$IMAGE_TAG"
           docker push "$REGISTRY/$REPOSITORY:latest"
-      - name: Trigger App Runner deployment
-        # Explicit `apprunner start-deployment` rather than relying on App Runner's
-        # "auto deploy on new image" console setting — this repo has no Terraform/CDK
-        # (checked: no `terraform/`, `cdk/`, or `*.tf` files exist), so a plain AWS CLI
-        # step here is the simplest, most defensible choice per the issue's guidance, and
-        # it makes the deploy trigger explicit/auditable in the workflow run log instead
-        # of depending on an out-of-repo console setting.
-        env:
-          SERVICE_ARN: ${{ vars.AWS_APPRUNNER_SERVICE_ARN }}
-        run: aws apprunner start-deployment --service-arn "$SERVICE_ARN"
+      # App Runner is configured (in the AWS console) to auto-deploy on new :latest push.
