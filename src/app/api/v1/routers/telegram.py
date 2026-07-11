@@ -85,9 +85,10 @@ async def telegram_webhook(
     `main.py`'s lifespan). Only reacts to a `/start <token>` text message — every other
     update kind is acknowledged and ignored.
 
-    Always returns 200 (never raises for "nothing to do here" cases) so Telegram doesn't
-    retry-storm an update we deliberately don't act on; only a bad/missing webhook secret
-    is rejected outright.
+    Always returns 200 (never raises for "nothing to do here" cases, NOR for an unexpected
+    failure inside `use_case.execute` — see the `try`/`except` below) so Telegram doesn't
+    retry-storm an update we deliberately don't act on, or one we simply failed to process;
+    only a bad/missing webhook secret is rejected outright.
     """
     _verify_telegram_secret(request, settings)
 
@@ -100,7 +101,19 @@ async def telegram_webhook(
     if command is None:
         return {"ok": True}
 
-    linked = await use_case.execute(token=command.token, chat_id=command.chat_id)
+    # "Always ack 200 to Telegram" is a webhook-contract concern (avoid retry storms), not
+    # a domain concern — so it's enforced HERE at the router boundary, not inside
+    # `LinkTelegramAccount.execute()` (same split as `chat.py`'s SSE stream: the domain
+    # layer surfaces its own errors, the transport boundary decides how to keep its
+    # contract intact around them). `consume()`/`link()` can raise on a transient
+    # Supabase/network error; that's safe to swallow because `consume()` is idempotent —
+    # a Telegram retry of the same `/start <token>` update after a transient failure just
+    # re-attempts the same (safe) consume, it doesn't double-link anything.
+    try:
+        linked = await use_case.execute(token=command.token, chat_id=command.chat_id)
+    except Exception:  # noqa: BLE001 — must always ack 200; see docstring above.
+        logger.exception("Unhandled error linking Telegram chat_id=%s via webhook", command.chat_id)
+        return {"ok": False}
     return {"ok": linked}
 
 

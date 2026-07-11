@@ -39,8 +39,16 @@ class LinkTelegramAccount:
 
     async def execute(self, token: str, chat_id: str) -> bool:
         """Returns `True` if `token` was valid and the chat is now linked, `False`
-        otherwise. Never raises: a failed confirmation send is logged, not propagated —
-        the webhook must always ack Telegram with 200 regardless."""
+        otherwise.
+
+        Only the confirmation-message send is guarded here: `_try_send`'s failure is
+        logged, not propagated, since a failed confirmation must never undo an
+        already-persisted link. `consume()` and `link()` above it are deliberately left
+        unguarded — a DB/network failure there is a real error, not a "nothing to do"
+        case, and this use case has no way to know whether the caller can safely retry.
+        The webhook router (`api/v1/routers/telegram.py`) is the one that decides how to
+        keep its own "always ack 200 to Telegram" contract around that, since it's a
+        webhook-transport concern, not a domain one — see its docstring."""
         consumed = await self._token_repository.consume(token)
         if consumed is None:
             await self._try_send(chat_id, _INVALID_TOKEN_MESSAGE)
