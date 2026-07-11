@@ -111,3 +111,18 @@ Never use bare `pip`, `python -m`, or a bare `python` invocation — always `uv 
 ending with `data: [DONE]\n\n`). The Angular frontend reads this with `fetch` +
 `ReadableStream`, not `EventSource` (so it can send a POST body). Keep new streaming
 endpoints in this same shape unless there's a strong reason to change it.
+
+## Team & ownership
+
+Shared engineering rules live in the root repo's `CLAUDE.md` — everyone follows the same
+conventions (Conventional Commits in English, no hardcoded values, one class/function per file,
+direct-to-main in pairs, keep CI green). Backend is led by Miquel, with Bryan on the AI/agent layer
+and Marco supporting; see `CODEOWNERS`.
+
+| Dev | Primary area | GitHub |
+|-----|--------------|--------|
+| Bryan | AI agent dev & project coordination | `@StevSant` |
+| Miquel | Backend | `@lesquel` |
+| Luis Figueroa | Frontend | `@DweskZ` |
+| Kevin Alonso | Branding & UI/UX | `@Tokioh` |
+| Marco Zambrano | Backend / Frontend / Data support | `@marco-zambrano` |

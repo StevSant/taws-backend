@@ -1,0 +1,10 @@
+# taws-backend code owners.
+#   Bryan  @StevSant        — AI/agent layer & coordination
+#   Miquel @lesquel         — backend lead
+#   Marco  @marco-zambrano  — backend/data support
+
+*                                   @lesquel @StevSant
+/src/app/infrastructure/llm/        @StevSant
+/src/app/infrastructure/agents/     @StevSant
+/src/app/infrastructure/persistence/ @marco-zambrano
+/src/app/infrastructure/vectorstore/ @marco-zambrano
