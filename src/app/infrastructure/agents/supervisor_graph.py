@@ -24,6 +24,7 @@ def build_supervisor_graph(
     checkpointer: Any,
     advisor_tools: list[BaseTool] | None = None,
     consequence_tools: list[BaseTool] | None = None,
+    quant_tools: list[BaseTool] | None = None,
 ) -> Any:
     """Build the Supervisor graph: routes each turn to one specialist node.
 
@@ -32,16 +33,17 @@ def build_supervisor_graph(
     (`MessagesState` + `route`) so the conditional edge out of `supervisor` can read
     the chosen route (`select_specialist_route`) and dispatch to the matching node.
 
-    `advisor_tools`/`consequence_tools`: optional, additive, default to `None`
-    (reproduces the prior behavior exactly for routes with no tools param passed).
-    Each is bound only to its own specialist node — see
+    `advisor_tools`/`consequence_tools`/`quant_tools`: optional, additive, default to
+    `None` (reproduces the prior behavior exactly for routes with no tools param
+    passed). Each is bound only to its own specialist node — see
     `specialist_node_factory.build_specialist_node`'s `tools` param — `advisor_tools`
-    grounds chat replies in persisted signals/briefings/watchlists
-    (`infrastructure/agents/tools/build_advisor_grounding_tools.py`), `consequence_tools`
-    wraps `GenerateConsequenceChain` (`infrastructure/agents/tools/
+    grounds chat replies in persisted signals (`infrastructure/agents/tools/
+    build_advisor_grounding_tools.py`), `consequence_tools` wraps
+    `GenerateConsequenceChain` (`infrastructure/agents/tools/
     build_consequence_tools.py`) so the `consequence` specialist always produces a
-    structured causal chain instead of reasoning from memory. `analyst`/`quant` never
-    receive tools.
+    structured causal chain instead of reasoning from memory, and `quant_tools` grounds
+    replies in real price stats (`infrastructure/agents/tools/
+    build_quant_grounding_tools.py`). `analyst` never receives tools.
 
     Every node emits `AgentTrace` frames via `get_stream_writer()` (routing/start/
     done — see `supervisor_router_node.py` / `specialist_node_factory.py`);
@@ -59,7 +61,8 @@ def build_supervisor_graph(
         SupervisorRoute.ANALYST.value, build_specialist_node("analyst", ANALYST_PERSONA, model)
     )
     graph.add_node(
-        SupervisorRoute.QUANT.value, build_specialist_node("quant", QUANT_PERSONA, model)
+        SupervisorRoute.QUANT.value,
+        build_specialist_node("quant", QUANT_PERSONA, model, tools=quant_tools),
     )
     graph.add_node(
         SupervisorRoute.ADVISOR.value,

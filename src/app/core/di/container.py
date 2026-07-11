@@ -5,6 +5,7 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 
 from app.application.consequence.use_cases import GenerateConsequenceChain
+from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
 from app.core.config import Settings, get_settings
 from app.domain.agents.ports import (
     AgentMemory,
@@ -19,7 +20,11 @@ from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, News
 from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
-from app.infrastructure.agents.tools import build_advisor_grounding_tools, build_consequence_tools
+from app.infrastructure.agents.tools import (
+    build_advisor_grounding_tools,
+    build_consequence_tools,
+    build_quant_grounding_tools,
+)
 from app.infrastructure.embeddings import OpenAIEmbeddings
 from app.infrastructure.llm import OpenAIProvider, build_chat_model
 from app.infrastructure.marketdata import (
@@ -291,11 +296,24 @@ class Container:
             consequence_tools = build_consequence_tools(
                 use_case=self.get_generate_consequence_chain_use_case()
             )
+            # `quant` grounding tools: safe for the unauthenticated chat route (public
+            # market data, not per-user) — see `build_quant_grounding_tools`'s docstring.
+            quant_tools = build_quant_grounding_tools(
+                compute_market_stats=ComputeMarketStats(
+                    market_data_provider=self.get_market_data_provider(),
+                    instrument_universe=self.get_instrument_universe(),
+                ),
+                compute_event_study=ComputeEventStudy(
+                    market_data_provider=self.get_market_data_provider(),
+                    instrument_universe=self.get_instrument_universe(),
+                ),
+            )
             self._chat_graph = build_supervisor_graph(
                 self._get_chat_model(),
                 checkpointer,
                 advisor_tools=advisor_tools,
                 consequence_tools=consequence_tools,
+                quant_tools=quant_tools,
             )
         return self._chat_graph
 
