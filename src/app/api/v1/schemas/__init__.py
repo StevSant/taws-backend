@@ -1,4 +1,7 @@
 from app.api.v1.schemas.alert_response import AlertResponse
+from app.api.v1.schemas.briefing_instrument_section_response import (
+    BriefingInstrumentSectionResponse,
+)
 from app.api.v1.schemas.briefing_response import BriefingResponse
 from app.api.v1.schemas.chat_request import ChatRequest
 from app.api.v1.schemas.chat_response import ChatResponse
@@ -20,6 +23,7 @@ from app.api.v1.schemas.macro_observation_response import MacroObservationRespon
 from app.api.v1.schemas.macro_state_response import MacroStateResponse
 from app.api.v1.schemas.market_stats_response import MarketStatsResponse
 from app.api.v1.schemas.news_item_response import NewsItemResponse
+from app.api.v1.schemas.open_review_item_response import OpenReviewItemResponse
 from app.api.v1.schemas.review_decision_request import ReviewDecisionRequest
 from app.api.v1.schemas.review_state_response import ReviewStateResponse
 from app.api.v1.schemas.scenario_asset_class_impact_response import (
@@ -43,6 +47,7 @@ from app.api.v1.schemas.watchlist_response import WatchlistResponse
 
 __all__ = [
     "AlertResponse",
+    "BriefingInstrumentSectionResponse",
     "BriefingResponse",
     "ChatRequest",
     "ChatResponse",
@@ -64,6 +69,7 @@ __all__ = [
     "MacroStateResponse",
     "MarketStatsResponse",
     "NewsItemResponse",
+    "OpenReviewItemResponse",
     "ReviewDecisionRequest",
     "ReviewStateResponse",
     "ScenarioAssetClassImpactResponse",

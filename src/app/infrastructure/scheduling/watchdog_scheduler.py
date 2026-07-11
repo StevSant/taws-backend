@@ -35,7 +35,9 @@ async def _run_scan_job(container: Container, settings: Settings) -> None:
 
 async def _run_daily_briefings_job(container: Container, settings: Settings) -> None:
     """Daily briefing job — reuses the existing `GenerateBriefing` use case (issue #3) via
-    `RunDailyBriefings`, one active watchlist at a time."""
+    `RunDailyBriefings`, one active watchlist at a time, then notifies each watchlist's
+    owner over Telegram (issue #16) via the same `NotificationChannel` port the scan job
+    uses."""
     generate_briefing = GenerateBriefing(
         watchlist_repository=container.get_watchlist_repository(),
         signal_repository=container.get_signal_repository(),
@@ -45,6 +47,8 @@ async def _run_daily_briefings_job(container: Container, settings: Settings) -> 
     use_case = RunDailyBriefings(
         watchlist_repository=container.get_watchlist_repository(),
         generate_briefing=generate_briefing,
+        notification_channel=container.get_notification_channel(),
+        frontend_base_url=settings.frontend_base_url,
     )
     try:
         briefings = await use_case.execute()

@@ -3,7 +3,11 @@ from supabase import PostgrestAPIError
 from app.domain.briefing.entities import Briefing
 from app.domain.briefing.ports import BriefingRepository
 from app.domain.review.entities import ReviewedEntityType, ReviewState
-from app.infrastructure.persistence.briefing_row_mapper import briefing_from_row
+from app.infrastructure.persistence.briefing_row_mapper import (
+    briefing_from_row,
+    briefing_to_instrument_breakdown_column,
+    briefing_to_open_review_items_column,
+)
 from app.infrastructure.persistence.build_illegal_review_transition_error import (
     build_illegal_review_transition_error,
 )
@@ -39,6 +43,12 @@ class SupabaseBriefingRepository(BriefingRepository):
                     "summary": briefing.summary,
                     "disclaimer": briefing.disclaimer,
                     "linked_signal_ids": briefing.linked_signal_ids,
+                    "instrument_breakdown": briefing_to_instrument_breakdown_column(
+                        briefing.instrument_breakdown
+                    ),
+                    "open_review_items": briefing_to_open_review_items_column(
+                        briefing.open_review_items
+                    ),
                     "created_at": briefing.created_at.isoformat(),
                 }
             )
