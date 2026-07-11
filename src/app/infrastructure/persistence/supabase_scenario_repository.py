@@ -11,7 +11,7 @@ class SupabaseScenarioRepository(ScenarioRepository):
     """ScenarioRepository adapter backed by Supabase Postgres via `supabase-py`.
 
     Written by the Scenario Simulation graph's Compliance step (issue #12). See migration
-    `0004_scenarios.py` for the `scenarios` schema and RLS policy — mirrors `signals`'
+    `0006_scenarios.py` for the `scenarios` schema and RLS policy — mirrors `signals`'
     shape exactly (not user-owned; service-role writes bypass RLS, any authenticated user
     can read).
     """
