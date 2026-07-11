@@ -2,6 +2,7 @@ import uuid
 
 from app.application.briefing.briefing_composition import BriefingComposition, InstrumentNarrative
 from app.application.briefing.empty_watchlist_error import EmptyWatchlistError
+from app.application.common import build_locale_instruction
 from app.application.compliance import ComplianceViolationError
 from app.application.compliance.use_cases import ReviewCompliance
 from app.application.review.review_transition_policy import _TERMINAL_DECISIONS
@@ -114,7 +115,7 @@ class GenerateBriefing:
         # as `GenerateSignal`.
         self._compliance_reviewer = ReviewCompliance()
 
-    async def execute(self, watchlist_id: str) -> Briefing:
+    async def execute(self, watchlist_id: str, locale: str) -> Briefing:
         items = await self._watchlist_repository.list_items(watchlist_id)
         if not items:
             raise EmptyWatchlistError(watchlist_id)
@@ -131,7 +132,7 @@ class GenerateBriefing:
         }
 
         if capped_signals:
-            composition = await self._compose_briefing(capped_by_symbol)
+            composition = await self._compose_briefing(capped_by_symbol, locale)
             executive_summary = composition.executive_summary
             linked_signal_ids = [signal.id for signal in capped_signals]
         else:
@@ -181,12 +182,15 @@ class GenerateBriefing:
         return result
 
     async def _compose_briefing(
-        self, capped_by_symbol: dict[str, list[Signal]]
+        self, capped_by_symbol: dict[str, list[Signal]], locale: str
     ) -> BriefingComposition:
         try:
             raw = await self._llm_provider.complete_structured(
                 messages=[
-                    Message(role=MessageRole.SYSTEM, content=_BRIEFING_SYSTEM_PROMPT),
+                    Message(
+                        role=MessageRole.SYSTEM,
+                        content=_BRIEFING_SYSTEM_PROMPT + build_locale_instruction(locale),
+                    ),
                     Message(
                         role=MessageRole.USER,
                         content=_format_signal_context(capped_by_symbol),

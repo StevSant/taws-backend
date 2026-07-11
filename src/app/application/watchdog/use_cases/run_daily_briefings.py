@@ -52,12 +52,12 @@ class RunDailyBriefings:
         self._notification_channel = notification_channel
         self._frontend_base_url = frontend_base_url
 
-    async def execute(self) -> list[Briefing]:
+    async def execute(self, locale: str) -> list[Briefing]:
         watchlists = await self._watchlist_repository.list_all()
         briefings: list[Briefing] = []
         for watchlist in watchlists:
             try:
-                briefing = await self._generate_briefing.execute(watchlist.id)
+                briefing = await self._generate_briefing.execute(watchlist.id, locale=locale)
             except EmptyWatchlistError:
                 continue  # nothing tracked yet — nothing to brief, not a failure
             briefings.append(briefing)

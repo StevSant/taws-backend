@@ -56,7 +56,7 @@ async def _run_daily_briefings_job(container: Container, settings: Settings) -> 
         frontend_base_url=settings.frontend_base_url,
     )
     try:
-        briefings = await use_case.execute()
+        briefings = await use_case.execute(locale=settings.default_locale)
         logger.info("daily briefing run complete: %d briefing(s) generated", len(briefings))
     except Exception:  # noqa: BLE001 — same resilience guarantee as the scan job
         logger.exception("daily briefing job failed")
