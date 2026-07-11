@@ -27,6 +27,17 @@ class TelegramNotificationChannel(NotificationChannel):
     Telegram chat, or the Telegram API call itself fails, `send()` logs and returns —
     never raises. Same graceful-degradation spirit as `LoggingNotificationChannel`, so one
     user's missing/broken link never breaks Watchdog's scan loop for anyone else.
+
+    That "never raises" contract covers the WHOLE method, not just the final Telegram API
+    call: the two DB lookups above it (`WatchlistRepository.get`, then
+    `TelegramLinkRepository.get_by_user_id`) can themselves raise on a transient
+    Supabase/network error, and `RunWatchdogScan._scan_watchlist` (the only caller) has no
+    try/except of its own around `send()` — an uncaught lookup error there would abort the
+    entire scan loop, not just skip the one alert that failed, silently starving every
+    other watchlist in that scan cycle of alert evaluation. So the whole body below runs
+    under a single try/except, keeping this adapter self-contained: any future
+    `NotificationChannel` implementation (email, Slack, ...) only has to honor the same
+    "never raises" contract, not also audit every caller for missing guards.
     """
 
     def __init__(
@@ -40,29 +51,34 @@ class TelegramNotificationChannel(NotificationChannel):
         self._telegram_link_repository = telegram_link_repository
 
     async def send(self, alert: Alert) -> None:
-        watchlist = await self._watchlist_repository.get(alert.watchlist_id)
-        if watchlist is None:
-            logger.warning(
-                "alert %s references unknown watchlist %s; skipping Telegram delivery",
+        try:
+            watchlist = await self._watchlist_repository.get(alert.watchlist_id)
+            if watchlist is None:
+                logger.warning(
+                    "alert %s references unknown watchlist %s; skipping Telegram delivery",
+                    alert.id,
+                    alert.watchlist_id,
+                )
+                return
+
+            link = await self._telegram_link_repository.get_by_user_id(watchlist.user_id)
+            if link is None:
+                logger.info(
+                    "user %s has no linked Telegram chat; skipping delivery for alert %s",
+                    watchlist.user_id,
+                    alert.id,
+                )
+                return
+
+            await self._messenger.send_text(link.chat_id, _format_alert(alert))
+        except Exception:  # noqa: BLE001 — this port must never raise; see class docstring.
+            # Broad on purpose: a watchlist/link lookup failure and a Telegram API failure
+            # are both just "this one alert didn't get delivered" from the scan loop's
+            # point of view, and both must be equally non-fatal to it.
+            logger.exception(
+                "Failed to deliver Telegram alert %s for watchlist %s",
                 alert.id,
                 alert.watchlist_id,
-            )
-            return
-
-        link = await self._telegram_link_repository.get_by_user_id(watchlist.user_id)
-        if link is None:
-            logger.info(
-                "user %s has no linked Telegram chat; skipping delivery for alert %s",
-                watchlist.user_id,
-                alert.id,
-            )
-            return
-
-        try:
-            await self._messenger.send_text(link.chat_id, _format_alert(alert))
-        except Exception:  # noqa: BLE001 — a bad delivery must never crash the scan loop
-            logger.exception(
-                "Failed to deliver Telegram alert %s to chat_id=%s", alert.id, link.chat_id
             )
 
 
