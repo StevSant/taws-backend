@@ -114,6 +114,9 @@ class _FakeBriefingRepository(BriefingRepository):
     async def list_for_watchlist(self, watchlist_id: str) -> list[Briefing]:
         return self._briefings
 
+    async def get_latest_for_watchlist(self, watchlist_id: str) -> Briefing | None:
+        return max(self._briefings, key=lambda b: b.created_at) if self._briefings else None
+
     async def save_review_state(self, review_state: ReviewState) -> ReviewState:
         raise NotImplementedError
 

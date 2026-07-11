@@ -71,6 +71,18 @@ class SupabaseBriefingRepository(BriefingRepository):
         )
         return [briefing_from_row(row) for row in response.data]
 
+    async def get_latest_for_watchlist(self, watchlist_id: str) -> Briefing | None:
+        client = await self._clients.get()
+        response = (
+            await client.table(_BRIEFINGS_TABLE)
+            .select("*")
+            .eq("watchlist_id", watchlist_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return briefing_from_row(response.data[0]) if response.data else None
+
     async def save_review_state(self, review_state: ReviewState) -> ReviewState:
         """Persist a reviewer decision, or raise `IllegalReviewTransitionError`.
 

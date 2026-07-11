@@ -17,6 +17,20 @@ class TelegramLinkRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_by_chat_id(self, chat_id: str) -> TelegramLink | None:
+        """Return the Telegram link for this chat_id, or `None` if this chat hasn't
+        linked to any user.
+
+        The REVERSE lookup direction from `get_by_user_id` (issue #19's `/briefing`,
+        `/signal`, `/simular` inbound commands): a webhook update only carries the
+        Telegram `chat_id` that sent it, and every one of those commands needs to
+        resolve it back to the `user_id` whose data to fetch. `get_by_user_id` stays
+        the OUTBOUND direction used by `TelegramNotificationChannel` to resolve a
+        watchlist owner to their linked chat before delivering an alert.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def link(self, link: TelegramLink) -> TelegramLink:
         """Persist `link`, replacing any existing link for the same `user_id` or the
         same `chat_id` (unlink-then-relink semantics — see `TelegramLink`'s docstring

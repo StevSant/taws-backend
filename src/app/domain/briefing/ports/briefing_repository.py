@@ -28,6 +28,19 @@ class BriefingRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_latest_for_watchlist(self, watchlist_id: str) -> Briefing | None:
+        """Return the most recently created briefing for this watchlist, or `None` if
+        none exist yet.
+
+        Kept as its own port method (rather than always calling `list_for_watchlist`
+        and picking the max client-side) so an adapter can push "most recent" down to
+        the store itself (`ORDER BY created_at DESC LIMIT 1`) instead of fetching every
+        briefing just to discard all but one. Added for the Telegram `/briefing`
+        command (issue #19).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def save_review_state(self, review_state: ReviewState) -> ReviewState:
         """Persist a reviewer decision (reviewed/escalated/discarded) on a briefing.
 

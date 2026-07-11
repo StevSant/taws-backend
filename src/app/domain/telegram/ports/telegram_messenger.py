@@ -13,8 +13,16 @@ class TelegramMessenger(ABC):
     """
 
     @abstractmethod
-    async def send_text(self, chat_id: str, text: str) -> None:
+    async def send_text(self, chat_id: str, text: str, *, parse_mode: str | None = None) -> None:
         """Send `text` to `chat_id`. May raise on delivery failure — callers with a
         no-crash requirement (e.g. `NotificationChannel.send`) are responsible for
-        catching and logging, same as any other port call."""
+        catching and logging, same as any other port call.
+
+        `parse_mode` optionally selects Telegram's `sendMessage` formatting mode (e.g.
+        `"HTML"`, per https://core.telegram.org/bots/api#formatting-options) — `None`
+        (the default) sends plain, unformatted text, preserving every existing caller's
+        behavior. Introduced for issue #19's Telegram command replies (bold tickers,
+        etc.); callers passing a non-`None` value are responsible for producing text
+        that's already valid for that mode (e.g. HTML-escaped).
+        """
         raise NotImplementedError
