@@ -5,8 +5,10 @@
     "title_en": "Fed hikes rates by an unexpected 50bp",
     "description_es": "La Reserva Federal sorprende al mercado con un alza de 50 puntos base, por encima de lo esperado, citando presiones de inflación persistentes.",
     "description_en": "The Federal Reserve surprises markets with a 50bp hike, above consensus, citing persistent inflation pressures.",
+    "entity": "Federal Reserve policy rate",
     "event_type": "macro_rate_shock",
     "magnitude": "high",
+    "horizon": "medium_term",
     "affected_symbols": ["TLT", "LQD", "HYG", "GLD"],
     "affected_asset_classes": ["credit", "commodity"]
   },
@@ -16,8 +18,10 @@
     "title_en": "SEC rejects a new Bitcoin ETF application",
     "description_es": "El regulador estadounidense rechaza una solicitud relevante de ETF spot de Bitcoin, citando preocupaciones sobre la vigilancia del mercado subyacente.",
     "description_en": "The US regulator rejects a prominent spot Bitcoin ETF application, citing concerns about market surveillance.",
+    "entity": "Bitcoin ETF regulatory approval",
     "event_type": "regulatory_shock",
     "magnitude": "high",
+    "horizon": "short_term",
     "affected_symbols": ["BTC", "ETH", "SOL"],
     "affected_asset_classes": ["crypto"]
   },
@@ -27,8 +31,10 @@
     "title_en": "NVIDIA reports an earnings miss",
     "description_es": "NVIDIA reporta ingresos y guía por debajo del consenso, con comentarios sobre una desaceleración temporal en la demanda de centros de datos.",
     "description_en": "NVIDIA reports revenue and guidance below consensus, with commentary on a temporary slowdown in data-center demand.",
+    "entity": "NVDA",
     "event_type": "earnings_miss",
     "magnitude": "high",
+    "horizon": "short_term",
     "affected_symbols": ["NVDA"],
     "affected_asset_classes": ["stock"]
   },
@@ -38,8 +44,10 @@
     "title_en": "Sudden oil supply disruption",
     "description_es": "Un cierre inesperado de infraestructura clave de producción interrumpe una parte significativa de la oferta global de petróleo.",
     "description_en": "An unexpected shutdown of key production infrastructure disrupts a significant share of global oil supply.",
+    "entity": "Global oil supply",
     "event_type": "commodity_supply_shock",
     "magnitude": "high",
+    "horizon": "short_term",
     "affected_symbols": ["USO", "GLD"],
     "affected_asset_classes": ["commodity"]
   },
@@ -49,8 +57,10 @@
     "title_en": "EUR/USD breaks below parity",
     "description_es": "El euro cae por debajo de la paridad frente al dólar tras datos económicos débiles en la eurozona y un dólar fortalecido por flujos de refugio.",
     "description_en": "The euro falls below parity against the dollar following weak eurozone data and safe-haven-driven dollar strength.",
+    "entity": "EUR/USD",
     "event_type": "fx_regime_shift",
     "magnitude": "medium",
+    "horizon": "medium_term",
     "affected_symbols": ["EURUSD"],
     "affected_asset_classes": ["forex"]
   },
@@ -60,8 +70,10 @@
     "title_en": "A rating agency downgrades US credit",
     "description_es": "Una agencia calificadora rebaja la calificación soberana de EE. UU., citando preocupaciones fiscales de largo plazo.",
     "description_en": "A rating agency downgrades the US sovereign credit rating, citing long-term fiscal concerns.",
+    "entity": "US sovereign credit rating",
     "event_type": "sovereign_credit_shock",
     "magnitude": "high",
+    "horizon": "medium_term",
     "affected_symbols": ["TLT", "LQD", "HYG"],
     "affected_asset_classes": ["credit"]
   },
@@ -71,8 +83,10 @@
     "title_en": "A major crypto exchange suffers a hack",
     "description_es": "Un exchange de criptomonedas de primer nivel reporta un hackeo significativo, generando dudas sobre la seguridad de los fondos de los usuarios.",
     "description_en": "A top-tier crypto exchange reports a significant hack, raising questions about the safety of user funds.",
+    "entity": "Crypto exchange security",
     "event_type": "security_incident",
     "magnitude": "high",
+    "horizon": "immediate",
     "affected_symbols": ["BTC", "ETH", "BNB", "SOL", "XRP"],
     "affected_asset_classes": ["crypto"]
   },
@@ -82,8 +96,10 @@
     "title_en": "A wave of mass layoffs hits the tech sector",
     "description_es": "Varias grandes tecnológicas anuncian recortes significativos de personal en la misma semana, en medio de la presión por reducir costos.",
     "description_en": "Several large tech companies announce significant headcount cuts in the same week, amid pressure to cut costs.",
+    "entity": "Big Tech labor market",
     "event_type": "labor_market_shift",
     "magnitude": "medium",
+    "horizon": "medium_term",
     "affected_symbols": ["MSFT", "GOOGL", "META", "AMZN", "AAPL"],
     "affected_asset_classes": ["stock"]
   }

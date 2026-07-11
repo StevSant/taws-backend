@@ -1,0 +1,152 @@
+from typing import Any
+
+from app.domain.consequence.entities import ConsequenceChain, ConsequenceEdge, ConsequenceNode
+from app.domain.market.entities import AssetClass
+from app.domain.scenario.entities import (
+    EvidenceType,
+    ScenarioAssetClassImpact,
+    ScenarioEvidence,
+    ScenarioHorizon,
+    ScenarioMagnitude,
+    ScenarioResult,
+    ScenarioSpec,
+)
+from app.domain.signals.entities import ImpactClass
+from app.infrastructure.persistence.parse_supabase_timestamp import parse_supabase_timestamp
+
+
+def scenario_to_row(result: ScenarioResult) -> dict[str, Any]:
+    """Map a `ScenarioResult` onto the JSON-serializable shape stored in `scenarios`.
+
+    `spec`/`impact_map`/`consequence_chain` are stored as JSONB (nested dataclasses
+    don't map onto flat columns), same "JSONB for a structured nested shape" choice
+    `signals.evidence` and `historical_analogs.metadata` already make. `preset_id` is
+    denormalized out of `spec` into its own column purely for indexing/filtering — the
+    JSONB `spec` blob remains the source of truth.
+    """
+    return {
+        "id": result.id,
+        "preset_id": result.spec.preset_id,
+        "title": result.title,
+        "narrative": result.narrative,
+        "spec": _spec_to_row(result.spec),
+        "impact_map": [_impact_to_row(impact) for impact in result.impact_map],
+        "consequence_chain": _consequence_chain_to_row(result.consequence_chain),
+        "recommended_actions": result.recommended_actions,
+        "disclaimer": result.disclaimer,
+        "created_at": result.created_at.isoformat(),
+    }
+
+
+def scenario_from_row(row: Any) -> ScenarioResult:
+    """Map one `scenarios` table row (as returned by `supabase-py`) onto `ScenarioResult`.
+
+    JSONB columns are already decoded into `dict`/`list` by PostgREST, so no extra JSON
+    parsing is needed here. Typed `Any` rather than `dict[str, Any]` — see
+    `watchlist_row_mapper.py` for why.
+    """
+    return ScenarioResult(
+        id=row["id"],
+        spec=_spec_from_row(row["spec"]),
+        title=row["title"],
+        narrative=row["narrative"],
+        impact_map=[_impact_from_row(item) for item in row.get("impact_map") or []],
+        consequence_chain=_consequence_chain_from_row(row["consequence_chain"]),
+        recommended_actions=row.get("recommended_actions") or [],
+        disclaimer=row["disclaimer"],
+        created_at=parse_supabase_timestamp(row["created_at"]),
+    )
+
+
+def _spec_to_row(spec: ScenarioSpec) -> dict[str, Any]:
+    return {
+        "entity": spec.entity,
+        "event_type": spec.event_type,
+        "magnitude": spec.magnitude.value,
+        "horizon": spec.horizon.value,
+        "title": spec.title,
+        "description": spec.description,
+        "affected_symbols": spec.affected_symbols,
+        "affected_asset_classes": [ac.value for ac in spec.affected_asset_classes],
+        "preset_id": spec.preset_id,
+    }
+
+
+def _spec_from_row(data: dict[str, Any]) -> ScenarioSpec:
+    return ScenarioSpec(
+        entity=data["entity"],
+        event_type=data["event_type"],
+        magnitude=ScenarioMagnitude(data["magnitude"]),
+        horizon=ScenarioHorizon(data["horizon"]),
+        title=data["title"],
+        description=data["description"],
+        affected_symbols=data.get("affected_symbols") or [],
+        affected_asset_classes=[
+            AssetClass(value) for value in data.get("affected_asset_classes") or []
+        ],
+        preset_id=data.get("preset_id"),
+    )
+
+
+def _impact_to_row(impact: ScenarioAssetClassImpact) -> dict[str, Any]:
+    return {
+        "asset_class": impact.asset_class.value,
+        "direction": impact.direction.value,
+        "confidence": impact.confidence,
+        "evidence": [
+            {"evidence_type": item.evidence_type.value, "detail": item.detail}
+            for item in impact.evidence
+        ],
+    }
+
+
+def _impact_from_row(data: dict[str, Any]) -> ScenarioAssetClassImpact:
+    return ScenarioAssetClassImpact(
+        asset_class=AssetClass(data["asset_class"]),
+        direction=ImpactClass(data["direction"]),
+        confidence=data["confidence"],
+        evidence=[
+            ScenarioEvidence(
+                evidence_type=EvidenceType(item["evidence_type"]), detail=item["detail"]
+            )
+            for item in data.get("evidence") or []
+        ],
+    )
+
+
+def _consequence_chain_to_row(chain: ConsequenceChain) -> dict[str, Any]:
+    return {
+        "id": chain.id,
+        "subject": chain.subject,
+        "nodes": [{"id": node.id, "label": node.label} for node in chain.nodes],
+        "edges": [
+            {
+                "source_node_id": edge.source_node_id,
+                "target_node_id": edge.target_node_id,
+                "mechanism": edge.mechanism,
+                "confidence": edge.confidence,
+            }
+            for edge in chain.edges
+        ],
+        "disclaimer": chain.disclaimer,
+        "created_at": chain.created_at.isoformat(),
+    }
+
+
+def _consequence_chain_from_row(data: dict[str, Any]) -> ConsequenceChain:
+    return ConsequenceChain(
+        id=data["id"],
+        subject=data["subject"],
+        nodes=[ConsequenceNode(id=n["id"], label=n["label"]) for n in data.get("nodes") or []],
+        edges=[
+            ConsequenceEdge(
+                source_node_id=e["source_node_id"],
+                target_node_id=e["target_node_id"],
+                mechanism=e["mechanism"],
+                confidence=e["confidence"],
+            )
+            for e in data.get("edges") or []
+        ],
+        disclaimer=data["disclaimer"],
+        created_at=parse_supabase_timestamp(data["created_at"]),
+    )

@@ -4,8 +4,15 @@ from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 
+from app.application.analogs.use_cases import FindHistoricalAnalogs
 from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
+from app.application.scenario.use_cases import (
+    ComputeScenarioQuantification,
+    GatherScenarioContext,
+    NormalizeScenarioIntake,
+    SynthesizeScenarioResult,
+)
 from app.application.watchdog import AlertedSignalTracker
 from app.core.config import Settings, get_settings
 from app.domain.agents.ports import (
@@ -25,13 +32,16 @@ from app.domain.market.ports import (
     NewsProvider,
 )
 from app.domain.notification.ports import NotificationChannel
+from app.domain.scenario.ports import ScenarioRepository
 from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
+from app.infrastructure.agents.scenario import ScenarioSimulationRunner, build_scenario_graph
 from app.infrastructure.agents.tools import (
     build_advisor_grounding_tools,
     build_consequence_tools,
     build_quant_grounding_tools,
+    build_scenario_tools,
 )
 from app.infrastructure.embeddings import OpenAIEmbeddings
 from app.infrastructure.fundamentals import (
@@ -64,10 +74,11 @@ from app.infrastructure.notification import LoggingNotificationChannel
 from app.infrastructure.persistence import (
     SupabaseBriefingRepository,
     SupabaseConversationRepository,
+    SupabaseScenarioRepository,
     SupabaseSignalRepository,
     SupabaseWatchlistRepository,
 )
-from app.infrastructure.seeds import load_universe_seed
+from app.infrastructure.seeds import load_preset_scenarios_seed, load_universe_seed
 from app.infrastructure.universe import JsonInstrumentUniverse
 from app.infrastructure.vectorstore import PgvectorStore
 
@@ -107,6 +118,8 @@ class Container:
         self._generate_consequence_chain_use_case: GenerateConsequenceChain | None = None
         self._notification_channel: NotificationChannel | None = None
         self._alerted_signal_tracker: AlertedSignalTracker | None = None
+        self._scenario_repository: ScenarioRepository | None = None
+        self._scenario_simulation_runner: ScenarioSimulationRunner | None = None
 
     def get_llm_provider(self) -> LLMProvider:
         if self._llm_provider is None:
@@ -353,6 +366,72 @@ class Container:
             )
         return self._fundamentals_provider
 
+    def get_preset_scenario_rows(self) -> list[dict[str, Any]]:
+        """Return the curated preset scenario rows (raw JSON, bilingual copy included).
+
+        Backs `GET /api/v1/scenarios/presets` (a preset picker listing) — the normalized,
+        English-only, pipeline-ready `ScenarioSpec` shape those rows map onto lives behind
+        `get_scenario_simulation_runner()`'s Intake step instead, see
+        `build_scenario_spec_from_preset.py`. `load_preset_scenarios_seed` is itself
+        `@lru_cache`d, so no separate instance-level caching is needed here.
+        """
+        return load_preset_scenarios_seed(self._settings.preset_scenarios_seed_path)
+
+    def get_scenario_repository(self) -> ScenarioRepository:
+        if self._scenario_repository is None:
+            self._scenario_repository = SupabaseScenarioRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+            )
+        return self._scenario_repository
+
+    def get_scenario_simulation_runner(self) -> ScenarioSimulationRunner:
+        """Return the cached Scenario Simulation graph runner (issue #12).
+
+        Builds every step's use case from existing ports/use cases only — `GatherScenarioContext`
+        reuses `FindHistoricalAnalogs` (issue #15) exactly like `signals.py`'s router builds it
+        per-request, and `build_scenario_graph` reuses `get_generate_consequence_chain_use_case()`
+        directly (issue #8) rather than constructing a second `GenerateConsequenceChain`. Shared
+        between `POST /api/v1/scenarios/generate` and the `run_scenario_simulation` chat tool
+        (`_get_chat_graph` below) — both call the exact same compiled graph.
+        """
+        if self._scenario_simulation_runner is None:
+            preset_rows = load_preset_scenarios_seed(self._settings.preset_scenarios_seed_path)
+            normalize_intake = NormalizeScenarioIntake(
+                llm_provider=self.get_llm_provider(),
+                instrument_universe=self.get_instrument_universe(),
+                preset_rows=preset_rows,
+            )
+            gather_context = GatherScenarioContext(
+                market_data_provider=self.get_market_data_provider(),
+                instrument_universe=self.get_instrument_universe(),
+                news_provider=self.get_news_provider(),
+                macro_data_provider=self.get_macro_data_provider(),
+                find_historical_analogs=FindHistoricalAnalogs(
+                    embedding_provider=self.get_embedding_provider(),
+                    vector_store=self.get_vector_store(),
+                    top_k=self._settings.historical_analogs_top_k,
+                ),
+            )
+            compute_quantification = ComputeScenarioQuantification(
+                market_data_provider=self.get_market_data_provider(),
+                instrument_universe=self.get_instrument_universe(),
+            )
+            synthesize_result = SynthesizeScenarioResult(
+                llm_provider=self.get_llm_provider(),
+                instrument_universe=self.get_instrument_universe(),
+            )
+            graph = build_scenario_graph(
+                normalize_scenario_intake=normalize_intake,
+                gather_scenario_context=gather_context,
+                generate_consequence_chain=self.get_generate_consequence_chain_use_case(),
+                compute_scenario_quantification=compute_quantification,
+                synthesize_scenario_result=synthesize_result,
+                scenario_repository=self.get_scenario_repository(),
+            )
+            self._scenario_simulation_runner = ScenarioSimulationRunner(graph=graph)
+        return self._scenario_simulation_runner
+
     def get_agent_runner(self) -> AgentRunner:
         """Return the cached `AgentRunner`, built from the chat model + checkpointer.
 
@@ -381,11 +460,17 @@ class Container:
     def _get_chat_graph(self) -> Any:
         if self._chat_graph is None:
             checkpointer = self.get_agent_memory().get_checkpointer()
-            # Signal-only: see `build_advisor_grounding_tools`'s docstring for why
-            # briefing/watchlist grounding tools were removed (unauthenticated chat
-            # route + no per-user ownership check would leak cross-tenant data).
+            # Signal-only grounding: see `build_advisor_grounding_tools`'s docstring for
+            # why briefing/watchlist grounding tools were removed (unauthenticated chat
+            # route + no per-user ownership check would leak cross-tenant data). The
+            # Scenario Simulation tool is safe to add on top — `ScenarioResult`s aren't
+            # per-user data either (see `ScenarioRepository`'s docstring) — so it's kept
+            # in its own builder (`build_scenario_tools`, not "grounding") and
+            # concatenated here rather than folded into `build_advisor_grounding_tools`.
             advisor_tools = build_advisor_grounding_tools(
                 signal_repository=self.get_signal_repository()
+            ) + build_scenario_tools(
+                scenario_simulation_runner=self.get_scenario_simulation_runner()
             )
             consequence_tools = build_consequence_tools(
                 use_case=self.get_generate_consequence_chain_use_case()

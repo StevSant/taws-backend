@@ -12,6 +12,7 @@ from app.api.v1.schemas.event_study_event_response import EventStudyEventRespons
 from app.api.v1.schemas.event_study_response import EventStudyResponse
 from app.api.v1.schemas.fundamentals_response import FundamentalsResponse
 from app.api.v1.schemas.generate_consequence_chain_request import GenerateConsequenceChainRequest
+from app.api.v1.schemas.generate_scenario_request import GenerateScenarioRequest
 from app.api.v1.schemas.generate_signal_request import GenerateSignalRequest
 from app.api.v1.schemas.instrument_fundamentals_response import InstrumentFundamentalsResponse
 from app.api.v1.schemas.instrument_response import InstrumentResponse
@@ -21,6 +22,13 @@ from app.api.v1.schemas.market_stats_response import MarketStatsResponse
 from app.api.v1.schemas.news_item_response import NewsItemResponse
 from app.api.v1.schemas.review_decision_request import ReviewDecisionRequest
 from app.api.v1.schemas.review_state_response import ReviewStateResponse
+from app.api.v1.schemas.scenario_asset_class_impact_response import (
+    ScenarioAssetClassImpactResponse,
+)
+from app.api.v1.schemas.scenario_evidence_response import ScenarioEvidenceResponse
+from app.api.v1.schemas.scenario_preset_response import ScenarioPresetResponse
+from app.api.v1.schemas.scenario_result_response import ScenarioResultResponse
+from app.api.v1.schemas.scenario_spec_response import ScenarioSpecResponse
 from app.api.v1.schemas.signal_evidence_response import SignalEvidenceResponse
 from app.api.v1.schemas.signal_response import SignalResponse
 from app.api.v1.schemas.unusual_move_response import UnusualMoveResponse
@@ -46,6 +54,7 @@ __all__ = [
     "EventStudyResponse",
     "FundamentalsResponse",
     "GenerateConsequenceChainRequest",
+    "GenerateScenarioRequest",
     "GenerateSignalRequest",
     "InstrumentFundamentalsResponse",
     "InstrumentResponse",
@@ -55,6 +64,11 @@ __all__ = [
     "NewsItemResponse",
     "ReviewDecisionRequest",
     "ReviewStateResponse",
+    "ScenarioAssetClassImpactResponse",
+    "ScenarioEvidenceResponse",
+    "ScenarioPresetResponse",
+    "ScenarioResultResponse",
+    "ScenarioSpecResponse",
     "SignalEvidenceResponse",
     "SignalResponse",
     "UnusualMoveResponse",
