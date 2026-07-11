@@ -39,7 +39,8 @@ async def demo_analyze_event(
     )
     enriched = await use_case.execute(news_event)
 
-    if enriched.should_notify and payload.telegram_chat_id and messenger is not None:
+    should_alert = enriched.should_notify or payload.force_notify
+    if should_alert and payload.telegram_chat_id and messenger is not None:
         try:
             text = format_event_alert(enriched)
             await messenger.send_text(payload.telegram_chat_id, text, parse_mode="HTML")
