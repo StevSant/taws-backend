@@ -67,12 +67,15 @@ class GenerateSignal:
     instrument's symbol first; if fewer than `_MIN_DISTINCT_SOURCES` distinct sources come back
     (common with the packaged dev fixture, which seeds ~1 article per symbol), broadens to the
     instrument's asset class as supplementary market-context evidence rather than failing
-    outright. This is a documented tradeoff, not a bug: the fixture's crypto articles are all
-    sourced from CoinDesk, so crypto signals generated in dev without a live `NewsProvider` API
-    key configured (`MARKETAUX_API_KEY` / `NEWSAPI_API_KEY` / `FINNHUB_API_KEY`) may still ship
-    with a single distinct source — configuring any one of those keys resolves it. Only a hard
-    floor of >=1 real news item is enforced (`InsufficientEvidenceError` otherwise); no news
-    evidence is ever fabricated. Historical-analog evidence (issue #15) is retrieved via
+    outright. The distinct-source count is re-checked after broadening (issue #25): a hard floor
+    of >=1 real news item AND >=`_MIN_DISTINCT_SOURCES` distinct sources is enforced —
+    `InsufficientEvidenceError` is raised for either shortfall, before classification or
+    persistence — so a signal can never ship with fewer than 2 distinct sources, even in dev. In
+    practice this means crypto signals generated in dev without a live `NewsProvider` API key
+    configured (`MARKETAUX_API_KEY` / `NEWSAPI_API_KEY` / `FINNHUB_API_KEY`) will fail to
+    generate rather than ship under-sourced, since the packaged fixture's crypto articles are all
+    sourced from CoinDesk — configuring any one of those keys resolves it. No news evidence is
+    ever fabricated to satisfy the floor. Historical-analog evidence (issue #15) is retrieved via
     `FindHistoricalAnalogs` below, and is likewise never fabricated — it degrades to "no
     analogs" rather than inventing a match; see that class's docstring.
     """
@@ -107,6 +110,15 @@ class GenerateSignal:
         news_items = await self._gather_news(instrument)
         if not news_items:
             raise InsufficientEvidenceError(instrument.symbol)
+
+        # Hard floor (issue #25): `_gather_news` broadens to asset-class context when the
+        # direct search is too thin, but never re-checked the count afterward — a signal
+        # could still ship with a single distinct source. Re-verify post-broadening, before
+        # any classification or persistence work happens, per HU1's "≥2 news sources"
+        # acceptance criterion.
+        distinct_sources = len({item.source for item in news_items})
+        if distinct_sources < _MIN_DISTINCT_SOURCES:
+            raise InsufficientEvidenceError(instrument.symbol, distinct_sources)
 
         classification = await self._classify_impact(instrument, news_items)
         price_delta = await self._compute_price_delta(instrument)
