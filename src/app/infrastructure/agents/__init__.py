@@ -11,9 +11,11 @@ from app.infrastructure.agents.specialist_node_factory import build_specialist_n
 from app.infrastructure.agents.supervisor_graph import build_supervisor_graph
 from app.infrastructure.agents.supervisor_route import SupervisorRoute
 from app.infrastructure.agents.supervisor_router_node import build_supervisor_router_node
+from app.infrastructure.agents.supervisor_routing_tag import SUPERVISOR_ROUTING_TAG
 from app.infrastructure.agents.supervisor_state import SupervisorState
 
 __all__ = [
+    "SUPERVISOR_ROUTING_TAG",
     "LangGraphAgentRunner",
     "RouteDecision",
     "SupervisorRoute",

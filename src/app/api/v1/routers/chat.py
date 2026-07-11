@@ -5,8 +5,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from app.api.v1.dependencies import get_agent_runner
-from app.api.v1.schemas import ChatRequest
+from app.api.v1.dependencies import get_agent_runner, require_current_user
+from app.api.v1.schemas import ChatRequest, CurrentUser
 from app.application.chat.use_cases import StreamReply
 from app.domain.agents.entities import (
     AgentStreamEvent,
@@ -66,6 +66,7 @@ async def _to_sse(events: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[str]
 @router.post("/stream")
 async def stream_chat(
     payload: ChatRequest,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
     agent_runner: Annotated[AgentRunner, Depends(get_agent_runner)],
 ) -> StreamingResponse:
     """Stream an assistant reply over Server-Sent Events (SSE protocol v2).
@@ -74,11 +75,13 @@ async def stream_chat(
     `LangGraphAgentRunner` adapter — see `core/di/container.py`), which guards
     against a missing `OPENAI_API_KEY` with a placeholder streaming reply, so this
     endpoint never crashes before real keys are configured. Per-thread history is
-    kept by the graph's checkpointer, keyed by `payload.thread_id`.
+    kept by the graph's checkpointer, keyed by `payload.thread_id`. Requires an
+    authenticated user (see `require_current_user`); `user.id` is threaded through to
+    the agent graph's config for future per-tenant tool access.
     """
     use_case = StreamReply(agent_runner=agent_runner)
     thread_id = payload.thread_id or _DEFAULT_THREAD_ID
     message = Message(role=MessageRole.USER, content=payload.message)
 
-    event_stream = use_case.execute(thread_id, message)
+    event_stream = use_case.execute(thread_id, message, user.id)
     return StreamingResponse(_to_sse(event_stream), media_type="text/event-stream")

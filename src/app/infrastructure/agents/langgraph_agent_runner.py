@@ -9,6 +9,7 @@ from app.infrastructure.agents.build_agent_trace_from_payload import (
     build_agent_trace_from_payload,
 )
 from app.infrastructure.agents.extract_ai_message_token import extract_ai_message_token
+from app.infrastructure.agents.supervisor_routing_tag import SUPERVISOR_ROUTING_TAG
 
 
 class LangGraphAgentRunner(AgentRunner):
@@ -18,7 +19,11 @@ class LangGraphAgentRunner(AgentRunner):
     stream modes changes the yielded shape from LangGraph: instead of the bare
     per-mode payload, each iteration yields a `(mode, payload)` tuple —
     - `mode == "messages"`: `payload` is the same `(message_chunk, metadata)` tuple as
-      the single-mode case; `metadata` is unused, kept in the unpack for clarity.
+      the single-mode case. `metadata` is inspected for the `SUPERVISOR_ROUTING_TAG` run
+      tag (set on the supervisor's `with_structured_output(...).ainvoke(...)` call in
+      `supervisor_router_node.py`) so its structured-output chunks — raw routing JSON
+      like `{"route": "...", "reason": "..."}` — are skipped instead of leaking into the
+      SSE token stream ahead of the chosen specialist's real answer text.
     - `mode == "custom"`: `payload` is exactly the dict a node passed to
       `get_stream_writer()()` (see `supervisor_router_node.py` /
       `specialist_node_factory.py`), untouched by LangGraph.
@@ -32,8 +37,10 @@ class LangGraphAgentRunner(AgentRunner):
     def __init__(self, graph: Any) -> None:
         self._graph = graph
 
-    async def stream(self, thread_id: str, message: Message) -> AsyncIterator[AgentStreamEvent]:
-        config = {"configurable": {"thread_id": thread_id}}
+    async def stream(
+        self, thread_id: str, message: Message, user_id: str
+    ) -> AsyncIterator[AgentStreamEvent]:
+        config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
         input_state = {"messages": [HumanMessage(content=message.content)]}
 
         try:
@@ -41,7 +48,9 @@ class LangGraphAgentRunner(AgentRunner):
                 input_state, config=config, stream_mode=["messages", "custom"]
             ):
                 if mode == "messages":
-                    message_chunk, _metadata = payload
+                    message_chunk, metadata = payload
+                    if SUPERVISOR_ROUTING_TAG in metadata.get("tags", []):
+                        continue
                     token = extract_ai_message_token(message_chunk)
                     if token:
                         yield TokenEvent(token=token)

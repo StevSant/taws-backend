@@ -7,6 +7,7 @@ from langgraph.config import get_stream_writer
 from app.domain.agents.entities import AgentTraceEvent
 from app.infrastructure.agents.route_decision import RouteDecision
 from app.infrastructure.agents.supervisor_route import SupervisorRoute
+from app.infrastructure.agents.supervisor_routing_tag import SUPERVISOR_ROUTING_TAG
 from app.infrastructure.agents.supervisor_state import SupervisorState
 
 _ROUTER_SYSTEM_PROMPT = """You are the Supervisor of a team of financial-research \
@@ -44,6 +45,11 @@ def build_supervisor_router_node(model: BaseChatModel) -> Any:
     expects its callable's `state` parameter to accept the keyword name `state`, which a
     `Callable[...]` type alias erases — annotating with one here makes pyright reject a
     perfectly valid callable at the `add_node` call site in `supervisor_graph.py`.
+
+    The structured-output `ainvoke` call is tagged with `SUPERVISOR_ROUTING_TAG` so
+    `LangGraphAgentRunner.stream` can recognize and skip its chunks in the
+    `stream_mode="messages"` branch — otherwise the raw routing JSON would leak into the
+    SSE token stream ahead of the chosen specialist's real answer text.
     """
 
     async def supervisor_node(state: SupervisorState) -> dict[str, Any]:
@@ -51,7 +57,8 @@ def build_supervisor_router_node(model: BaseChatModel) -> Any:
         try:
             structured_model = model.with_structured_output(RouteDecision)
             decision = await structured_model.ainvoke(
-                [SystemMessage(content=_ROUTER_SYSTEM_PROMPT), *state["messages"]]
+                [SystemMessage(content=_ROUTER_SYSTEM_PROMPT), *state["messages"]],
+                config={"tags": [SUPERVISOR_ROUTING_TAG]},
             )
             if not isinstance(decision, RouteDecision):
                 raise TypeError(f"Unexpected structured-output result: {decision!r}")

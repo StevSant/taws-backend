@@ -16,6 +16,8 @@ class StreamReply:
     def __init__(self, agent_runner: AgentRunner) -> None:
         self._agent_runner = agent_runner
 
-    async def execute(self, thread_id: str, message: Message) -> AsyncIterator[AgentStreamEvent]:
-        async for event in self._agent_runner.stream(thread_id, message):
+    async def execute(
+        self, thread_id: str, message: Message, user_id: str
+    ) -> AsyncIterator[AgentStreamEvent]:
+        async for event in self._agent_runner.stream(thread_id, message, user_id):
             yield event
