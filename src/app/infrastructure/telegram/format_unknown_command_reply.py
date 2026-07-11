@@ -8,5 +8,6 @@ def format_unknown_command_reply() -> str:
         "Available commands:\n"
         "/briefing — your latest watchlist briefing\n"
         "/signal <TICKER> — the latest signal for an instrument (e.g. /signal AAPL)\n"
-        "/simular <text> — run a what-if scenario simulation"
+        "/simular <text> — run a what-if scenario simulation\n"
+        "/impact <sector> — how the latest news event affects a sector (e.g. /impact Technology)"
     )

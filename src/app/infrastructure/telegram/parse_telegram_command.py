@@ -4,6 +4,7 @@ from app.infrastructure.telegram.extract_message_text_and_chat_id import (
     extract_message_text_and_chat_id,
 )
 from app.infrastructure.telegram.parse_briefing_command import parse_briefing_command
+from app.infrastructure.telegram.parse_impact_command import parse_impact_command
 from app.infrastructure.telegram.parse_signal_command import parse_signal_command
 from app.infrastructure.telegram.parse_simulate_command import parse_simulate_command
 from app.infrastructure.telegram.parse_start_command import parse_start_command
@@ -55,6 +56,10 @@ def parse_telegram_command(update_payload: dict[str, Any]) -> TelegramCommand | 
     simulate = parse_simulate_command(chat_id, text)
     if simulate is not None:
         return simulate
+
+    impact = parse_impact_command(chat_id, text)
+    if impact is not None:
+        return impact
 
     if text.strip().startswith("/"):
         return UnknownCommand(chat_id=chat_id, raw_text=text.strip())

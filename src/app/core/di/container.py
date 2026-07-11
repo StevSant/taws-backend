@@ -6,7 +6,7 @@ from langchain_core.language_models import BaseChatModel
 
 from app.application.analogs.use_cases import FindHistoricalAnalogs
 from app.application.consequence.use_cases import GenerateConsequenceChain
-from app.application.event_intelligence.use_cases import ProcessIncomingEvent
+from app.application.event_intelligence.use_cases import AnalyzeEventImpact, ProcessIncomingEvent
 from app.application.macro.use_cases import InterpretMacroEvent
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
 from app.application.scenario.use_cases import (
@@ -114,6 +114,7 @@ from app.infrastructure.sentiment import (
 )
 from app.infrastructure.telegram import (
     BriefingCommandHandler,
+    ImpactCommandHandler,
     SignalCommandHandler,
     SimulateCommandHandler,
     TelegramBotClient,
@@ -166,6 +167,7 @@ class Container:
         self._briefing_command_handler: BriefingCommandHandler | None = None
         self._signal_command_handler: SignalCommandHandler | None = None
         self._simulate_command_handler: SimulateCommandHandler | None = None
+        self._impact_command_handler: ImpactCommandHandler | None = None
         self._briefing_document_renderer: BriefingDocumentRenderer | None = None
         self._email_sender: EmailSender | None = None
         self._fear_greed_provider: FearGreedProvider | None = None
@@ -400,6 +402,22 @@ class Container:
                 default_locale=self._settings.default_locale,
             )
         return self._simulate_command_handler
+
+    def get_impact_command_handler(self) -> ImpactCommandHandler | None:
+        """Return the cached `/impact <sector>` command handler, or `None` when
+        Telegram isn't configured — same pattern as `get_briefing_command_handler`."""
+        messenger = self.get_telegram_messenger()
+        if messenger is None:
+            return None
+        if self._impact_command_handler is None:
+            self._impact_command_handler = ImpactCommandHandler(
+                event_repository=self.get_event_repository(),
+                analyze_event_impact=AnalyzeEventImpact(
+                    analyzer=self.get_event_analyzer(),
+                ),
+                messenger=messenger,
+            )
+        return self._impact_command_handler
 
     def get_news_provider(self) -> NewsProvider:
         """Return the aggregated news source for the radar/agents.

@@ -13,6 +13,7 @@ from app.api.v1.dependencies.get_fundamentals_provider import get_fundamentals_p
 from app.api.v1.dependencies.get_generate_consequence_chain_use_case import (
     get_generate_consequence_chain_use_case,
 )
+from app.api.v1.dependencies.get_impact_command_handler import get_impact_command_handler
 from app.api.v1.dependencies.get_instrument_universe import get_instrument_universe
 from app.api.v1.dependencies.get_interpret_macro_event_use_case import (
     get_interpret_macro_event_use_case,
@@ -57,6 +58,7 @@ __all__ = [
     "get_embedding_provider",
     "get_fundamentals_provider",
     "get_generate_consequence_chain_use_case",
+    "get_impact_command_handler",
     "get_instrument_universe",
     "get_interpret_macro_event_use_case",
     "get_link_telegram_account_use_case",

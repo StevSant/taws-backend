@@ -7,6 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 
 from app.api.v1.dependencies import (
     get_briefing_command_handler,
+    get_impact_command_handler,
     get_link_telegram_account_use_case,
     get_signal_command_handler,
     get_simulate_command_handler,
@@ -27,6 +28,8 @@ from app.domain.telegram.ports import (
 from app.infrastructure.telegram import (
     BriefingCommand,
     BriefingCommandHandler,
+    ImpactCommand,
+    ImpactCommandHandler,
     SignalCommand,
     SignalCommandHandler,
     SimulateCommand,
@@ -106,6 +109,9 @@ async def telegram_webhook(
     simulate_handler: Annotated[
         SimulateCommandHandler | None, Depends(get_simulate_command_handler)
     ],
+    impact_handler: Annotated[
+        ImpactCommandHandler | None, Depends(get_impact_command_handler)
+    ],
     messenger: Annotated[TelegramMessenger | None, Depends(get_telegram_messenger)],
 ) -> dict[str, bool]:
     """Telegram webhook endpoint: Telegram POSTs every `Update` here once `setWebhook` is
@@ -171,6 +177,10 @@ async def telegram_webhook(
                     should_run = await simulate_handler.send_acknowledgement(command)
                     if should_run:
                         background_tasks.add_task(simulate_handler.deliver_result, command)
+                return {"ok": True}
+            case ImpactCommand():
+                if impact_handler is not None:
+                    await impact_handler.handle(command)
                 return {"ok": True}
             case UnknownCommand():
                 if messenger is not None:
