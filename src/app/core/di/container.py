@@ -259,10 +259,11 @@ class Container:
     def _get_chat_graph(self) -> Any:
         if self._chat_graph is None:
             checkpointer = self.get_agent_memory().get_checkpointer()
+            # Signal-only: see `build_advisor_grounding_tools`'s docstring for why
+            # briefing/watchlist grounding tools were removed (unauthenticated chat
+            # route + no per-user ownership check would leak cross-tenant data).
             advisor_tools = build_advisor_grounding_tools(
-                signal_repository=self.get_signal_repository(),
-                briefing_repository=self.get_briefing_repository(),
-                watchlist_repository=self.get_watchlist_repository(),
+                signal_repository=self.get_signal_repository()
             )
             self._chat_graph = build_supervisor_graph(
                 self.get_chat_model(), checkpointer, advisor_tools=advisor_tools
