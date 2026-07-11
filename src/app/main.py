@@ -15,16 +15,27 @@ from app.api.v1.routers import (
     quant_router,
     reviews_router,
     signals_router,
+    watchdog_router,
     watchlists_router,
 )
 from app.core.config import get_settings
+from app.core.di import get_container
 from app.core.logging import configure_logging
+from app.infrastructure.scheduling import build_watchdog_scheduler
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
-    yield
+    # Watchdog/Notifier scheduled jobs (issue #10) — started on boot, shut down on exit so
+    # no background task is left dangling. Scan/job logic itself lives in
+    # `infrastructure/scheduling`; this is deliberately just start/stop wiring.
+    scheduler = build_watchdog_scheduler(get_container(), get_settings())
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
 
 
 def create_app() -> FastAPI:
@@ -53,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(watchlists_router, prefix="/api/v1")
     app.include_router(briefings_router, prefix="/api/v1")
     app.include_router(consequence_chains_router, prefix="/api/v1")
+    app.include_router(watchdog_router, prefix="/api/v1")
 
     return app
 

@@ -67,6 +67,20 @@ class Settings(BaseSettings):
     # Upstash Redis URL. Leave unset to use the in-memory checkpointer fallback.
     redis_url: str | None = None
 
+    # --- Watchdog / Notifier (scheduled watchlist monitoring + alerts, issue #10) ---
+    # Base URL of the deployed frontend, used to compose an alert's link-back URL. Never
+    # hardcode a frontend URL anywhere else in the codebase — read it from here.
+    frontend_base_url: str = "http://localhost:4200"
+    # Config-driven scan cadence; keep within the product's 5-15 minute polling window.
+    watchdog_poll_interval_minutes: int = 10
+    # Minimum Analyst-signal confidence for the Watchdog to consider a signal
+    # notification-worthy (see `RunWatchdogScan._is_notification_worthy`).
+    watchdog_min_confidence: float = 0.6
+    # UTC hour/minute the daily scheduled briefing run fires (issue #10 acceptance
+    # criterion 4) — regenerates an Advisor briefing for every active watchlist.
+    watchdog_daily_briefing_hour_utc: int = 13
+    watchdog_daily_briefing_minute_utc: int = 0
+
 
 @lru_cache
 def get_settings() -> Settings:

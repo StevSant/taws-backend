@@ -7,6 +7,7 @@ from app.api.v1.routers.news import router as news_router
 from app.api.v1.routers.quant import router as quant_router
 from app.api.v1.routers.reviews import router as reviews_router
 from app.api.v1.routers.signals import router as signals_router
+from app.api.v1.routers.watchdog import router as watchdog_router
 from app.api.v1.routers.watchlists import router as watchlists_router
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "quant_router",
     "reviews_router",
     "signals_router",
+    "watchdog_router",
     "watchlists_router",
 ]

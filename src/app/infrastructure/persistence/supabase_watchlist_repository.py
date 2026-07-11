@@ -50,6 +50,11 @@ class SupabaseWatchlistRepository(WatchlistRepository):
         )
         return [watchlist_from_row(row) for row in response.data]
 
+    async def list_all(self) -> list[Watchlist]:
+        client = await self._clients.get()
+        response = await client.table(_WATCHLISTS_TABLE).select("*").execute()
+        return [watchlist_from_row(row) for row in response.data]
+
     async def rename(self, watchlist_id: str, name: str) -> Watchlist:
         client = await self._clients.get()
         response = (
