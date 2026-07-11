@@ -35,6 +35,7 @@ packages = ["src/app"]
 
 [dependency-groups]
 dev = [
+    "pypdf>=6.14.2",
     "pyright>=1.1.411",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",

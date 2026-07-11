@@ -126,8 +126,14 @@ def _build_instrument_breakdown(
 def _build_instrument_section(
     section: BriefingInstrumentSection, styles: dict[str, PropertySet]
 ) -> list:
+    # `symbol` comes from `WatchlistItemAddRequest.symbol` (length-validated only, no
+    # charset restriction, just `.upper()`'d) via `GenerateBriefing`, so it's exactly as
+    # untrusted as `narrative`/`evidence_sources` below — it was missed here once (an
+    # unescaped `</b>` in a symbol threw an unhandled reportlab paraparser `ValueError`,
+    # a 500 on every future export until the item was removed), so it must stay wrapped
+    # in `_escape()` like every other entity-derived field in this file.
     story: list = [
-        Paragraph(section.symbol, styles["subheading"]),
+        Paragraph(_escape(section.symbol), styles["subheading"]),
         Paragraph(_escape(section.narrative), styles["body"]),
     ]
     if section.impact_classes:
