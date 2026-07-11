@@ -1,33 +1,60 @@
 # Migrations
 
-Plain `.sql` files, applied in filename order. There is no Supabase CLI or ORM
-migration tooling wired into this repo yet (no `supabase/` dir, no Alembic) — these
-are hand-written, idempotent-where-practical (`if not exists`) migrations meant to be
-run once against the target database.
+Managed by [Alembic](https://alembic.sqlalchemy.org/), driven from `backend/alembic.ini`
+(`script_location = migrations`). Revisions live in `migrations/versions/`, applied in
+dependency order (`down_revision` chain), tracked in the target database's
+`alembic_version` table.
 
-## Applying a migration
+**No SQLAlchemy ORM models / autogenerate.** The app's runtime data layer is
+`supabase-py` (PostgREST) — see `src/app/infrastructure/persistence/` — not SQLAlchemy.
+Alembic is used purely as a raw-SQL migration *runner* (versioning + `upgrade`/
+`downgrade` + the `alembic_version` table), not an ORM. Every revision is hand-written
+SQL wrapped in `op.execute(...)` (see `migrations/versions/0001_watchlists_signals_briefings.py`).
+`alembic revision --autogenerate` will not detect schema changes — always write
+revisions by hand.
+
+The connection string is resolved from `Settings.database_url` (`.env`) inside
+`migrations/env.py`, never hardcoded in `alembic.ini` — so credentials never end up in
+a committed file. Set `DATABASE_URL` to the **direct Postgres connection string** from
+the Supabase project's *Database* settings (not the `SUPABASE_URL`/`SUPABASE_KEY` REST
+API credentials used elsewhere).
+
+## Applying migrations
 
 ### Supabase (recommended, matches production/staging)
 
-1. Open the project's **SQL Editor** in the Supabase dashboard.
-2. Paste the contents of the migration file and run it.
-3. Confirm the new tables appear under **Table Editor**, and that **Authentication →
-   Policies** shows the RLS policies created by the migration.
+```bash
+uv run alembic upgrade head
+```
+
+Requires `DATABASE_URL` set in `.env`. Confirm the new tables appear under **Table
+Editor** in the Supabase dashboard, and that **Authentication → Policies** shows the
+RLS policies created by the migration.
 
 ### Local / offline dev (docker-compose Postgres)
 
 The root `docker-compose.yml` (service `postgres`, `pgvector/pg16` image) is for
-working without network access to Supabase. It has no `auth` schema, so
-`auth.users` FKs and `auth.uid()` calls in these migrations will fail as-is against
-it — this path is meant for application-layer development against `public.*`
-tables, not a full Supabase Auth replica. Run:
+working without network access to Supabase. It has no `auth` schema, so `auth.users`
+FKs and `auth.uid()` calls in these migrations fail as-is against it — this path is
+meant for application-layer development against `public.*` tables, not a full Supabase
+Auth replica.
 
 ```bash
-psql "postgresql://taws:taws@localhost:5432/taws" -f migrations/0001_watchlists_signals_briefings.sql
+DATABASE_URL="postgresql://taws:taws@localhost:5432/taws" uv run alembic upgrade head
 ```
 
-## Migrations
+## Common commands
 
-| File | Adds |
-|------|------|
-| `0001_watchlists_signals_briefings.sql` | `watchlists`, `watchlist_items`, `signals`, `briefings`, `review_states` + RLS policies |
+```bash
+uv run alembic upgrade head          # apply every pending revision
+uv run alembic downgrade -1          # roll back one revision
+uv run alembic current               # show the revision currently applied
+uv run alembic history               # list all revisions in order
+uv run alembic revision -m "<name>"  # scaffold a new empty revision (write the SQL by hand)
+```
+
+## Revisions
+
+| Revision | Adds |
+|----------|------|
+| `0001_watchlists_signals_briefings` | `watchlists`, `watchlist_items`, `signals`, `briefings`, `review_states` + RLS policies |

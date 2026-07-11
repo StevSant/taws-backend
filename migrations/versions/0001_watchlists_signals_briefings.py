@@ -1,31 +1,34 @@
--- 0001_watchlists_signals_briefings.sql
---
--- Track-5 T0 data layer: watchlists, signals (Analyst agent, issue #2), briefings
--- (Advisor agent, issue #3), and review states (reviewed/escalated/discarded +
--- justification, issue #4). See:
---   docs/specs/2026-07-11-track5-product-focus.md
---   GitHub issue #1 (StevSant/taws) — "feat: wire Supabase schema, auth, and
---   watchlist persistence"
---
--- How to apply:
---   * Supabase: paste this file into the project's SQL Editor and run it, or
---     `supabase db push` if/when the Supabase CLI is wired into this repo (it isn't
---     yet — see the root `migrations/README.md` for the current manual process).
---   * Local/offline dev: run against the docker-compose Postgres (root
---     `docker-compose.yml`, service `postgres`, `pgvector/pg16` image):
---       psql "postgresql://taws:taws@localhost:5432/taws" -f 0001_watchlists_signals_briefings.sql
---     Note: `auth.users` and `auth.uid()` only exist on a real Supabase project.
---     Against the local docker-compose Postgres, this file still creates the
---     `public` tables and RLS policies, but the `auth.users` FK and `auth.uid()`
---     calls will fail unless you stub them (out of scope here — the docker-compose
---     Postgres is for offline application-layer dev, not an auth-complete replica).
---
--- Compliance note (HU3): every table here is alert/task-shaped. There is no
--- buy/sell/order/quantity/price_target column anywhere in this schema, and there
--- must never be one — see the product's compliance stance in the spec above.
+"""watchlists, signals, briefings, review_states
 
--- gen_random_uuid() is built into Postgres 13+; this is a no-op guard on Supabase
--- and on the pg16 image used by the local docker-compose, kept for portability.
+Track-5 T0 data layer: watchlists, signals (Analyst agent, issue #2), briefings
+(Advisor agent, issue #3), and review states (reviewed/escalated/discarded +
+justification, issue #4). See:
+    docs/specs/2026-07-11-track5-product-focus.md
+    GitHub issue #1 (StevSant/taws) — "feat: wire Supabase schema, auth, and
+    watchlist persistence"
+
+Compliance note (HU3): every table here is alert/task-shaped. There is no
+buy/sell/order/quantity/price_target column anywhere in this schema, and there
+must never be one — see the product's compliance stance in the spec above.
+
+Revision ID: 0001
+Revises:
+Create Date: 2026-07-11
+
+"""
+
+from collections.abc import Sequence
+
+from alembic import op
+
+revision: str = "0001"
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+_UPGRADE_SQL = """
+-- gen_random_uuid() is built into Postgres 13+; this is a no-op guard on Supabase,
+-- kept for portability.
 create extension if not exists pgcrypto;
 
 -- =============================================================================
@@ -112,7 +115,8 @@ create policy "watchlist_items_delete_own" on public.watchlist_items
 create table if not exists public.signals (
     id uuid primary key default gen_random_uuid(),
     instrument_symbol text not null,
-    impact_class text not null check (impact_class in ('positive', 'negative', 'neutral', 'uncertain')),
+    impact_class text not null
+        check (impact_class in ('positive', 'negative', 'neutral', 'uncertain')),
     confidence numeric(5, 4) not null check (confidence >= 0 and confidence <= 1),
     evidence jsonb not null default '[]'::jsonb,
     price_delta numeric,
@@ -188,3 +192,20 @@ create policy "review_states_select_own" on public.review_states
 
 create policy "review_states_insert_own" on public.review_states
     for insert with check (auth.uid() = user_id);
+"""
+
+_DOWNGRADE_SQL = """
+drop table if exists public.review_states cascade;
+drop table if exists public.briefings cascade;
+drop table if exists public.signals cascade;
+drop table if exists public.watchlist_items cascade;
+drop table if exists public.watchlists cascade;
+"""
+
+
+def upgrade() -> None:
+    op.execute(_UPGRADE_SQL)
+
+
+def downgrade() -> None:
+    op.execute(_DOWNGRADE_SQL)

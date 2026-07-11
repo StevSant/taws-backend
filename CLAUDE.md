@@ -104,6 +104,23 @@ providers (OpenAI → Anthropic/Gemini/Ollama/...):
 5. Pull dependencies (current user, providers, repos) from `api/v1/dependencies/` —
    add a new `get_<thing>.py` there if needed, resolving via `core/di`.
 
+### Add a new Supabase schema migration
+
+Migrations are managed by [Alembic](https://alembic.sqlalchemy.org/) (`backend/alembic.ini`,
+`script_location = migrations`) — see `migrations/README.md` for the full command
+reference. **No SQLAlchemy ORM models / autogenerate**: the runtime data layer is
+`supabase-py`, not SQLAlchemy, so every revision is hand-written raw SQL.
+
+1. `uv run alembic revision -m "<short description>"` scaffolds an empty revision
+   under `migrations/versions/`.
+2. Write the schema change as raw SQL in `upgrade()` (via `op.execute(...)`), and its
+   inverse in `downgrade()`. Follow the RLS pattern in `0001_watchlists_signals_briefings.py`
+   — enable RLS and scope policies to `auth.uid()` on any new per-user table.
+3. `uv run alembic upgrade head` applies it (needs `DATABASE_URL` in `.env` — the
+   direct Postgres connection string from the Supabase project's *Database* settings).
+4. Never add trading/execution columns (`buy`/`sell`/`order`/`quantity`/`price_target`)
+   — this product's compliance stance is alert/task records only.
+
 ## Environment / settings rule
 
 `Settings` in `core/config/settings.py` is the only place env vars are read. Every
