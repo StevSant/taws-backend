@@ -9,10 +9,11 @@ from app.api.v1.dependencies import (
     get_watchlist_repository,
     require_current_user,
 )
-from app.api.v1.schemas import BriefingResponse, CurrentUser
+from app.api.v1.schemas import BriefingResponse, CurrentUser, GenerateBriefingRequest
 from app.application.briefing import EmptyWatchlistError
 from app.application.briefing.use_cases import GenerateBriefing
 from app.application.compliance import ComplianceViolationError
+from app.core.config import Settings, get_settings
 from app.domain.agents.ports import LLMProvider
 from app.domain.briefing.ports import BriefingRepository
 from app.domain.signals.ports import SignalRepository
@@ -39,11 +40,13 @@ async def _require_owned_watchlist(
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def generate_briefing(
     watchlist_id: str,
+    payload: GenerateBriefingRequest,
     user: Annotated[CurrentUser, Depends(require_current_user)],
     watchlist_repository: Annotated[WatchlistRepository, Depends(get_watchlist_repository)],
     signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
     briefing_repository: Annotated[BriefingRepository, Depends(get_briefing_repository)],
     llm_provider: Annotated[LLMProvider, Depends(get_llm_provider)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> BriefingResponse:
     """Trigger the Advisor briefing pipeline on-demand for a watchlist (HU3).
 
@@ -56,8 +59,9 @@ async def generate_briefing(
         briefing_repository=briefing_repository,
         llm_provider=llm_provider,
     )
+    locale = payload.locale or settings.default_locale
     try:
-        briefing = await use_case.execute(watchlist_id)
+        briefing = await use_case.execute(watchlist_id, locale=locale)
     except EmptyWatchlistError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
