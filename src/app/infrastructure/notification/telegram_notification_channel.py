@@ -1,7 +1,7 @@
 import logging
 
 from app.domain.compliance import NOT_PERSONALIZED_ADVICE_DISCLAIMER
-from app.domain.notification.entities import Alert
+from app.domain.notification.entities import Alert, BriefingReadyNotification
 from app.domain.notification.ports import NotificationChannel
 from app.domain.telegram.ports import TelegramLinkRepository, TelegramMessenger
 from app.domain.watchlist.ports import WatchlistRepository
@@ -11,33 +11,35 @@ logger = logging.getLogger(__name__)
 
 class TelegramNotificationChannel(NotificationChannel):
     """Real `NotificationChannel` adapter (issue #14): resolves a Watchdog-composed
-    `Alert` to its recipient and delivers it over Telegram.
+    notification to its recipient and delivers it over Telegram.
 
-    `Alert` only carries `watchlist_id` (see `domain/notification/entities/alert.py`) —
-    resolving that to a real recipient is a three-hop chain: `watchlist_id` ->
-    `WatchlistRepository.get` -> owning `user_id` -> `TelegramLinkRepository.get_by_user_id`
-    -> linked `chat_id`. That resolution happens HERE, inside the adapter, rather than by
-    changing the `NotificationChannel` port or `Alert` entity — `Alert` already carries
-    everything `RunWatchdogScan` (issue #10) produces, "how to route an alert to a real
-    recipient" is squarely a delivery-adapter concern, and keeping the port shape
-    unchanged means any future channel (email, Slack, ...) can resolve recipients however
-    fits it best without a shared, growing `Alert` payload.
+    Both `Alert` and `BriefingReadyNotification` only carry `watchlist_id` (see their
+    docstrings) — resolving that to a real recipient is the same three-hop chain either
+    way: `watchlist_id` -> `WatchlistRepository.get` -> owning `user_id` ->
+    `TelegramLinkRepository.get_by_user_id` -> linked `chat_id`. That resolution happens
+    HERE, inside the adapter (`_resolve_chat_id`, shared by both `send` and
+    `send_briefing_ready`), rather than by changing the `NotificationChannel` port or
+    either entity — "how to route a notification to a real recipient" is squarely a
+    delivery-adapter concern, and keeping both entities' shapes unchanged means any future
+    channel (email, Slack, ...) can resolve recipients however fits it best.
 
     Missing-link fallback: if the watchlist's owner can't be resolved, or has no linked
-    Telegram chat, or the Telegram API call itself fails, `send()` logs and returns —
-    never raises. Same graceful-degradation spirit as `LoggingNotificationChannel`, so one
-    user's missing/broken link never breaks Watchdog's scan loop for anyone else.
+    Telegram chat, or the Telegram API call itself fails, both `send()` and
+    `send_briefing_ready()` log and return — never raise. Same graceful-degradation spirit
+    as `LoggingNotificationChannel`, so one user's missing/broken link never breaks
+    Watchdog's scan loop or the daily briefing run for anyone else.
 
     That "never raises" contract covers the WHOLE method, not just the final Telegram API
     call: the two DB lookups above it (`WatchlistRepository.get`, then
     `TelegramLinkRepository.get_by_user_id`) can themselves raise on a transient
-    Supabase/network error, and `RunWatchdogScan._scan_watchlist` (the only caller) has no
-    try/except of its own around `send()` — an uncaught lookup error there would abort the
-    entire scan loop, not just skip the one alert that failed, silently starving every
-    other watchlist in that scan cycle of alert evaluation. So the whole body below runs
-    under a single try/except, keeping this adapter self-contained: any future
-    `NotificationChannel` implementation (email, Slack, ...) only has to honor the same
-    "never raises" contract, not also audit every caller for missing guards.
+    Supabase/network error, and neither caller (`RunWatchdogScan._scan_watchlist`,
+    `RunDailyBriefings.execute`) wraps its own try/except around these calls — an uncaught
+    lookup error here would abort the entire scan/briefing loop, not just skip the one
+    notification that failed, silently starving every other watchlist in that cycle. So
+    the whole body of each `send*` method runs under a single try/except, keeping this
+    adapter self-contained: any future `NotificationChannel` implementation (email,
+    Slack, ...) only has to honor the same "never raises" contract, not also audit every
+    caller for missing guards.
     """
 
     def __init__(
@@ -52,25 +54,10 @@ class TelegramNotificationChannel(NotificationChannel):
 
     async def send(self, alert: Alert) -> None:
         try:
-            watchlist = await self._watchlist_repository.get(alert.watchlist_id)
-            if watchlist is None:
-                logger.warning(
-                    "alert %s references unknown watchlist %s; skipping Telegram delivery",
-                    alert.id,
-                    alert.watchlist_id,
-                )
+            chat_id = await self._resolve_chat_id(alert.watchlist_id, context=f"alert {alert.id}")
+            if chat_id is None:
                 return
-
-            link = await self._telegram_link_repository.get_by_user_id(watchlist.user_id)
-            if link is None:
-                logger.info(
-                    "user %s has no linked Telegram chat; skipping delivery for alert %s",
-                    watchlist.user_id,
-                    alert.id,
-                )
-                return
-
-            await self._messenger.send_text(link.chat_id, _format_alert(alert))
+            await self._messenger.send_text(chat_id, _format_alert(alert))
         except Exception:  # noqa: BLE001 — this port must never raise; see class docstring.
             # Broad on purpose: a watchlist/link lookup failure and a Telegram API failure
             # are both just "this one alert didn't get delivered" from the scan loop's
@@ -81,11 +68,63 @@ class TelegramNotificationChannel(NotificationChannel):
                 alert.watchlist_id,
             )
 
+    async def send_briefing_ready(self, notification: BriefingReadyNotification) -> None:
+        try:
+            chat_id = await self._resolve_chat_id(
+                notification.watchlist_id, context=f"briefing {notification.briefing_id}"
+            )
+            if chat_id is None:
+                return
+            await self._messenger.send_text(chat_id, _format_briefing_ready(notification))
+        except Exception:  # noqa: BLE001 — this port must never raise; see class docstring.
+            logger.exception(
+                "Failed to deliver Telegram briefing-ready notification %s for watchlist %s",
+                notification.briefing_id,
+                notification.watchlist_id,
+            )
+
+    async def _resolve_chat_id(self, watchlist_id: str, *, context: str) -> str | None:
+        """Resolve a `watchlist_id` to its owner's linked Telegram `chat_id`, or `None` if
+        the watchlist is unknown or its owner has no linked chat. Shared by `send` and
+        `send_briefing_ready` — see class docstring for why this lives here rather than
+        being duplicated per notification kind. Deliberately does NOT catch exceptions
+        itself: both callers wrap their own single try/except around this, per the class
+        docstring's "never raises" contract.
+        """
+        watchlist = await self._watchlist_repository.get(watchlist_id)
+        if watchlist is None:
+            logger.warning(
+                "%s references unknown watchlist %s; skipping Telegram delivery",
+                context,
+                watchlist_id,
+            )
+            return None
+
+        link = await self._telegram_link_repository.get_by_user_id(watchlist.user_id)
+        if link is None:
+            logger.info(
+                "user %s has no linked Telegram chat; skipping delivery for %s",
+                watchlist.user_id,
+                context,
+            )
+            return None
+
+        return link.chat_id
+
 
 def _format_alert(alert: Alert) -> str:
     return (
         f"TAWS Alert — {alert.instrument_symbol}\n\n"
         f"{alert.consequence_hint}\n\n"
         f"View details: {alert.link_url}\n\n"
+        f"{NOT_PERSONALIZED_ADVICE_DISCLAIMER}"
+    )
+
+
+def _format_briefing_ready(notification: BriefingReadyNotification) -> str:
+    return (
+        "TAWS Briefing Ready\n\n"
+        f"{notification.headline}\n\n"
+        f"View briefing: {notification.link_url}\n\n"
         f"{NOT_PERSONALIZED_ADVICE_DISCLAIMER}"
     )
