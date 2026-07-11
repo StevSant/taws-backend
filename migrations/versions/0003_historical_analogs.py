@@ -11,8 +11,12 @@ context-gathering step — issue #12).
 Vector width (1536) matches the default `OPENAI_EMBEDDING_MODEL`
 (`text-embedding-3-small`, see `Settings.openai_embedding_model`) — like `signals.confidence`'s
 `numeric(5, 4)` in migration 0001, this is a schema-level constant, not an app config value; if
-the embedding model changes to one with a different output width, this column (and the index)
-needs a follow-up migration.
+the embedding model changes to one with a different output width, this column needs a
+follow-up migration.
+
+No approximate-nearest-neighbor index on `embedding` yet — see the comment in the SQL
+below for why (T1 row counts don't support tuning `ivfflat`'s `lists` parameter
+correctly, and an under-tuned one silently returns wrong results, not just slower ones).
 
 Compliance note (HU3, same stance as migration 0001): `metadata` stores research-only fields
 (instrument, impact class, a news summary, `price_delta` as a "realized outcome" proxy) — no
@@ -57,12 +61,18 @@ create table if not exists public.historical_analogs (
 create index if not exists historical_analogs_instrument_symbol_idx
     on public.historical_analogs (instrument_symbol);
 
--- Approximate nearest-neighbor index for cosine distance (`<=>`), matching the operator
--- used by `PgvectorStore.search`. `lists = 100` is a reasonable default for a small
--- hackathon-scale table; revisit per pgvector's tuning guidance if row counts grow large.
-create index if not exists historical_analogs_embedding_idx
-    on public.historical_analogs using ivfflat (embedding vector_cosine_ops) with (lists = 100);
-
+-- No ANN index on `embedding` yet — deliberate, not an oversight. `ivfflat`'s `lists`
+-- parameter must be sized from real row-count data (pgvector's own guidance: roughly
+-- `lists ≈ rows / 1000`, minimum ~10) to build well-populated, well-separated lists; at
+-- T1 scale (hundreds to low-thousands of rows) any `lists` value chosen without that
+-- data either degenerates to near-empty lists or is moot next to a sequential scan,
+-- and `ivfflat.probes` defaults to 1, so an under-tuned index doesn't just cost a bit
+-- of speed — it can silently return the WRONG nearest neighbors (confirmed by a live
+-- repro against a real pgvector container: with `lists = 100` on 32 rows, cosine search
+-- missed the true second-nearest match entirely and returned worse ones instead). A
+-- sequential scan is fast and, more importantly, CORRECT at this scale — add an index
+-- (ivfflat retuned from real row counts, or `hnsw`, which doesn't need row-count-based
+-- tuning) as follow-up work once the table's real production size is known.
 alter table public.historical_analogs enable row level security;
 
 create policy "historical_analogs_select_authenticated" on public.historical_analogs
