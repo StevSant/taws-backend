@@ -17,6 +17,7 @@ from app.api.v1.schemas.event_study_event_response import EventStudyEventRespons
 from app.api.v1.schemas.event_study_response import EventStudyResponse
 from app.api.v1.schemas.fear_greed_reading_response import FearGreedReadingResponse
 from app.api.v1.schemas.fundamentals_response import FundamentalsResponse
+from app.api.v1.schemas.generate_briefing_request import GenerateBriefingRequest
 from app.api.v1.schemas.generate_consequence_chain_request import GenerateConsequenceChainRequest
 from app.api.v1.schemas.generate_scenario_request import GenerateScenarioRequest
 from app.api.v1.schemas.generate_signal_request import GenerateSignalRequest
@@ -73,6 +74,7 @@ __all__ = [
     "EventStudyResponse",
     "FearGreedReadingResponse",
     "FundamentalsResponse",
+    "GenerateBriefingRequest",
     "GenerateConsequenceChainRequest",
     "GenerateScenarioRequest",
     "GenerateSignalRequest",
