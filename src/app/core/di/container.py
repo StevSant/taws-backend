@@ -12,8 +12,11 @@ from app.domain.agents.ports import (
     LLMProvider,
     VectorStore,
 )
+from app.domain.briefing.ports import BriefingRepository
 from app.domain.chat.ports import ConversationRepository
 from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, NewsProvider
+from app.domain.signals.ports import SignalRepository
+from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
 from app.infrastructure.embeddings import OpenAIEmbeddings
 from app.infrastructure.llm import OpenAIProvider, build_chat_model
@@ -32,7 +35,12 @@ from app.infrastructure.news import (
     NewsApiNewsProvider,
     RssNewsProvider,
 )
-from app.infrastructure.persistence import SupabaseConversationRepository
+from app.infrastructure.persistence import (
+    SupabaseBriefingRepository,
+    SupabaseConversationRepository,
+    SupabaseSignalRepository,
+    SupabaseWatchlistRepository,
+)
 from app.infrastructure.seeds import load_universe_seed
 from app.infrastructure.universe import JsonInstrumentUniverse
 from app.infrastructure.vectorstore import PgvectorStore
@@ -59,6 +67,9 @@ class Container:
         self._vector_store: VectorStore | None = None
         self._agent_memory: AgentMemory | None = None
         self._conversation_repository: ConversationRepository | None = None
+        self._watchlist_repository: WatchlistRepository | None = None
+        self._signal_repository: SignalRepository | None = None
+        self._briefing_repository: BriefingRepository | None = None
         self._news_provider: NewsProvider | None = None
         self._instrument_universe: InstrumentUniverse | None = None
         self._market_data_provider: MarketDataProvider | None = None
@@ -114,6 +125,30 @@ class Container:
                 supabase_key=self._settings.supabase_key,
             )
         return self._conversation_repository
+
+    def get_watchlist_repository(self) -> WatchlistRepository:
+        if self._watchlist_repository is None:
+            self._watchlist_repository = SupabaseWatchlistRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+            )
+        return self._watchlist_repository
+
+    def get_signal_repository(self) -> SignalRepository:
+        if self._signal_repository is None:
+            self._signal_repository = SupabaseSignalRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+            )
+        return self._signal_repository
+
+    def get_briefing_repository(self) -> BriefingRepository:
+        if self._briefing_repository is None:
+            self._briefing_repository = SupabaseBriefingRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+            )
+        return self._briefing_repository
 
     def get_news_provider(self) -> NewsProvider:
         """Return the aggregated news source for the radar/agents.
