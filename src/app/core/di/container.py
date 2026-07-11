@@ -6,6 +6,7 @@ from langchain_core.language_models import BaseChatModel
 
 from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
+from app.application.telegram.use_cases import LinkTelegramAccount
 from app.application.watchdog import AlertedSignalTracker
 from app.core.config import Settings, get_settings
 from app.domain.agents.ports import (
@@ -26,6 +27,11 @@ from app.domain.market.ports import (
 )
 from app.domain.notification.ports import NotificationChannel
 from app.domain.signals.ports import SignalRepository
+from app.domain.telegram.ports import (
+    TelegramLinkRepository,
+    TelegramLinkTokenRepository,
+    TelegramMessenger,
+)
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
 from app.infrastructure.agents.tools import (
@@ -60,14 +66,17 @@ from app.infrastructure.news import (
     NewsApiNewsProvider,
     RssNewsProvider,
 )
-from app.infrastructure.notification import LoggingNotificationChannel
+from app.infrastructure.notification import LoggingNotificationChannel, TelegramNotificationChannel
 from app.infrastructure.persistence import (
     SupabaseBriefingRepository,
     SupabaseConversationRepository,
     SupabaseSignalRepository,
+    SupabaseTelegramLinkRepository,
+    SupabaseTelegramLinkTokenRepository,
     SupabaseWatchlistRepository,
 )
 from app.infrastructure.seeds import load_universe_seed
+from app.infrastructure.telegram import TelegramBotClient
 from app.infrastructure.universe import JsonInstrumentUniverse
 from app.infrastructure.vectorstore import PgvectorStore
 
@@ -107,6 +116,10 @@ class Container:
         self._generate_consequence_chain_use_case: GenerateConsequenceChain | None = None
         self._notification_channel: NotificationChannel | None = None
         self._alerted_signal_tracker: AlertedSignalTracker | None = None
+        self._telegram_link_repository: TelegramLinkRepository | None = None
+        self._telegram_link_token_repository: TelegramLinkTokenRepository | None = None
+        self._telegram_messenger: TelegramMessenger | None = None
+        self._link_telegram_account_use_case: LinkTelegramAccount | None = None
 
     def get_llm_provider(self) -> LLMProvider:
         if self._llm_provider is None:
@@ -184,13 +197,22 @@ class Container:
     def get_notification_channel(self) -> NotificationChannel:
         """Return the cached Watchdog alert delivery channel.
 
-        `LoggingNotificationChannel` today (no-op/logging stand-in) — swap in
-        `TelegramNotificationChannel` here once issue #14 lands; nothing in
-        `application/` or `api/` needs to change, since both depend on the
-        `NotificationChannel` port, not this adapter.
+        `TelegramNotificationChannel` when `TELEGRAM_BOT_TOKEN` is configured (issue #14);
+        `LoggingNotificationChannel` (no-op/logging stand-in) otherwise — same
+        "graceful degradation when unconfigured" pattern as `get_agent_memory`'s Redis
+        fallback and `get_news_provider`'s per-key-gated fan-out. Nothing in
+        `application/` or `api/` needs to know which adapter is behind the port.
         """
         if self._notification_channel is None:
-            self._notification_channel = LoggingNotificationChannel()
+            messenger = self.get_telegram_messenger()
+            if messenger is not None:
+                self._notification_channel = TelegramNotificationChannel(
+                    messenger=messenger,
+                    watchlist_repository=self.get_watchlist_repository(),
+                    telegram_link_repository=self.get_telegram_link_repository(),
+                )
+            else:
+                self._notification_channel = LoggingNotificationChannel()
         return self._notification_channel
 
     def get_alerted_signal_tracker(self) -> AlertedSignalTracker:
@@ -203,6 +225,50 @@ class Container:
         if self._alerted_signal_tracker is None:
             self._alerted_signal_tracker = AlertedSignalTracker()
         return self._alerted_signal_tracker
+
+    def get_telegram_link_repository(self) -> TelegramLinkRepository:
+        if self._telegram_link_repository is None:
+            self._telegram_link_repository = SupabaseTelegramLinkRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+            )
+        return self._telegram_link_repository
+
+    def get_telegram_link_token_repository(self) -> TelegramLinkTokenRepository:
+        if self._telegram_link_token_repository is None:
+            self._telegram_link_token_repository = SupabaseTelegramLinkTokenRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+            )
+        return self._telegram_link_token_repository
+
+    def get_telegram_messenger(self) -> TelegramMessenger | None:
+        """Return the cached `TelegramMessenger`, or `None` when `TELEGRAM_BOT_TOKEN` isn't
+        configured. `None` (not an exception) is the contract here — callers (
+        `get_notification_channel`, `get_link_telegram_account_use_case`) each apply their
+        own fallback, same unconfigured-integration pattern used across this `Container`.
+        """
+        if self._telegram_messenger is None and self._settings.telegram_bot_token:
+            self._telegram_messenger = TelegramBotClient(
+                bot_token=self._settings.telegram_bot_token
+            )
+        return self._telegram_messenger
+
+    def get_link_telegram_account_use_case(self) -> LinkTelegramAccount | None:
+        """Return the cached `LinkTelegramAccount` use case, or `None` when Telegram isn't
+        configured — the webhook router acks Telegram with 200 either way (see
+        `api/v1/routers/telegram.py`), it just can't complete a link without a messenger.
+        """
+        messenger = self.get_telegram_messenger()
+        if messenger is None:
+            return None
+        if self._link_telegram_account_use_case is None:
+            self._link_telegram_account_use_case = LinkTelegramAccount(
+                token_repository=self.get_telegram_link_token_repository(),
+                link_repository=self.get_telegram_link_repository(),
+                messenger=messenger,
+            )
+        return self._link_telegram_account_use_case
 
     def get_news_provider(self) -> NewsProvider:
         """Return the aggregated news source for the radar/agents.

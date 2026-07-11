@@ -17,6 +17,7 @@ from app.api.v1.routers import (
     quant_router,
     reviews_router,
     signals_router,
+    telegram_router,
     watchdog_router,
     watchlists_router,
 )
@@ -24,16 +25,31 @@ from app.core.config import get_settings
 from app.core.di import get_container
 from app.core.logging import configure_logging
 from app.infrastructure.scheduling import build_watchdog_scheduler
+from app.infrastructure.telegram import register_telegram_webhook
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
+    settings = get_settings()
+
     # Watchdog/Notifier scheduled jobs (issue #10) — started on boot, shut down on exit so
     # no background task is left dangling. Scan/job logic itself lives in
     # `infrastructure/scheduling`; this is deliberately just start/stop wiring.
-    scheduler = build_watchdog_scheduler(get_container(), get_settings())
+    scheduler = build_watchdog_scheduler(get_container(), settings)
     scheduler.start()
+
+    # Telegram webhook registration (issue #14) — best-effort, never blocks boot. Only
+    # attempted when both a bot token and a public webhook URL are configured; see
+    # `register_telegram_webhook`'s docstring for why this can't be live-verified in a
+    # sandbox without a real bot token and a publicly reachable HTTPS URL.
+    if settings.telegram_bot_token and settings.telegram_webhook_url:
+        await register_telegram_webhook(
+            bot_token=settings.telegram_bot_token,
+            webhook_url=settings.telegram_webhook_url,
+            secret_token=settings.telegram_webhook_secret,
+        )
+
     try:
         yield
     finally:
@@ -69,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(watchdog_router, prefix="/api/v1")
     app.include_router(macro_router, prefix="/api/v1")
     app.include_router(fundamentals_router, prefix="/api/v1")
+    app.include_router(telegram_router, prefix="/api/v1")
 
     return app
 

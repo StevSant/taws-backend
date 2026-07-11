@@ -5,6 +5,12 @@ from app.infrastructure.persistence.supabase_conversation_repository import (
     SupabaseConversationRepository,
 )
 from app.infrastructure.persistence.supabase_signal_repository import SupabaseSignalRepository
+from app.infrastructure.persistence.supabase_telegram_link_repository import (
+    SupabaseTelegramLinkRepository,
+)
+from app.infrastructure.persistence.supabase_telegram_link_token_repository import (
+    SupabaseTelegramLinkTokenRepository,
+)
 from app.infrastructure.persistence.supabase_watchlist_repository import (
     SupabaseWatchlistRepository,
 )
@@ -13,5 +19,7 @@ __all__ = [
     "SupabaseBriefingRepository",
     "SupabaseConversationRepository",
     "SupabaseSignalRepository",
+    "SupabaseTelegramLinkRepository",
+    "SupabaseTelegramLinkTokenRepository",
     "SupabaseWatchlistRepository",
 ]

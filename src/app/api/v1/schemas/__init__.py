@@ -23,6 +23,8 @@ from app.api.v1.schemas.review_decision_request import ReviewDecisionRequest
 from app.api.v1.schemas.review_state_response import ReviewStateResponse
 from app.api.v1.schemas.signal_evidence_response import SignalEvidenceResponse
 from app.api.v1.schemas.signal_response import SignalResponse
+from app.api.v1.schemas.telegram_link_status_response import TelegramLinkStatusResponse
+from app.api.v1.schemas.telegram_link_token_response import TelegramLinkTokenResponse
 from app.api.v1.schemas.unusual_move_response import UnusualMoveResponse
 from app.api.v1.schemas.volatility_regime_response import VolatilityRegimeResponse
 from app.api.v1.schemas.watchlist_create_request import WatchlistCreateRequest
@@ -57,6 +59,8 @@ __all__ = [
     "ReviewStateResponse",
     "SignalEvidenceResponse",
     "SignalResponse",
+    "TelegramLinkStatusResponse",
+    "TelegramLinkTokenResponse",
     "UnusualMoveResponse",
     "VolatilityRegimeResponse",
     "WatchlistCreateRequest",
