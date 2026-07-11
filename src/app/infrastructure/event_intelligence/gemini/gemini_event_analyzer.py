@@ -23,6 +23,18 @@ Given a news event, produce a structured JSON analysis with the following fields
 
 Respond ONLY with valid JSON. No markdown, no code fences, no extra text."""
 
+_IMPACT_SYSTEM_PROMPT = """You are a financial intelligence analyst. Your job is to analyze \
+how a specific market sector or asset is affected by a given news event.
+
+Given a news event and a sector/asset, produce a concise analysis of the impact.
+Consider:
+- Direct exposure: how the event directly affects companies in that sector
+- Indirect effects: supply chain, regulatory, or sentiment ripple effects
+- Time horizon: short-term vs long-term implications
+- Magnitude: mild, moderate, or severe impact
+
+Respond with a plain text analysis (2-4 paragraphs). No markdown, no JSON, no extra formatting."""
+
 _ANALYSIS_RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -98,6 +110,28 @@ class GeminiEventAnalyzer(EventAnalyzerPort):
             analyzed_at=datetime.now(UTC),
         )
 
+    async def analyze_impact(self, event: EnrichedEvent, sector: str) -> str:
+        if not self._api_key:
+            return _fallback_impact_analysis(sector)
+
+        client = genai.Client(api_key=self._api_key)
+        prompt = _build_impact_prompt(event, sector)
+
+        try:
+            response = client.models.generate_content(
+                model=self._model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=_IMPACT_SYSTEM_PROMPT,
+                ),
+            )
+            text = response.text
+            if text is None:
+                return _fallback_impact_analysis(sector)
+            return text.strip()
+        except Exception:
+            return _fallback_impact_analysis(sector)
+
 
 def _build_prompt(event: NewsEvent) -> str:
     lines = [
@@ -111,6 +145,31 @@ def _build_prompt(event: NewsEvent) -> str:
     if event.url:
         lines.append(f"URL: {event.url}")
     return "\n".join(lines)
+
+
+def _build_impact_prompt(event: EnrichedEvent, sector: str) -> str:
+    lines = [
+        "Analyze the impact of the following news event on the specified sector/asset.",
+        "",
+        f"Event Title: {event.original.title}",
+        f"Event Summary: {event.summary}",
+        f"Event Content: {event.original.content}",
+        f"Affected Sectors: {', '.join(event.affected_sectors)}",
+        f"Affected Assets: {', '.join(event.affected_assets)}",
+        f"Event Importance: {event.importance:.2f}",
+        f"Analysis Confidence: {event.confidence:.2f}",
+        f"Analysis Reasoning: {event.reasoning}",
+        "",
+        f"Sector/Asset to analyze: {sector}",
+    ]
+    return "\n".join(lines)
+
+
+def _fallback_impact_analysis(sector: str) -> str:
+    return (
+        f"Impact analysis for {sector} is unavailable (Gemini API key not configured). "
+        "Set GEMINI_API_KEY in your .env file to enable AI-powered impact analysis."
+    )
 
 
 def _fallback_enriched(event: NewsEvent) -> EnrichedEvent:

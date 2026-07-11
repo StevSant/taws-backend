@@ -14,3 +14,11 @@ class EventAnalyzerPort(ABC):
     async def analyze(self, event: NewsEvent) -> EnrichedEvent:
         """Analyze a news event and return an enriched version with structured insights."""
         raise NotImplementedError
+
+    @abstractmethod
+    async def analyze_impact(self, event: EnrichedEvent, sector: str) -> str:
+        """Analyze how a specific sector or asset is affected by an enriched event.
+
+        Returns a human-readable impact analysis string.
+        """
+        raise NotImplementedError

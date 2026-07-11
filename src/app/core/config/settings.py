@@ -157,6 +157,10 @@ class Settings(BaseSettings):
     # TTL for a generated `/start <token>` linking token before it expires unused.
     telegram_link_token_ttl_minutes: int = 15
 
+    # --- Gemini (Event Intelligence / Sentinel analyzer) ---
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.0-flash"
+
     # --- Scenario Monitors (arm a saved ScenarioResult as a Watchdog rule, issue #18) ---
     # How long an armed monitor stays active before auto-expiring with no match. Product
     # guidance: keep within a 7-30 day window; 14 days is the chosen middle default.
