@@ -246,7 +246,11 @@ class Container:
             self._agent_runner = LangGraphAgentRunner(graph=self._get_chat_graph())
         return self._agent_runner
 
-    def _get_chat_model(self) -> BaseChatModel:
+    def get_chat_model(self) -> BaseChatModel:
+        """Return the shared LangChain chat model (public: also used by the batch/structured
+        Analyst signal and Advisor briefing pipelines outside the chat graph, not just
+        `_get_chat_graph` below — see `api/v1/dependencies/get_chat_model.py`).
+        """
         if self._chat_model is None:
             self._chat_model = build_chat_model(self._settings)
         return self._chat_model
@@ -254,7 +258,7 @@ class Container:
     def _get_chat_graph(self) -> Any:
         if self._chat_graph is None:
             checkpointer = self.get_agent_memory().get_checkpointer()
-            self._chat_graph = build_supervisor_graph(self._get_chat_model(), checkpointer)
+            self._chat_graph = build_supervisor_graph(self.get_chat_model(), checkpointer)
         return self._chat_graph
 
 

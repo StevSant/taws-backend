@@ -10,6 +10,7 @@ from app.api.v1.routers import (
     health_router,
     instruments_router,
     news_router,
+    signals_router,
     watchlists_router,
 )
 from app.core.config import get_settings
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router, prefix="/api/v1")
     app.include_router(instruments_router, prefix="/api/v1")
     app.include_router(news_router, prefix="/api/v1")
+    app.include_router(signals_router, prefix="/api/v1")
     app.include_router(watchlists_router, prefix="/api/v1")
 
     return app
