@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     app_env: str = "development"
     cors_origins: list[str] = ["http://localhost:4200"]
 
+    # Locale used for LLM-generated content (signals/briefings/scenarios) when a caller
+    # doesn't supply one — e.g. a scheduled job, a chat tool call, or a request that omits
+    # the `locale` field. BCP-47-ish tag, e.g. "en", "es", "es-MX".
+    default_locale: str = "en"
+
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
     openai_embedding_model: str = "text-embedding-3-small"
