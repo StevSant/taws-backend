@@ -21,6 +21,12 @@ class TelegramLinkRepository(ABC):
         """Persist `link`, replacing any existing link for the same `user_id` or the
         same `chat_id` (unlink-then-relink semantics — see `TelegramLink`'s docstring
         for why this is simpler than an update-in-place across two unique constraints).
+
+        Implementations must make the replace-then-insert atomic with respect to other
+        concurrent `link()` calls racing on the same `user_id` or `chat_id` — see
+        `SupabaseTelegramLinkRepository.link`'s docstring and migration
+        `0005_telegram_links_atomic_relink` for how the Supabase adapter satisfies this
+        (a DB-side trigger, not an app-layer multi-call sequence).
         """
         raise NotImplementedError
 

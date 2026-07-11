@@ -10,7 +10,9 @@ class SupabaseTelegramLinkRepository(TelegramLinkRepository):
     """TelegramLinkRepository adapter backed by Supabase Postgres via `supabase-py`.
 
     See `migrations/versions/0004_telegram_links.py` for the schema (`telegram_links`,
-    unique on both `user_id` and `telegram_chat_id`) and its RLS policies.
+    unique on both `user_id` and `telegram_chat_id`) and its RLS policies, and
+    `migrations/versions/0005_telegram_links_atomic_relink.py` for the `BEFORE INSERT`
+    trigger `link()` relies on for atomicity (see that method's docstring).
     """
 
     def __init__(self, supabase_url: str | None, supabase_key: str | None) -> None:
@@ -23,11 +25,14 @@ class SupabaseTelegramLinkRepository(TelegramLinkRepository):
 
     async def link(self, link: TelegramLink) -> TelegramLink:
         client = await self._clients.get()
-        # Unlink-then-relink: clears any prior row for this user AND any prior row for
-        # this chat_id, so the two unique constraints (`user_id`, `telegram_chat_id`)
-        # never conflict on insert — see `TelegramLinkRepository.link`'s docstring.
-        await client.table(_TABLE).delete().eq("user_id", link.user_id).execute()
-        await client.table(_TABLE).delete().eq("telegram_chat_id", link.chat_id).execute()
+        # Unlink-then-relink used to be two separate `delete` calls issued from here,
+        # each its own auto-committing PostgREST transaction — that let two concurrent
+        # `link()` calls racing on the same `telegram_chat_id` (or `user_id`) interleave
+        # and silently drop one caller's just-inserted row (see migration 0005's
+        # docstring for the full race). The delete is now performed atomically, inside
+        # the SAME transaction as this insert and under an advisory lock, by a
+        # `BEFORE INSERT` trigger on `telegram_links` — this method only needs to
+        # insert.
         response = (
             await client.table(_TABLE)
             .insert(
