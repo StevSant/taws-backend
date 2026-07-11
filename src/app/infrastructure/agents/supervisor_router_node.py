@@ -14,6 +14,7 @@ specialists. Read the conversation and pick exactly one specialist to handle the
 latest user turn:
 - analyst: news, filings, market-signal, and impact-classification questions.
 - quant: prices, price deltas, volatility, and numeric/statistical questions.
+- consequence: "what happens next" / second-order causal-chain questions (X -> Y -> Z).
 - advisor: recommendations, briefings, summaries, and everything else.
 Give a one-sentence reason for your choice."""
 
