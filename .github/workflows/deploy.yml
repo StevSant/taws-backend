@@ -1,0 +1,40 @@
+name: backend-deploy
+
+# Builds the image, pushes to Amazon ECR; AWS App Runner auto-deploys the new image.
+# DISABLED until AWS is wired: set repo variable DEPLOY_ENABLED=true and the secrets/vars below.
+#   Secrets: AWS_ROLE_ARN (OIDC role to assume)
+#   Vars:    AWS_REGION, ECR_REPOSITORY, DEPLOY_ENABLED
+# Until then this workflow is a no-op (the guard skips the job), so it never breaks CI.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-push:
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$REGISTRY/$REPOSITORY:$IMAGE_TAG" -t "$REGISTRY/$REPOSITORY:latest" .
+          docker push "$REGISTRY/$REPOSITORY:$IMAGE_TAG"
+          docker push "$REGISTRY/$REPOSITORY:latest"
+      # App Runner is configured (in the AWS console) to auto-deploy on new :latest push.
