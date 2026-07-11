@@ -1,7 +1,12 @@
+from supabase import PostgrestAPIError
+
 from app.domain.briefing.entities import Briefing
 from app.domain.briefing.ports import BriefingRepository
 from app.domain.review.entities import ReviewedEntityType, ReviewState
 from app.infrastructure.persistence.briefing_row_mapper import briefing_from_row
+from app.infrastructure.persistence.build_illegal_review_transition_error import (
+    build_illegal_review_transition_error,
+)
 from app.infrastructure.persistence.review_state_row_mapper import (
     review_state_from_row,
     review_state_to_row,
@@ -57,12 +62,25 @@ class SupabaseBriefingRepository(BriefingRepository):
         return [briefing_from_row(row) for row in response.data]
 
     async def save_review_state(self, review_state: ReviewState) -> ReviewState:
+        """Persist a reviewer decision, or raise `IllegalReviewTransitionError`.
+
+        The insert is guarded by the `review_states_enforce_transition` DB trigger
+        (migration `0002`) — see `build_illegal_review_transition_error` for how its
+        rejection is translated into the same domain error the use-case layer's own
+        (non-atomic) check raises.
+        """
         client = await self._clients.get()
-        response = (
-            await client.table(_REVIEW_STATES_TABLE)
-            .insert(review_state_to_row(review_state))
-            .execute()
-        )
+        try:
+            response = (
+                await client.table(_REVIEW_STATES_TABLE)
+                .insert(review_state_to_row(review_state))
+                .execute()
+            )
+        except PostgrestAPIError as exc:
+            translated = build_illegal_review_transition_error(exc, review_state.decision)
+            if translated is not None:
+                raise translated from exc
+            raise
         return review_state_from_row(response.data[0])
 
     async def list_review_states(self, briefing_id: str) -> list[ReviewState]:

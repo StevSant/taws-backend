@@ -6,6 +6,8 @@ from app.api.v1.schemas.current_user import CurrentUser
 from app.api.v1.schemas.generate_signal_request import GenerateSignalRequest
 from app.api.v1.schemas.instrument_response import InstrumentResponse
 from app.api.v1.schemas.news_item_response import NewsItemResponse
+from app.api.v1.schemas.review_decision_request import ReviewDecisionRequest
+from app.api.v1.schemas.review_state_response import ReviewStateResponse
 from app.api.v1.schemas.signal_evidence_response import SignalEvidenceResponse
 from app.api.v1.schemas.signal_response import SignalResponse
 from app.api.v1.schemas.watchlist_create_request import WatchlistCreateRequest
@@ -23,6 +25,8 @@ __all__ = [
     "GenerateSignalRequest",
     "InstrumentResponse",
     "NewsItemResponse",
+    "ReviewDecisionRequest",
+    "ReviewStateResponse",
     "SignalEvidenceResponse",
     "SignalResponse",
     "WatchlistCreateRequest",

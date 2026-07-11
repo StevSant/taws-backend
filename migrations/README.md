@@ -58,3 +58,4 @@ uv run alembic revision -m "<name>"  # scaffold a new empty revision (write the 
 | Revision | Adds |
 |----------|------|
 | `0001_watchlists_signals_briefings` | `watchlists`, `watchlist_items`, `signals`, `briefings`, `review_states` + RLS policies |
+| `0002_review_states_transition_trigger` | `BEFORE INSERT` trigger on `review_states` enforcing the review state machine (REVIEWED/DISCARDED terminal) as a DB-level backstop against a concurrent-request TOCTOU race, via `pg_advisory_xact_lock` |

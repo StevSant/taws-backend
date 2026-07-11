@@ -29,7 +29,13 @@ class BriefingRepository(ABC):
 
     @abstractmethod
     async def save_review_state(self, review_state: ReviewState) -> ReviewState:
-        """Persist a reviewer decision (reviewed/escalated/discarded) on a briefing."""
+        """Persist a reviewer decision (reviewed/escalated/discarded) on a briefing.
+
+        May raise `IllegalReviewTransitionError` (`app.domain.review`) if the
+        underlying store's transition-safety trigger rejects the insert — a
+        DB-level backstop against a concurrent-request race on the same briefing, in
+        addition to (not instead of) the use case's own pre-insert check.
+        """
         raise NotImplementedError
 
     @abstractmethod
