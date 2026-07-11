@@ -18,6 +18,7 @@ from app.api.v1.routers import (
     quant_router,
     reviews_router,
     scenarios_router,
+    sentiment_router,
     signals_router,
     telegram_router,
     watchdog_router,
@@ -90,6 +91,7 @@ def create_app() -> FastAPI:
     app.include_router(macro_router, prefix="/api/v1")
     app.include_router(fundamentals_router, prefix="/api/v1")
     app.include_router(telegram_router, prefix="/api/v1")
+    app.include_router(sentiment_router, prefix="/api/v1")
 
     return app
 

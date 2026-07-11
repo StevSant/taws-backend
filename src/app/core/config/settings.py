@@ -79,6 +79,32 @@ class Settings(BaseSettings):
     fixture_macro_cpi: float = 3.2
     fixture_macro_vix: float = 18.5
 
+    # --- alternative.me (Crypto Fear & Greed Index; behind the FearGreedProvider port);
+    # no key required ---
+    alternative_me_base_url: str = "https://api.alternative.me"
+    alternative_me_timeout_seconds: float = 10.0
+
+    # --- Fixture Fear & Greed fallback values (used when alternative.me is unreachable or
+    # returns an unparseable payload) ---
+    fixture_fear_greed_value: int = 50
+    fixture_fear_greed_classification: str = "Neutral"
+
+    # --- Sentiment Analyst tone bucketing thresholds (tone_score -> SentimentLabel);
+    # tone_score >= bullish -> bullish, tone_score <= bearish -> bearish, else neutral ---
+    sentiment_bullish_threshold: float = 0.15
+    sentiment_bearish_threshold: float = -0.15
+
+    # --- SEC EDGAR "latest filings" feed (behind the NewsProvider port); no key required.
+    # SEC requires a descriptive User-Agent identifying the requester on every request
+    # (https://www.sec.gov/os/webmaster-faq#developers) — set SEC_EDGAR_USER_AGENT to a
+    # real app/company name + contact email before deploying publicly. ---
+    sec_edgar_enabled: bool = True
+    sec_edgar_user_agent: str = "TAWS Hackathon research@taws.dev"
+    sec_edgar_feed_urls: list[str] = [
+        "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company="
+        "&dateb=&owner=include&count=100&output=atom"
+    ]
+
     # --- Fundamentals / earnings calendar (behind the FundamentalsProvider port); yfinance,
     # no key required ---
     # "Upcoming earnings risk" is flagged when the next earnings date falls within this many

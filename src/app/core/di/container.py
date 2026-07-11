@@ -6,6 +6,7 @@ from langchain_core.language_models import BaseChatModel
 
 from app.application.analogs.use_cases import FindHistoricalAnalogs
 from app.application.consequence.use_cases import GenerateConsequenceChain
+from app.application.macro.use_cases import InterpretMacroEvent
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
 from app.application.scenario.use_cases import (
     ComputeScenarioQuantification,
@@ -13,6 +14,7 @@ from app.application.scenario.use_cases import (
     NormalizeScenarioIntake,
     SynthesizeScenarioResult,
 )
+from app.application.sentiment.use_cases import AnalyzeSentiment
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.application.watchdog import AlertedSignalTracker
 from app.core.config import Settings, get_settings
@@ -34,6 +36,7 @@ from app.domain.market.ports import (
 )
 from app.domain.notification.ports import EmailSender, NotificationChannel
 from app.domain.scenario.ports import ScenarioRepository
+from app.domain.sentiment.ports import FearGreedProvider
 from app.domain.signals.ports import SignalRepository
 from app.domain.telegram.ports import (
     TelegramLinkRepository,
@@ -46,8 +49,10 @@ from app.infrastructure.agents.scenario import ScenarioSimulationRunner, build_s
 from app.infrastructure.agents.tools import (
     build_advisor_grounding_tools,
     build_consequence_tools,
+    build_macro_tools,
     build_quant_grounding_tools,
     build_scenario_tools,
+    build_sentiment_tools,
 )
 from app.infrastructure.briefing import ReportLabBriefingPdfRenderer
 from app.infrastructure.embeddings import OpenAIEmbeddings
@@ -76,6 +81,7 @@ from app.infrastructure.news import (
     MarketauxNewsProvider,
     NewsApiNewsProvider,
     RssNewsProvider,
+    SecEdgarNewsProvider,
 )
 from app.infrastructure.notification import (
     LoggingEmailSender,
@@ -92,6 +98,11 @@ from app.infrastructure.persistence import (
     SupabaseWatchlistRepository,
 )
 from app.infrastructure.seeds import load_preset_scenarios_seed, load_universe_seed
+from app.infrastructure.sentiment import (
+    AlternativeMeFearGreedProvider,
+    FixtureFearGreedProvider,
+    RoutingFearGreedProvider,
+)
 from app.infrastructure.telegram import (
     BriefingCommandHandler,
     SignalCommandHandler,
@@ -148,6 +159,9 @@ class Container:
         self._simulate_command_handler: SimulateCommandHandler | None = None
         self._briefing_document_renderer: BriefingDocumentRenderer | None = None
         self._email_sender: EmailSender | None = None
+        self._fear_greed_provider: FearGreedProvider | None = None
+        self._analyze_sentiment_use_case: AnalyzeSentiment | None = None
+        self._interpret_macro_event_use_case: InterpretMacroEvent | None = None
 
     def get_llm_provider(self) -> LLMProvider:
         if self._llm_provider is None:
@@ -376,11 +390,12 @@ class Container:
     def get_news_provider(self) -> NewsProvider:
         """Return the aggregated news source for the radar/agents.
 
-        Fans out to every configured live source (Marketaux, NewsAPI, Finnhub,
-        RSS) concurrently; a source with no API key configured is left out of
-        the fan-out entirely. Falls back to `FixtureNewsProvider` whenever no
-        live source is configured, or all of them fail / return nothing — see
-        `AggregatingNewsProvider` for the merge/dedupe/link/filter pipeline.
+        Fans out to every configured live source (Marketaux, NewsAPI, Finnhub, RSS, SEC
+        EDGAR filings) concurrently; a source with no API key configured (or, for EDGAR,
+        disabled/no feed URLs configured) is left out of the fan-out entirely. Falls back
+        to `FixtureNewsProvider` whenever no live source is configured, or all of them
+        fail / return nothing — see `AggregatingNewsProvider` for the merge/dedupe/link/
+        filter pipeline.
         """
         if self._news_provider is None:
             live_providers: list[NewsProvider] = []
@@ -411,6 +426,16 @@ class Container:
                 )
             if self._settings.rss_feed_urls:
                 live_providers.append(RssNewsProvider(feed_urls=self._settings.rss_feed_urls))
+            # SEC EDGAR filings (issue #21): free, no API key required, but gated by its
+            # own feature flag (`sec_edgar_enabled`, default on) so it can be turned off
+            # independently of RSS without clearing `sec_edgar_feed_urls`.
+            if self._settings.sec_edgar_enabled and self._settings.sec_edgar_feed_urls:
+                live_providers.append(
+                    SecEdgarNewsProvider(
+                        feed_urls=self._settings.sec_edgar_feed_urls,
+                        user_agent=self._settings.sec_edgar_user_agent,
+                    )
+                )
 
             fixture_provider = FixtureNewsProvider(seed_path=self._settings.news_fixture_seed_path)
             self._news_provider = AggregatingNewsProvider(
@@ -507,6 +532,64 @@ class Container:
                 live_provider=live_provider, fixture_provider=fixture_provider
             )
         return self._macro_data_provider
+
+    def get_interpret_macro_event_use_case(self) -> InterpretMacroEvent:
+        """Return the cached Macro Analyst use case (issue #21).
+
+        Shared between the `macro` chat specialist's tool (`_get_chat_graph` below, via
+        `build_macro_tools`) and `POST /api/v1/macro/interpret`
+        (`api/v1/dependencies/get_interpret_macro_event_use_case.py`) — both surfaces call
+        the exact same `InterpretMacroEvent.execute(event_description)`, grounded in the
+        same `get_macro_data_provider()` instance every other macro-aware pipeline uses.
+        """
+        if self._interpret_macro_event_use_case is None:
+            self._interpret_macro_event_use_case = InterpretMacroEvent(
+                macro_data_provider=self.get_macro_data_provider(),
+                llm_provider=self.get_llm_provider(),
+            )
+        return self._interpret_macro_event_use_case
+
+    def get_fear_greed_provider(self) -> FearGreedProvider:
+        """Return the routing FearGreedProvider (alternative.me + fixture fallback).
+
+        No API key required for the live adapter; any failure (network error, malformed
+        payload, unrecognized classification label) falls back to
+        `FixtureFearGreedProvider` — see `infrastructure/sentiment/routing_fear_greed_provider.py`.
+        """
+        if self._fear_greed_provider is None:
+            live_provider = AlternativeMeFearGreedProvider(
+                base_url=self._settings.alternative_me_base_url,
+                timeout_seconds=self._settings.alternative_me_timeout_seconds,
+            )
+            fixture_provider = FixtureFearGreedProvider(
+                fixture_value=self._settings.fixture_fear_greed_value,
+                fixture_classification=self._settings.fixture_fear_greed_classification,
+            )
+            self._fear_greed_provider = RoutingFearGreedProvider(
+                live_provider=live_provider, fixture_provider=fixture_provider
+            )
+        return self._fear_greed_provider
+
+    def get_analyze_sentiment_use_case(self) -> AnalyzeSentiment:
+        """Return the cached Sentiment Analyst use case (issue #21).
+
+        Shared between the `sentiment` chat specialist's tool (`_get_chat_graph` below,
+        via `build_sentiment_tools`) and `POST /api/v1/sentiment/{symbol}/analyze`
+        (`api/v1/dependencies/get_analyze_sentiment_use_case.py`) — both surfaces call the
+        exact same `AnalyzeSentiment.execute(instrument_symbol)`, grounded in the same
+        `get_news_provider()` (which now includes SEC EDGAR filings, issue #21) and
+        `get_fear_greed_provider()` instances every other pipeline uses.
+        """
+        if self._analyze_sentiment_use_case is None:
+            self._analyze_sentiment_use_case = AnalyzeSentiment(
+                news_provider=self.get_news_provider(),
+                fear_greed_provider=self.get_fear_greed_provider(),
+                instrument_universe=self.get_instrument_universe(),
+                llm_provider=self.get_llm_provider(),
+                bullish_threshold=self._settings.sentiment_bullish_threshold,
+                bearish_threshold=self._settings.sentiment_bearish_threshold,
+            )
+        return self._analyze_sentiment_use_case
 
     def get_fundamentals_provider(self) -> FundamentalsProvider:
         """Return the routing FundamentalsProvider (yfinance + fixture fallback).
@@ -643,12 +726,18 @@ class Container:
                     instrument_universe=self.get_instrument_universe(),
                 ),
             )
+            # `macro`/`sentiment` tools (issue #21): both public, non-per-user data — same
+            # "safe for the unauthenticated chat route" rationale as `quant_tools` above.
+            macro_tools = build_macro_tools(use_case=self.get_interpret_macro_event_use_case())
+            sentiment_tools = build_sentiment_tools(use_case=self.get_analyze_sentiment_use_case())
             self._chat_graph = build_supervisor_graph(
                 self._get_chat_model(),
                 checkpointer,
                 advisor_tools=advisor_tools,
                 consequence_tools=consequence_tools,
+                macro_tools=macro_tools,
                 quant_tools=quant_tools,
+                sentiment_tools=sentiment_tools,
             )
         return self._chat_graph
 

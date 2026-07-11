@@ -8,6 +8,7 @@ from app.infrastructure.news.marketaux_entity_types import ASSET_CLASS_TO_ENTITY
 from app.infrastructure.news.marketaux_news_provider import MarketauxNewsProvider
 from app.infrastructure.news.newsapi_news_provider import NewsApiNewsProvider
 from app.infrastructure.news.rss_news_provider import RssNewsProvider
+from app.infrastructure.news.sec_edgar_news_provider import SecEdgarNewsProvider
 
 __all__ = [
     "ASSET_CLASS_TO_ENTITY_TYPES",
@@ -17,6 +18,7 @@ __all__ = [
     "MarketauxNewsProvider",
     "NewsApiNewsProvider",
     "RssNewsProvider",
+    "SecEdgarNewsProvider",
     "dedupe_news_items",
     "link_related_symbols",
     "map_marketaux_article",

@@ -25,7 +25,12 @@ from io import BytesIO
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
 
-from app.api.v1.dependencies import get_briefing_repository, get_watchlist_repository
+from app.api.v1.dependencies import (
+    get_briefing_repository,
+    get_watchlist_repository,
+    require_current_user,
+)
+from app.api.v1.schemas import CurrentUser
 from app.domain.briefing.entities import Briefing, BriefingInstrumentSection
 from app.domain.briefing.ports import BriefingRepository
 from app.domain.review.entities import OpenReviewItem, ReviewedEntityType, ReviewState
@@ -33,7 +38,11 @@ from app.domain.watchlist.entities import Watchlist, WatchlistItem
 from app.domain.watchlist.ports import WatchlistRepository
 from app.main import app
 
-_USER_ID = "dev-user"  # matches DEV_FALLBACK_USER, active when SUPABASE_JWT_SECRET is unset
+# Explicitly overridden below via `require_current_user` — must not depend on whichever
+# environment happens to run this test (dev-fallback only applies when
+# SUPABASE_JWT_SECRET is unset; a real secret configured in this environment would
+# otherwise 401 every request since no bearer token is ever sent).
+_USER_ID = "dev-user"
 _WATCHLIST_ID = "watchlist-1"
 _BRIEFING_ID = "briefing-1"
 
@@ -128,6 +137,9 @@ def _export_pdf_text(briefing: Briefing) -> tuple[int, bytes | None, str]:
     watchlist = Watchlist(id=_WATCHLIST_ID, user_id=_USER_ID, name="Tech watchlist")
     app.dependency_overrides[get_briefing_repository] = lambda: _FakeBriefingRepository(briefing)
     app.dependency_overrides[get_watchlist_repository] = lambda: _FakeWatchlistRepository(watchlist)
+    app.dependency_overrides[require_current_user] = lambda: CurrentUser(
+        id=_USER_ID, email="dev@example.com"
+    )
     try:
         with TestClient(app) as client:
             response = client.get(f"/api/v1/briefings/{briefing.id}/export.pdf")

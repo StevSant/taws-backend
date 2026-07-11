@@ -12,3 +12,5 @@ class SupervisorRoute(StrEnum):
     QUANT = "quant"
     ADVISOR = "advisor"
     CONSEQUENCE = "consequence"
+    MACRO = "macro"
+    SENTIMENT = "sentiment"

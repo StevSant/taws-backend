@@ -15,6 +15,10 @@ latest user turn:
 - analyst: news, filings, market-signal, and impact-classification questions.
 - quant: prices, price deltas, volatility, and numeric/statistical questions.
 - consequence: "what happens next" / second-order causal-chain questions (X -> Y -> Z).
+- macro: macro events (rate decisions, CPI, Fed statements) and which asset classes \
+they affect.
+- sentiment: news tone / market mood questions for a specific instrument, and Fear & \
+Greed Index questions.
 - advisor: recommendations, briefings, summaries, and everything else.
 Give a one-sentence reason for your choice."""
 
