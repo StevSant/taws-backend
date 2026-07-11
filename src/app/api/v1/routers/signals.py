@@ -71,6 +71,7 @@ async def generate_signal(
         index_signal_analog=IndexSignalAnalog(
             embedding_provider=embedding_provider, vector_store=vector_store
         ),
+        min_distinct_sources=settings.min_distinct_news_sources,
     )
     try:
         locale = payload.locale or settings.default_locale

@@ -426,7 +426,12 @@ class Container:
                     )
                 )
             if self._settings.rss_feed_urls:
-                live_providers.append(RssNewsProvider(feed_urls=self._settings.rss_feed_urls))
+                live_providers.append(
+                    RssNewsProvider(
+                        feed_urls=self._settings.rss_feed_urls,
+                        timeout_seconds=self._settings.rss_feed_timeout_seconds,
+                    )
+                )
             # SEC EDGAR filings (issue #21): free, no API key required, but gated by its
             # own feature flag (`sec_edgar_enabled`, default on) so it can be turned off
             # independently of RSS without clearing `sec_edgar_feed_urls`.
@@ -435,6 +440,7 @@ class Container:
                     SecEdgarNewsProvider(
                         feed_urls=self._settings.sec_edgar_feed_urls,
                         user_agent=self._settings.sec_edgar_user_agent,
+                        timeout_seconds=self._settings.sec_edgar_feed_timeout_seconds,
                     )
                 )
 

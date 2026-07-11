@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import UTC, datetime
 from time import mktime
 from typing import Any
@@ -8,18 +9,27 @@ import feedparser
 from app.domain.market.entities import AssetClass, NewsItem
 from app.domain.market.ports import NewsProvider
 
+logger = logging.getLogger(__name__)
+
 
 class RssNewsProvider(NewsProvider):
     """NewsProvider adapter that parses configured RSS feeds via `feedparser`.
 
-    `feedparser` is synchronous, so each feed fetch/parse runs in a worker thread
-    via `asyncio.to_thread`; feeds are fetched concurrently and a failure on one
-    feed never drops the others. Returns items with empty `related_symbols` —
-    linking is done centrally by `AggregatingNewsProvider`.
+    `feedparser` is synchronous, so each feed fetch/parse runs in a worker thread via
+    `asyncio.to_thread`, bounded by `timeout_seconds` (configured via
+    `Settings.rss_feed_timeout_seconds`) — some feeds (e.g. Yahoo Finance's RSS
+    endpoint) stall the connection instead of erroring, and `feedparser.parse` has no
+    timeout of its own, so left unbounded, one stuck feed hangs the whole `fetch_news`
+    call. `asyncio.wait_for` turns that hang into a `TimeoutError`, which
+    `asyncio.gather(..., return_exceptions=True)` already treats as "this feed
+    returned nothing" for this fetch. Feeds are fetched concurrently and a failure (or
+    timeout) on one feed never drops the others. Returns items with empty
+    `related_symbols` — linking is done centrally by `AggregatingNewsProvider`.
     """
 
-    def __init__(self, feed_urls: list[str]) -> None:
+    def __init__(self, feed_urls: list[str], timeout_seconds: float) -> None:
         self._feed_urls = feed_urls
+        self._timeout_seconds = timeout_seconds
 
     async def fetch_news(
         self,
@@ -36,12 +46,25 @@ class RssNewsProvider(NewsProvider):
             return []
 
         results = await asyncio.gather(
-            *(asyncio.to_thread(feedparser.parse, url) for url in self._feed_urls),
+            *(
+                asyncio.wait_for(
+                    asyncio.to_thread(feedparser.parse, url),
+                    timeout=self._timeout_seconds,
+                )
+                for url in self._feed_urls
+            ),
             return_exceptions=True,
         )
 
         items: list[NewsItem] = []
         for feed_url, result in zip(self._feed_urls, results, strict=True):
+            if isinstance(result, TimeoutError):
+                logger.warning(
+                    "RSS feed %s timed out after %.0fs; treating it as empty for this fetch.",
+                    feed_url,
+                    self._timeout_seconds,
+                )
+                continue
             if isinstance(result, BaseException):
                 continue
             items.extend(self._to_news_items(result, feed_url))

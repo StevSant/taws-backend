@@ -60,6 +60,9 @@ class Settings(BaseSettings):
         "https://www.coindesk.com/arc/outboundfeeds/rss/",
         "https://finance.yahoo.com/news/rssindex",
     ]
+    # `feedparser.parse` has no timeout of its own; bounds each feed fetch/parse so one
+    # stalled feed can't hang the whole `fetch_news` call (see `RssNewsProvider`).
+    rss_feed_timeout_seconds: float = 10.0
 
     # --- CoinGecko (crypto prices, behind the MarketDataProvider port); no key required ---
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"
@@ -109,12 +112,19 @@ class Settings(BaseSettings):
         "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company="
         "&dateb=&owner=include&count=100&output=atom"
     ]
+    # Same rationale as `rss_feed_timeout_seconds` (see `SecEdgarNewsProvider`).
+    sec_edgar_feed_timeout_seconds: float = 10.0
 
     # --- Fundamentals / earnings calendar (behind the FundamentalsProvider port); yfinance,
     # no key required ---
     # "Upcoming earnings risk" is flagged when the next earnings date falls within this many
     # days of now — a simple derived tag, not a risk model.
     upcoming_earnings_risk_window_days: int = 7
+
+    # --- Analyst signal generation (HU1 acceptance criterion: "≥2 news sources with
+    # source + date attached to each signal"); see `GenerateSignal` in
+    # `application/signals/use_cases/generate_signal.py` ---
+    min_distinct_news_sources: int = 2
 
     # --- Historical analogs RAG (behind the VectorStore port, pgvector-backed) ---
     historical_analogs_top_k: int = 3

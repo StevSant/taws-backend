@@ -312,6 +312,7 @@ async def _generate_demo_signals(container: Container) -> None:
                 embedding_provider=container.get_embedding_provider(),
                 vector_store=container.get_vector_store(),
             ),
+            min_distinct_sources=settings.min_distinct_news_sources,
         )
         try:
             signal = await use_case.execute(symbol, settings.default_locale)
