@@ -10,6 +10,7 @@ from app.api.v1.dependencies import (
     get_signal_repository,
 )
 from app.api.v1.schemas import GenerateSignalRequest, SignalResponse
+from app.application.compliance import ComplianceViolationError
 from app.application.signals import InsufficientEvidenceError, UnknownInstrumentError
 from app.application.signals.use_cases import GenerateSignal
 from app.domain.agents.ports import LLMProvider
@@ -46,6 +47,10 @@ async def generate_signal(
     except UnknownInstrumentError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except InsufficientEvidenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except ComplianceViolationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc

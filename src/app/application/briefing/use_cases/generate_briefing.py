@@ -1,6 +1,8 @@
 import uuid
 
 from app.application.briefing.empty_watchlist_error import EmptyWatchlistError
+from app.application.compliance import ComplianceViolationError
+from app.application.compliance.use_cases import ReviewCompliance
 from app.domain.agents.entities import Message, MessageRole
 from app.domain.agents.ports import LLMProvider
 from app.domain.briefing.entities import Briefing
@@ -48,6 +50,12 @@ class GenerateBriefing:
     Depends on the `LLMProvider` port (not a LangChain `BaseChatModel` directly) — same
     `backend/CLAUDE.md` hexagonal rule as `GenerateSignal`; see that use case's docstring
     for the review finding that corrected an earlier `langchain_core` import here.
+
+    Compliance gate (issue #9): the assembled `Briefing` (disclaimer + summary) is run
+    through `ReviewCompliance` (`application/compliance/use_cases/review_compliance.py`)
+    immediately before `briefing_repository.create(...)` — the final gate before persistence.
+    A failed check raises `ComplianceViolationError` instead of persisting, same "raise,
+    don't silently degrade" precedent as `EmptyWatchlistError` below.
     """
 
     def __init__(
@@ -61,6 +69,10 @@ class GenerateBriefing:
         self._signal_repository = signal_repository
         self._briefing_repository = briefing_repository
         self._llm_provider = llm_provider
+        # No ports/I-O behind `ReviewCompliance` (pure rule-based checks), so it's a plain
+        # private collaborator rather than a constructor-injected dependency — same reasoning
+        # as `GenerateSignal`.
+        self._compliance_reviewer = ReviewCompliance()
 
     async def execute(self, watchlist_id: str) -> Briefing:
         items = await self._watchlist_repository.list_items(watchlist_id)
@@ -84,6 +96,18 @@ class GenerateBriefing:
             disclaimer=NOT_PERSONALIZED_ADVICE_DISCLAIMER,
             linked_signal_ids=linked_signal_ids,
         )
+
+        # Final gate before persistence (issue #9): reject rather than silently persist
+        # non-compliant output.
+        compliance_result = self._compliance_reviewer.execute(
+            disclaimer=briefing.disclaimer, texts=[briefing.summary]
+        )
+        if not compliance_result.passed:
+            raise ComplianceViolationError(
+                source=f"briefing:{briefing.watchlist_id}",
+                violations=compliance_result.violations,
+            )
+
         return await self._briefing_repository.create(briefing)
 
     async def _gather_signals(self, symbols: list[str]) -> list[Signal]:

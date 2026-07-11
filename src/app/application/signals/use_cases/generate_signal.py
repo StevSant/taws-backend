@@ -1,5 +1,7 @@
 import uuid
 
+from app.application.compliance import ComplianceViolationError
+from app.application.compliance.use_cases import ReviewCompliance
 from app.application.signals.insufficient_evidence_error import InsufficientEvidenceError
 from app.application.signals.signal_classification import SignalClassification
 from app.application.signals.unknown_instrument_error import UnknownInstrumentError
@@ -53,6 +55,13 @@ class GenerateSignal:
     not via the agent graph" — see `infrastructure/llm/openai_provider.py`'s
     `complete_structured`).
 
+    Compliance gate (issue #9): the assembled `Signal` and the classification's `reasoning`
+    text are run through `ReviewCompliance` (`application/compliance/use_cases/
+    review_compliance.py`) immediately before `signal_repository.create(...)` — the final gate
+    before persistence. A failed check raises `ComplianceViolationError` instead of persisting,
+    following the exact same "raise, don't silently degrade" precedent as
+    `InsufficientEvidenceError` below.
+
     News-sourcing note (the "≥2 sources" criterion above): fetches news scoped to the
     instrument's symbol first; if fewer than `_MIN_DISTINCT_SOURCES` distinct sources come back
     (common with the packaged dev fixture, which seeds ~1 article per symbol), broadens to the
@@ -79,6 +88,10 @@ class GenerateSignal:
         self._instrument_universe = instrument_universe
         self._signal_repository = signal_repository
         self._llm_provider = llm_provider
+        # No ports/I-O behind `ReviewCompliance` (pure rule-based checks), so it's a plain
+        # private collaborator rather than a constructor-injected dependency — nothing to
+        # swap, and routers don't need to resolve/pass it via `Depends`.
+        self._compliance_reviewer = ReviewCompliance()
 
     async def execute(self, instrument_symbol: str) -> Signal:
         instrument = self._instrument_universe.by_symbol(instrument_symbol)
@@ -101,6 +114,20 @@ class GenerateSignal:
             disclaimer=NOT_PERSONALIZED_ADVICE_DISCLAIMER,
             price_delta=price_delta,
         )
+
+        # Final gate before persistence (issue #9): reject rather than silently persist
+        # non-compliant output. `classification.reasoning` is included even though it isn't
+        # a persisted `Signal` field, since it's the Analyst's actual free-text output and
+        # the only place execution/return-promise language could leak in from this pipeline.
+        compliance_result = self._compliance_reviewer.execute(
+            disclaimer=signal.disclaimer, texts=[classification.reasoning]
+        )
+        if not compliance_result.passed:
+            raise ComplianceViolationError(
+                source=f"signal:{signal.instrument_symbol}",
+                violations=compliance_result.violations,
+            )
+
         return await self._signal_repository.create(signal)
 
     async def _gather_news(self, instrument: Instrument) -> list[NewsItem]:

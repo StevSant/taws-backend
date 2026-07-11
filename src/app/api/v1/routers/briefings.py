@@ -12,6 +12,7 @@ from app.api.v1.dependencies import (
 from app.api.v1.schemas import BriefingResponse, CurrentUser
 from app.application.briefing import EmptyWatchlistError
 from app.application.briefing.use_cases import GenerateBriefing
+from app.application.compliance import ComplianceViolationError
 from app.domain.agents.ports import LLMProvider
 from app.domain.briefing.ports import BriefingRepository
 from app.domain.signals.ports import SignalRepository
@@ -58,6 +59,10 @@ async def generate_briefing(
     try:
         briefing = await use_case.execute(watchlist_id)
     except EmptyWatchlistError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except ComplianceViolationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
