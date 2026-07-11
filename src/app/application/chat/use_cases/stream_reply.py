@@ -1,31 +1,21 @@
 from collections.abc import AsyncIterator
 
-from app.domain.agents.entities import Message, MessageRole
-from app.domain.agents.ports import LLMProvider
-from app.domain.chat.ports import ConversationRepository
+from app.domain.agents.entities import Message
+from app.domain.agents.ports import AgentRunner
 
 
 class StreamReply:
-    """Streams an assistant reply token-by-token, then persists the full reply.
+    """Streams an assistant reply token-by-token via the agent layer.
 
-    Depends only on `LLMProvider` and `ConversationRepository` ports.
+    Depends only on the `AgentRunner` port — the application layer knows nothing
+    about LangGraph or any specific graph shape. Per-thread history is the
+    `AgentRunner`'s (checkpointer's) job now, keyed by `thread_id`; this use case no
+    longer persists messages itself.
     """
 
-    def __init__(
-        self, llm_provider: LLMProvider, conversation_repository: ConversationRepository
-    ) -> None:
-        self._llm_provider = llm_provider
-        self._conversation_repository = conversation_repository
+    def __init__(self, agent_runner: AgentRunner) -> None:
+        self._agent_runner = agent_runner
 
-    async def execute(self, conversation_id: str, messages: list[Message]) -> AsyncIterator[str]:
-        reply_chunks: list[str] = []
-        async for token in self._llm_provider.stream(messages):
-            reply_chunks.append(token)
+    async def execute(self, thread_id: str, message: Message) -> AsyncIterator[str]:
+        async for token in self._agent_runner.stream(thread_id, message):
             yield token
-
-        conversation = await self._conversation_repository.get(conversation_id)
-        if conversation is not None:
-            conversation.messages.append(
-                Message(role=MessageRole.ASSISTANT, content="".join(reply_chunks))
-            )
-            await self._conversation_repository.save(conversation)

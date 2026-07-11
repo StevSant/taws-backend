@@ -1,7 +1,7 @@
 from typing import Annotated
 
+import jwt
 from fastapi import Depends, Header
-from jose import JWTError, jwt
 
 from app.api.v1.schemas import CurrentUser
 from app.core.config import Settings, get_settings
@@ -30,7 +30,7 @@ def get_current_user(
             algorithms=["HS256"],
             options={"verify_aud": False},
         )
-    except JWTError:
+    except jwt.PyJWTError:
         return _DEV_FALLBACK_USER
 
     return CurrentUser(

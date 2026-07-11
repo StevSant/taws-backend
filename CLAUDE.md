@@ -28,9 +28,11 @@ inside `domain/` or `application/`, stop — that logic belongs in `infrastructu
 
 ## Conventions (strict, don't deviate)
 
-- **One class/function per file.** Never group multiple classes in one file — this
+- **One class/function per file (SRP).** Never group multiple classes in one file — this
   applies everywhere, including entities and enums (e.g. `MessageRole` and `Message`
-  are two separate files).
+  are two separate files). Don't let files grow large with code that mixes
+  responsibilities: each file has one focused purpose — if it's accumulating several
+  definitions or concerns, split it.
 - **Package re-exports.** Every `__init__.py` re-exports its package's public symbols
   with `__all__`, so consumers import from the package, not the file:
   ```python
@@ -50,7 +52,10 @@ inside `domain/` or `application/`, stop — that logic belongs in `infrastructu
 
 ## How to add things
 
-### Add a new LLM provider (swap OpenAI → Anthropic/Gemini/Ollama)
+### Add a new LLM provider for plain (non-agent) completions
+
+Used by anything calling the `LLMProvider` port directly (not via the agent graph) —
+currently unwired to a router, kept as a swap-point building block.
 
 1. Create `infrastructure/llm/<vendor>_provider.py` implementing `LLMProvider`
    (`complete()`, `stream()`). See `infrastructure/llm/anthropic_provider.py` for the
@@ -60,6 +65,23 @@ inside `domain/` or `application/`, stop — that logic belongs in `infrastructu
    adapter (probably gated by a new `Settings` field, e.g. `llm_provider: str`).
 
 Nothing in `application/` or `api/` needs to change — that's the point of the port.
+
+### Swap the LLM provider used by agent graphs (LangGraph)
+
+Agent graphs (`infrastructure/agents/chat_graph.py`) don't go through `LLMProvider` —
+they run on a LangChain `BaseChatModel`, built by `infrastructure/llm/chat_model_factory.
+build_chat_model(settings)`. **This factory function is the swap point** for agent-side
+providers (OpenAI → Anthropic/Gemini/Ollama/...):
+
+1. Change `build_chat_model` to return a different LangChain chat model (e.g.
+   `ChatAnthropic(...)` from `langchain-anthropic`), gated by a `Settings` field if you
+   need to pick at runtime.
+2. Nothing in `chat_graph.py`, `langgraph_agent_runner.py`, or `api/` needs to change —
+   both only depend on LangChain's `BaseChatModel` interface.
+3. Without `settings.openai_api_key`, the factory returns a fallback model
+   (`infrastructure/llm/fallback_chat_model.build_fallback_chat_model`, a
+   `GenericFakeChatModel` from `langchain_core`) that streams a placeholder reply
+   token-by-token instead of crashing — preserve that guard in any replacement factory.
 
 ### Add a new port + adapter (e.g. a new capability)
 
@@ -105,12 +127,47 @@ uv run pyright
 
 Never use bare `pip`, `python -m`, or a bare `python` invocation — always `uv run`.
 
-## Streaming (SSE)
+## Agent layer (LangGraph) and streaming (SSE)
 
-`POST /api/v1/chat/stream` returns `text/event-stream` frames (`data: <token>\n\n`,
-ending with `data: [DONE]\n\n`). The Angular frontend reads this with `fetch` +
-`ReadableStream`, not `EventSource` (so it can send a POST body). Keep new streaming
-endpoints in this same shape unless there's a strong reason to change it.
+`POST /api/v1/chat/stream` is routed through the agent layer end to end:
+
+```
+chat.py router → StreamReply use case → AgentRunner port → LangGraphAgentRunner adapter
+                                                              → compiled LangGraph graph
+```
+
+- **`AgentRunner`** (`domain/agents/ports/agent_runner.py`) is the port; **
+  `LangGraphAgentRunner`** (`infrastructure/agents/langgraph_agent_runner.py`) is its only
+  adapter. `LangGraphAgentRunner.stream(thread_id, message)` runs `graph.astream(...,
+  config={"configurable": {"thread_id": thread_id}}, stream_mode="messages")`, which
+  yields `(message_chunk, metadata)` tuples per LLM token; the adapter extracts
+  `AIMessageChunk.content` (see `extract_ai_message_token.py`) and skips everything else.
+- **The graph** (`infrastructure/agents/chat_graph.build_chat_graph(model, checkpointer)`)
+  is a single-node graph over `langgraph.graph.MessagesState`
+  (`{"messages": Annotated[list, add_messages]}`), compiled with `graph.compile(checkpointer=
+  checkpointer)`. The node does `await model.ainvoke(state["messages"])` and returns only the
+  new `AIMessage` — the `add_messages` reducer appends it to the thread's history instead of
+  replacing it.
+- **Per-thread history is the checkpointer's job**, not the application layer's: the
+  `AgentMemory` port (`Container.get_agent_memory()`, in-memory or Redis) supplies the
+  checkpointer, which persists/replays each thread's accumulated `messages` list keyed by
+  `thread_id`. `StreamReply.execute(thread_id, message)` only forwards a single new
+  `Message` — it does not build or persist a message list itself, so multi-turn
+  conversations aren't amnesiac between calls with the same `thread_id`.
+- **The model itself** comes from `infrastructure/llm/chat_model_factory.build_chat_model`
+  — see "Swap the LLM provider used by agent graphs" above for how to change it.
+- **Container caching**: `Container` (`core/di/container.py`) lazily builds and caches each
+  adapter (including the chat model, compiled graph, and `AgentRunner`) on first access, so
+  they're process-wide singletons — don't reintroduce a "build a new one every call" pattern
+  when adding new `get_*`/`_get_*` methods.
+
+SSE wire format: each frame is JSON-encoded, not a raw token —
+`data: {"t": "<token>"}\n\n`, ending with `data: {"done": true}\n\n`. This is deliberate:
+a raw `data: <token>\n\n` frame breaks if a token itself contains a newline, corrupting SSE
+framing. The Angular frontend (`SseChatRepository`) reads this with `fetch` +
+`ReadableStream`, not `EventSource` (so it can send a POST body), parses each `data:` line
+as JSON, yields `.t`, and stops on `.done`. Keep new streaming endpoints in this same JSON
+frame shape unless there's a strong reason to change it.
 
 ## Team & ownership
 
