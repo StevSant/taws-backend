@@ -10,12 +10,19 @@ from app.api.v1.dependencies.get_generate_consequence_chain_use_case import (
     get_generate_consequence_chain_use_case,
 )
 from app.api.v1.dependencies.get_instrument_universe import get_instrument_universe
+from app.api.v1.dependencies.get_link_telegram_account_use_case import (
+    get_link_telegram_account_use_case,
+)
 from app.api.v1.dependencies.get_llm_provider import get_llm_provider
 from app.api.v1.dependencies.get_macro_data_provider import get_macro_data_provider
 from app.api.v1.dependencies.get_market_data_provider import get_market_data_provider
 from app.api.v1.dependencies.get_news_provider import get_news_provider
 from app.api.v1.dependencies.get_notification_channel import get_notification_channel
 from app.api.v1.dependencies.get_signal_repository import get_signal_repository
+from app.api.v1.dependencies.get_telegram_link_repository import get_telegram_link_repository
+from app.api.v1.dependencies.get_telegram_link_token_repository import (
+    get_telegram_link_token_repository,
+)
 from app.api.v1.dependencies.get_vector_store import get_vector_store
 from app.api.v1.dependencies.get_watchlist_repository import get_watchlist_repository
 from app.api.v1.dependencies.require_current_user import require_current_user
@@ -31,12 +38,15 @@ __all__ = [
     "get_fundamentals_provider",
     "get_generate_consequence_chain_use_case",
     "get_instrument_universe",
+    "get_link_telegram_account_use_case",
     "get_llm_provider",
     "get_macro_data_provider",
     "get_market_data_provider",
     "get_news_provider",
     "get_notification_channel",
     "get_signal_repository",
+    "get_telegram_link_repository",
+    "get_telegram_link_token_repository",
     "get_vector_store",
     "get_watchlist_repository",
     "require_current_user",

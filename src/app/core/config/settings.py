@@ -110,6 +110,22 @@ class Settings(BaseSettings):
     watchdog_daily_briefing_hour_utc: int = 13
     watchdog_daily_briefing_minute_utc: int = 0
 
+    # --- Telegram bot (per-user alert delivery, behind the NotificationChannel port,
+    # issue #14) --- Leave TELEGRAM_BOT_TOKEN unset to keep the graceful-degradation
+    # fallback to LoggingNotificationChannel (see Container.get_notification_channel).
+    telegram_bot_token: str | None = None
+    # Bot's @username (no leading @), used to build the `https://t.me/<username>?start=
+    # <token>` deep link returned by `POST /api/v1/telegram/link-token`.
+    telegram_bot_username: str | None = None
+    # Public HTTPS URL Telegram POSTs updates to; registered via `setWebhook` on boot.
+    telegram_webhook_url: str | None = None
+    # Optional shared secret Telegram echoes back as `X-Telegram-Bot-Api-Secret-Token` on
+    # every webhook POST; verified by `api/v1/routers/telegram.py`. Leave unset to skip
+    # verification (fine for local/dev; set it for any public deployment).
+    telegram_webhook_secret: str | None = None
+    # TTL for a generated `/start <token>` linking token before it expires unused.
+    telegram_link_token_ttl_minutes: int = 15
+
 
 @lru_cache
 def get_settings() -> Settings:

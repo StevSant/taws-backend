@@ -60,3 +60,4 @@ uv run alembic revision -m "<name>"  # scaffold a new empty revision (write the 
 | `0001_watchlists_signals_briefings` | `watchlists`, `watchlist_items`, `signals`, `briefings`, `review_states` + RLS policies |
 | `0002_review_states_transition_trigger` | `BEFORE INSERT` trigger on `review_states` enforcing the review state machine (REVIEWED/DISCARDED terminal) as a DB-level backstop against a concurrent-request TOCTOU race, via `pg_advisory_xact_lock` |
 | `0003_historical_analogs` | `vector` extension + `historical_analogs` table (pgvector RAG store for issue #15's historical-analogs retrieval) + RLS policy |
+| `0004_telegram_links` | `telegram_links` (user_id <-> telegram_chat_id, unique on both) + `telegram_link_tokens` (short-lived `/start <token>` linking tokens) + RLS policies, for issue #14's Telegram per-user linking and Watchdog alert delivery |
