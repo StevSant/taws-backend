@@ -1,6 +1,10 @@
 import logging
 
-from app.domain.notification.entities import Alert, BriefingReadyNotification
+from app.domain.notification.entities import (
+    Alert,
+    BriefingReadyNotification,
+    ScenarioMatchNotification,
+)
 from app.domain.notification.ports import NotificationChannel
 
 logger = logging.getLogger(__name__)
@@ -31,5 +35,16 @@ class LoggingNotificationChannel(NotificationChannel):
             notification.briefing_id,
             notification.watchlist_id,
             notification.headline,
+            notification.link_url,
+        )
+
+    async def send_scenario_match(self, notification: ScenarioMatchNotification) -> None:
+        logger.info(
+            "scenario match notification composed: monitor=%s scenario=%s user=%s "
+            "reason=%r link=%s",
+            notification.monitor_id,
+            notification.scenario_id,
+            notification.user_id,
+            notification.match_reason,
             notification.link_url,
         )

@@ -38,6 +38,7 @@ from app.api.v1.schemas.scenario_asset_class_impact_response import (
     ScenarioAssetClassImpactResponse,
 )
 from app.api.v1.schemas.scenario_evidence_response import ScenarioEvidenceResponse
+from app.api.v1.schemas.scenario_monitor_response import ScenarioMonitorResponse
 from app.api.v1.schemas.scenario_preset_response import ScenarioPresetResponse
 from app.api.v1.schemas.scenario_result_response import ScenarioResultResponse
 from app.api.v1.schemas.scenario_spec_response import ScenarioSpecResponse
@@ -89,6 +90,7 @@ __all__ = [
     "ReviewStateResponse",
     "ScenarioAssetClassImpactResponse",
     "ScenarioEvidenceResponse",
+    "ScenarioMonitorResponse",
     "ScenarioPresetResponse",
     "ScenarioResultResponse",
     "ScenarioSpecResponse",

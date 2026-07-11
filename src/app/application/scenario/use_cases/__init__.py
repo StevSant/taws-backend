@@ -1,3 +1,4 @@
+from app.application.scenario.use_cases.arm_scenario_monitor import ArmScenarioMonitor
 from app.application.scenario.use_cases.compute_scenario_quantification import (
     ComputeScenarioQuantification,
 )
@@ -8,6 +9,7 @@ from app.application.scenario.use_cases.synthesize_scenario_result import (
 )
 
 __all__ = [
+    "ArmScenarioMonitor",
     "ComputeScenarioQuantification",
     "GatherScenarioContext",
     "NormalizeScenarioIntake",

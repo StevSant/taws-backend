@@ -152,6 +152,21 @@ class Settings(BaseSettings):
     # TTL for a generated `/start <token>` linking token before it expires unused.
     telegram_link_token_ttl_minutes: int = 15
 
+    # --- Scenario Monitors (arm a saved ScenarioResult as a Watchdog rule, issue #18) ---
+    # How long an armed monitor stays active before auto-expiring with no match. Product
+    # guidance: keep within a 7-30 day window; 14 days is the chosen middle default.
+    scenario_monitor_ttl_days: int = 14
+    # Absolute price-move % (over the window since arming) that counts as a match for each
+    # `ScenarioSpec.magnitude` bucket — see `EvaluateScenarioMonitors`'s docstring for the
+    # full matching-rule writeup and rationale for these specific numbers.
+    scenario_monitor_price_move_threshold_low_pct: float = 2.0
+    scenario_monitor_price_move_threshold_medium_pct: float = 5.0
+    scenario_monitor_price_move_threshold_high_pct: float = 10.0
+    # Cap on the "since arming" price-history window `EvaluateScenarioMonitors` requests
+    # from `ComputeMarketStats`, so a monitor armed a long time ago doesn't trigger an
+    # unbounded history fetch on every scan.
+    scenario_monitor_price_window_max_days: int = 30
+
 
 @lru_cache
 def get_settings() -> Settings:

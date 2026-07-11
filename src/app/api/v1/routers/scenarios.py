@@ -6,14 +6,19 @@ from app.api.v1.dependencies import (
     get_preset_scenario_rows,
     get_scenario_repository,
     get_scenario_simulation_runner,
+    require_current_user,
 )
 from app.api.v1.schemas import (
+    CurrentUser,
     GenerateScenarioRequest,
+    ScenarioMonitorResponse,
     ScenarioPresetResponse,
     ScenarioResultResponse,
 )
 from app.application.compliance import ComplianceViolationError
 from app.application.scenario import InvalidScenarioIntakeError, UnknownPresetError
+from app.application.scenario.use_cases import ArmScenarioMonitor
+from app.core.config import Settings, get_settings
 from app.domain.scenario.ports import ScenarioRepository
 from app.infrastructure.agents.scenario import ScenarioSimulationRunner
 
@@ -86,3 +91,39 @@ async def get_scenario(
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario not found")
     return ScenarioResultResponse.model_validate(result)
+
+
+@router.post("/{scenario_id}/arm", status_code=status.HTTP_201_CREATED)
+async def arm_scenario_monitor(
+    scenario_id: str,
+    current_user: Annotated[CurrentUser, Depends(require_current_user)],
+    scenario_repository: Annotated[ScenarioRepository, Depends(get_scenario_repository)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ScenarioMonitorResponse:
+    """ "Arm monitor" action on a saved `ScenarioResult` (issue #18) — turns it into a
+    standing Watchdog rule that pings the requesting user over Telegram if the scenario
+    looks like it's materializing. Authenticated (unlike scenario generation itself):
+    arming ties to a specific user for delivery, see `ScenarioMonitor`'s docstring.
+
+    Idempotent per `(scenario_id, user_id)` — re-arming (including re-arming a `matched`
+    or `expired` monitor) resets it back to `armed` with a fresh window; see
+    `ArmScenarioMonitor`.
+    """
+    use_case = ArmScenarioMonitor(
+        scenario_repository=scenario_repository, ttl_days=settings.scenario_monitor_ttl_days
+    )
+    monitor = await use_case.execute(scenario_id=scenario_id, user_id=current_user.id)
+    if monitor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario not found")
+    return ScenarioMonitorResponse.model_validate(monitor)
+
+
+@router.delete("/{scenario_id}/arm", status_code=status.HTTP_204_NO_CONTENT)
+async def disarm_scenario_monitor(
+    scenario_id: str,
+    current_user: Annotated[CurrentUser, Depends(require_current_user)],
+    scenario_repository: Annotated[ScenarioRepository, Depends(get_scenario_repository)],
+) -> None:
+    """Disarm the requesting user's monitor for this scenario, if any. Idempotent — no-op
+    (still `204`) if the user never armed this scenario or already disarmed it."""
+    await scenario_repository.disarm_monitor(scenario_id=scenario_id, user_id=current_user.id)
