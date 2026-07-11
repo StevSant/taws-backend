@@ -1,6 +1,7 @@
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import BaseTool
 from langgraph.graph import END, StateGraph
 
 from app.infrastructure.agents.personas import ADVISOR_PERSONA, ANALYST_PERSONA, QUANT_PERSONA
@@ -13,13 +14,23 @@ from app.infrastructure.agents.supervisor_state import SupervisorState
 _SUPERVISOR_NODE = "supervisor"
 
 
-def build_supervisor_graph(model: BaseChatModel, checkpointer: Any) -> Any:
+def build_supervisor_graph(
+    model: BaseChatModel,
+    checkpointer: Any,
+    advisor_tools: list[BaseTool] | None = None,
+) -> Any:
     """Build the Supervisor graph: routes each turn to one specialist node.
 
     Shape: `supervisor` (structured-output routing) -> one of `analyst`/`quant`/
     `advisor` (persona + `model.ainvoke`) -> `END`. Uses `SupervisorState`
     (`MessagesState` + `route`) so the conditional edge out of `supervisor` can read
     the chosen route (`select_specialist_route`) and dispatch to the matching node.
+
+    `advisor_tools`: optional, additive, defaults to `None` (reproduces the prior
+    behavior exactly). Bound only to the `advisor` specialist node — see
+    `specialist_node_factory.build_specialist_node`'s `tools` param — so it can ground
+    chat replies in persisted signals/briefings/watchlists (`infrastructure/agents/
+    tools/build_advisor_grounding_tools.py`). `analyst`/`quant` never receive tools.
 
     Every node emits `AgentTrace` frames via `get_stream_writer()` (routing/start/
     done — see `supervisor_router_node.py` / `specialist_node_factory.py`);
@@ -40,7 +51,8 @@ def build_supervisor_graph(model: BaseChatModel, checkpointer: Any) -> Any:
         SupervisorRoute.QUANT.value, build_specialist_node("quant", QUANT_PERSONA, model)
     )
     graph.add_node(
-        SupervisorRoute.ADVISOR.value, build_specialist_node("advisor", ADVISOR_PERSONA, model)
+        SupervisorRoute.ADVISOR.value,
+        build_specialist_node("advisor", ADVISOR_PERSONA, model, tools=advisor_tools),
     )
 
     graph.set_entry_point(_SUPERVISOR_NODE)

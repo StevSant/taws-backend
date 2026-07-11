@@ -1,0 +1,77 @@
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from langchain_core.language_models import BaseChatModel
+
+from app.api.v1.dependencies import (
+    get_briefing_repository,
+    get_chat_model,
+    get_signal_repository,
+    get_watchlist_repository,
+    require_current_user,
+)
+from app.api.v1.schemas import BriefingResponse, CurrentUser
+from app.application.briefing import EmptyWatchlistError
+from app.application.briefing.use_cases import GenerateBriefing
+from app.domain.briefing.ports import BriefingRepository
+from app.domain.signals.ports import SignalRepository
+from app.domain.watchlist.ports import WatchlistRepository
+
+router = APIRouter(prefix="/watchlists/{watchlist_id}/briefings", tags=["briefings"])
+
+
+async def _require_owned_watchlist(
+    watchlist_id: str, user: CurrentUser, watchlist_repository: WatchlistRepository
+) -> None:
+    """Raise 404 unless `watchlist_id` exists and belongs to `user`.
+
+    Same ownership-check pattern as `_get_owned_watchlist` in `watchlists.py` (404, not
+    403, even when the watchlist belongs to someone else, so this never confirms another
+    user's watchlist id exists) — kept as a small local duplicate rather than importing
+    that router's private helper across modules, since routers stay independent.
+    """
+    watchlist = await watchlist_repository.get(watchlist_id)
+    if watchlist is None or watchlist.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found")
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def generate_briefing(
+    watchlist_id: str,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    watchlist_repository: Annotated[WatchlistRepository, Depends(get_watchlist_repository)],
+    signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
+    briefing_repository: Annotated[BriefingRepository, Depends(get_briefing_repository)],
+    model: Annotated[BaseChatModel, Depends(get_chat_model)],
+) -> BriefingResponse:
+    """Trigger the Advisor briefing pipeline on-demand for a watchlist (HU3).
+
+    Button-style trigger; scheduling a recurring briefing is a separate T1 issue.
+    """
+    await _require_owned_watchlist(watchlist_id, user, watchlist_repository)
+    use_case = GenerateBriefing(
+        watchlist_repository=watchlist_repository,
+        signal_repository=signal_repository,
+        briefing_repository=briefing_repository,
+        model=model,
+    )
+    try:
+        briefing = await use_case.execute(watchlist_id)
+    except EmptyWatchlistError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return BriefingResponse.model_validate(briefing)
+
+
+@router.get("")
+async def list_briefings(
+    watchlist_id: str,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    watchlist_repository: Annotated[WatchlistRepository, Depends(get_watchlist_repository)],
+    briefing_repository: Annotated[BriefingRepository, Depends(get_briefing_repository)],
+) -> list[BriefingResponse]:
+    """List every briefing generated for a watchlist owned by the authenticated user."""
+    await _require_owned_watchlist(watchlist_id, user, watchlist_repository)
+    briefings = await briefing_repository.list_for_watchlist(watchlist_id)
+    return [BriefingResponse.model_validate(briefing) for briefing in briefings]

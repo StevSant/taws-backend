@@ -2,13 +2,20 @@ from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage
+from langchain_core.tools import BaseTool
 from langgraph.config import get_stream_writer
 
 from app.domain.agents.entities import AgentTraceEvent
+from app.infrastructure.agents.invoke_with_bound_tools import invoke_with_bound_tools
 from app.infrastructure.agents.supervisor_state import SupervisorState
 
 
-def build_specialist_node(agent_name: str, persona: str, model: BaseChatModel) -> Any:
+def build_specialist_node(
+    agent_name: str,
+    persona: str,
+    model: BaseChatModel,
+    tools: list[BaseTool] | None = None,
+) -> Any:
     """Build a specialist node: invokes `model` with a persona system prompt.
 
     Shared by every specialist (analyst/quant/advisor) — only `agent_name` and
@@ -21,6 +28,13 @@ def build_specialist_node(agent_name: str, persona: str, model: BaseChatModel) -
     Emits a `START` trace before invoking the model and a `DONE` trace after, via
     `get_stream_writer()`.
 
+    `tools`: optional, additive, defaults to `None` (unchanged behavior — a single plain
+    `model.ainvoke`). When given (today only the `advisor` route, see
+    `supervisor_graph.py` / `core/di/container.py`), the node runs a bounded tool-calling
+    loop instead (`invoke_with_bound_tools`) so it can ground its reply in persisted data
+    (signals/briefings/watchlists). `analyst`/`quant` keep calling this with `tools=None`
+    and are completely unaffected.
+
     Returns `Any` (not a `Callable[[SupervisorState], ...]` alias): `StateGraph.add_node`
     expects its callable's `state` parameter to accept the keyword name `state`, which a
     `Callable[...]` type alias erases — annotating with one here makes pyright reject a
@@ -31,7 +45,12 @@ def build_specialist_node(agent_name: str, persona: str, model: BaseChatModel) -
         writer = get_stream_writer()
         writer({"agent": agent_name, "event": AgentTraceEvent.START.value, "detail": None})
 
-        response = await model.ainvoke([SystemMessage(content=persona), *state["messages"]])
+        messages = [SystemMessage(content=persona), *state["messages"]]
+        response = (
+            await invoke_with_bound_tools(model, messages, tools)
+            if tools
+            else await model.ainvoke(messages)
+        )
 
         writer({"agent": agent_name, "event": AgentTraceEvent.DONE.value, "detail": None})
         return {"messages": [response]}

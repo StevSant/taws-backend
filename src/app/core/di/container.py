@@ -18,6 +18,7 @@ from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, News
 from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
+from app.infrastructure.agents.tools import build_advisor_grounding_tools
 from app.infrastructure.embeddings import OpenAIEmbeddings
 from app.infrastructure.llm import OpenAIProvider, build_chat_model
 from app.infrastructure.marketdata import (
@@ -258,7 +259,14 @@ class Container:
     def _get_chat_graph(self) -> Any:
         if self._chat_graph is None:
             checkpointer = self.get_agent_memory().get_checkpointer()
-            self._chat_graph = build_supervisor_graph(self.get_chat_model(), checkpointer)
+            advisor_tools = build_advisor_grounding_tools(
+                signal_repository=self.get_signal_repository(),
+                briefing_repository=self.get_briefing_repository(),
+                watchlist_repository=self.get_watchlist_repository(),
+            )
+            self._chat_graph = build_supervisor_graph(
+                self.get_chat_model(), checkpointer, advisor_tools=advisor_tools
+            )
         return self._chat_graph
 
 

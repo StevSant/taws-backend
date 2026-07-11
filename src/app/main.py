@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.middleware import RequestIDMiddleware, unhandled_exception_handler
 from app.api.v1.routers import (
+    briefings_router,
     chat_router,
     health_router,
     instruments_router,
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(news_router, prefix="/api/v1")
     app.include_router(signals_router, prefix="/api/v1")
     app.include_router(watchlists_router, prefix="/api/v1")
+    app.include_router(briefings_router, prefix="/api/v1")
 
     return app
 
