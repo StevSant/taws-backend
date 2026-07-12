@@ -70,10 +70,27 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _warn_on_misconfigured_auth(settings)
     container = get_container()
 
+    # Load the DB-backed instrument catalog once at startup (issue: Instruments
+    # Catalog Slice 1) — MUST happen before any request-path code calls
+    # `get_instrument_universe()`, which now only returns this prebuilt singleton
+    # and never builds it lazily itself (design decision #1). Wrapped in the same
+    # "never crash boot" guard as the news warmup below: if Supabase isn't
+    # configured/reachable (e.g. local dev, tests), the app still boots. In that
+    # degraded case `get_instrument_universe()` still raises on first use (its
+    # contract: "built or not", never a silent empty catalog) — but at least the
+    # rest of the app (auth, chat, unrelated routers) keeps working.
+    try:
+        await container.build_instrument_universe()
+    except Exception:
+        logger.warning(
+            "Instrument universe warmup failed; any endpoint depending on the "
+            "instrument catalog will fail until this succeeds.",
+            exc_info=True,
+        )
+
     # Preload radar reads so the first browser visit does not pay cold-start DI +
     # fixture assembly on the request path.
     try:
-        container.get_instrument_universe()
         await container.get_news_provider().fetch_news(since_hours=48, limit=50)
     except Exception:
         logger.warning("Radar warmup failed; first /radar load may be slower.", exc_info=True)
