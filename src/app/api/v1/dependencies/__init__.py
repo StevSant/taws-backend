@@ -1,4 +1,5 @@
 from app.api.v1.dependencies.decode_bearer_token import decode_bearer_token
+from app.api.v1.dependencies.decode_unverified_identity import decode_unverified_identity
 from app.api.v1.dependencies.dev_fallback_allowed import dev_fallback_allowed
 from app.api.v1.dependencies.dev_fallback_user import DEV_FALLBACK_USER
 from app.api.v1.dependencies.get_agent_runner import get_agent_runner
@@ -41,18 +42,21 @@ from app.api.v1.dependencies.get_signal_command_handler import get_signal_comman
 from app.api.v1.dependencies.get_signal_repository import get_signal_repository
 from app.api.v1.dependencies.get_simulate_command_handler import get_simulate_command_handler
 from app.api.v1.dependencies.get_telegram_link_repository import get_telegram_link_repository
-from app.api.v1.dependencies.get_user_bot_repository import get_user_bot_repository
 from app.api.v1.dependencies.get_telegram_link_token_repository import (
     get_telegram_link_token_repository,
 )
 from app.api.v1.dependencies.get_telegram_messenger import get_telegram_messenger
+from app.api.v1.dependencies.get_user_bot_repository import get_user_bot_repository
 from app.api.v1.dependencies.get_vector_store import get_vector_store
 from app.api.v1.dependencies.get_watchlist_repository import get_watchlist_repository
+from app.api.v1.dependencies.jwks_client import get_jwks_client
 from app.api.v1.dependencies.require_current_user import require_current_user
+from app.api.v1.dependencies.supabase_jwks_url import supabase_jwks_url
 
 __all__ = [
     "DEV_FALLBACK_USER",
     "decode_bearer_token",
+    "decode_unverified_identity",
     "dev_fallback_allowed",
     "get_agent_runner",
     "get_alerted_signal_tracker",
@@ -69,6 +73,7 @@ __all__ = [
     "get_impact_command_handler",
     "get_instrument_universe",
     "get_interpret_macro_event_use_case",
+    "get_jwks_client",
     "get_link_telegram_account_use_case",
     "get_llm_provider",
     "get_macro_data_provider",
@@ -92,4 +97,5 @@ __all__ = [
     "get_vector_store",
     "get_watchlist_repository",
     "require_current_user",
+    "supabase_jwks_url",
 ]
