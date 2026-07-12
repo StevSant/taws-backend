@@ -1,6 +1,8 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
+
+from app.api.v1.schemas.news_entity_response import NewsEntityResponse
 
 
 class NewsItemResponse(BaseModel):
@@ -10,6 +12,11 @@ class NewsItemResponse(BaseModel):
     `related_symbols` linking the article to instruments in the curated universe.
     `provider` is the fetching adapter's own identity (e.g. `"finnhub"`,
     `"marketaux"`), distinct from `source`, which is the article's publisher.
+
+    `entities` and `sentiment_score` are enrichment fields populated only by
+    sources that identify instruments in the text (currently Marketaux); both
+    are `None` for every other source, never defaulted to a misleading value
+    like `0`.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -22,3 +29,19 @@ class NewsItemResponse(BaseModel):
     provider: str
     published_at: datetime
     related_symbols: list[str]
+    entities: list[NewsEntityResponse] | None = None
+    sentiment_score: float | None = None
+
+    @field_validator("entities", mode="before")
+    @classmethod
+    def _empty_entities_to_none(
+        cls, value: list[NewsEntityResponse] | None
+    ) -> list[NewsEntityResponse] | None:
+        """Normalize the domain entity's `[]` default to `None`.
+
+        `NewsItem.entities` defaults to an empty list for non-enriching
+        sources; treat "no enrichment" the same as "field absent" here rather
+        than surfacing an empty array that could be mistaken for "checked and
+        found nothing".
+        """
+        return value or None
