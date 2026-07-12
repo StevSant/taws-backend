@@ -469,11 +469,23 @@ class Container:
                     )
                 )
 
+            has_vendor_news_keys = bool(
+                self._settings.marketaux_api_key
+                or self._settings.newsapi_api_key
+                or self._settings.finnhub_api_key
+            )
+            if self._settings.app_env == "development" and not has_vendor_news_keys:
+                # RSS/Yahoo and SEC EDGAR often stall on local networks; fixture data
+                # is enough for the hackathon UI when no paid news keys are configured.
+                live_providers = []
+
             fixture_provider = FixtureNewsProvider(seed_path=self._settings.news_fixture_seed_path)
             self._news_provider = AggregatingNewsProvider(
                 providers=live_providers,
                 fixture_provider=fixture_provider,
                 instrument_universe=self.get_instrument_universe(),
+                provider_timeout_seconds=self._settings.news_provider_timeout_seconds,
+                live_fetch_budget_seconds=self._settings.news_live_fetch_budget_seconds,
             )
         return self._news_provider
 

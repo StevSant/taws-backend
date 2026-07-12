@@ -62,7 +62,12 @@ class Settings(BaseSettings):
     ]
     # `feedparser.parse` has no timeout of its own; bounds each feed fetch/parse so one
     # stalled feed can't hang the whole `fetch_news` call (see `RssNewsProvider`).
-    rss_feed_timeout_seconds: float = 10.0
+    rss_feed_timeout_seconds: float = 3.0
+
+    # Caps each live news adapter call and the overall fan-out budget before the
+    # fixture fallback kicks in (see `AggregatingNewsProvider`).
+    news_provider_timeout_seconds: float = 2.5
+    news_live_fetch_budget_seconds: float = 3.5
 
     # --- CoinGecko (crypto prices, behind the MarketDataProvider port); no key required ---
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"
@@ -113,7 +118,7 @@ class Settings(BaseSettings):
         "&dateb=&owner=include&count=100&output=atom"
     ]
     # Same rationale as `rss_feed_timeout_seconds` (see `SecEdgarNewsProvider`).
-    sec_edgar_feed_timeout_seconds: float = 10.0
+    sec_edgar_feed_timeout_seconds: float = 3.0
 
     # --- Fundamentals / earnings calendar (behind the FundamentalsProvider port); yfinance,
     # no key required ---
