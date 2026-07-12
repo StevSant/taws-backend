@@ -7,7 +7,7 @@ from langgraph.config import get_stream_writer
 
 from app.domain.agents.entities import AgentTraceEvent
 from app.infrastructure.agents.invoke_with_bound_tools import invoke_with_bound_tools
-from app.infrastructure.agents.personas import MIDAS_PERSONA
+from app.infrastructure.agents.personas import MIDAS_PERSONA, RESPONSE_FORMAT_GUIDANCE
 from app.infrastructure.agents.supervisor_state import SupervisorState
 
 
@@ -50,6 +50,7 @@ def build_specialist_node(
 
         messages = [
             SystemMessage(content=MIDAS_PERSONA),
+            SystemMessage(content=RESPONSE_FORMAT_GUIDANCE),
             SystemMessage(content=persona),
             *state["messages"],
         ]
