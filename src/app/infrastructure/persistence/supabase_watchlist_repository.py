@@ -62,9 +62,21 @@ class SupabaseWatchlistRepository(WatchlistRepository):
         return watchlist_from_row(response.data[0]) if response.data else None
 
     async def list_for_user(self, user_id: str) -> list[Watchlist]:
+        """List every watchlist owned by `user_id`, ordered by `created_at` (MEDIUM
+        fix, post-hoc adversarial review): without a stable `.order(...)` clause,
+        row order is whatever Postgres/PostgREST happens to return, which makes
+        the router's `existing[0]` (`_resolve_owned_watchlist_id`'s "the caller's
+        default watchlist") non-deterministic across requests.
+        """
         client = await self._clients.get()
         response = await self._retry(
-            lambda: client.table(_WATCHLISTS_TABLE).select("*").eq("user_id", user_id).execute()
+            lambda: (
+                client.table(_WATCHLISTS_TABLE)
+                .select("*")
+                .eq("user_id", user_id)
+                .order("created_at")
+                .execute()
+            )
         )
         return [watchlist_from_row(row) for row in response.data]
 
@@ -105,14 +117,45 @@ class SupabaseWatchlistRepository(WatchlistRepository):
         return [watchlist_item_from_row(row) for row in response.data]
 
     async def add_item(self, watchlist_id: str, symbol: str) -> WatchlistItem:
+        """Add `symbol` to `watchlist_id`, idempotent on `(watchlist_id, symbol)` (FIX #4).
+
+        Upserts with `on_conflict="watchlist_id,symbol"` + `ignore_duplicates=True`
+        instead of a plain insert, so re-registering an already-tracked symbol (e.g.
+        via `RegisterInstrument`) is a true no-op: no duplicate row, no error. A
+        no-op conflict can leave `.upsert(...).execute()`'s own response empty/stale
+        for that row, so the row is re-selected by `(watchlist_id, symbol)` before
+        mapping — this keeps the return type a real `WatchlistItem` either way.
+        """
         client = await self._clients.get()
-        response = await self._retry(
+        await self._retry(
             lambda: (
                 client.table(_WATCHLIST_ITEMS_TABLE)
-                .insert({"id": str(uuid.uuid4()), "watchlist_id": watchlist_id, "symbol": symbol})
+                .upsert(
+                    {"id": str(uuid.uuid4()), "watchlist_id": watchlist_id, "symbol": symbol},
+                    on_conflict="watchlist_id,symbol",
+                    ignore_duplicates=True,
+                )
                 .execute()
             )
         )
+        response = await self._retry(
+            lambda: (
+                client.table(_WATCHLIST_ITEMS_TABLE)
+                .select("*")
+                .eq("watchlist_id", watchlist_id)
+                .eq("symbol", symbol)
+                .execute()
+            )
+        )
+        if not response.data:
+            # LOW fix (post-hoc adversarial review): an empty re-select (stale
+            # read / RLS mismatch) must raise a clear, greppable error instead of
+            # `IndexError`-ing on `response.data[0]`, which would otherwise
+            # surface as an opaque 500 with no indication of which table/row.
+            raise LookupError(
+                f"watchlist_items row not found after upsert for "
+                f"watchlist_id={watchlist_id!r}, symbol={symbol!r}"
+            )
         return watchlist_item_from_row(response.data[0])
 
     async def remove_item(self, watchlist_id: str, item_id: str) -> None:

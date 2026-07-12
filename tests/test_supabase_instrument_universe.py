@@ -155,3 +155,74 @@ async def test_all_rows_returns_raw_rows_including_vendor_ids(
     eurusd_row = next(row for row in rows if row.symbol == "EURUSD")
     assert eurusd_row.yfinance_symbol == "EURUSD=X"
     assert len(rows) == 27
+
+
+async def test_add_row_propagates_coingecko_id_to_all_rows_and_overrides(
+    fixture_rows: list[InstrumentRow],
+) -> None:
+    """CRITICAL regression (FIX 1a): a newly registered coin's `coingecko_id`
+    must survive into `all_rows()` AND the live `coingecko_id_overrides()` map —
+    `add(instrument)` alone drops it because it rebuilds a vendor-id-less
+    `InstrumentRow`, so the price provider can never resolve the new coin."""
+    repo = _FakeInstrumentCatalogRepository(fixture_rows)
+    universe = await SupabaseInstrumentUniverse.create(repo)
+    new_row = InstrumentRow(
+        symbol="POL",
+        name="Polygon Ecosystem Token",
+        asset_class=AssetClass.CRYPTO,
+        currency="USD",
+        coingecko_id="polygon-ecosystem-token",
+    )
+
+    universe.add_row(new_row)
+
+    all_rows = universe.all_rows()
+    pol_row = next(row for row in all_rows if row.symbol == "POL")
+    assert pol_row.coingecko_id == "polygon-ecosystem-token"
+    assert universe.coingecko_id_overrides()["POL"] == "polygon-ecosystem-token"
+
+
+async def test_coingecko_id_overrides_is_a_live_reference_not_a_snapshot(
+    fixture_rows: list[InstrumentRow],
+) -> None:
+    """CRITICAL regression (FIX 1b): the dict returned by `coingecko_id_overrides()`
+    must be the SAME object the universe mutates in `add_row()` — a snapshot copy
+    would mean a provider holding a reference taken before registration never
+    sees the newly registered coin's id."""
+    repo = _FakeInstrumentCatalogRepository(fixture_rows)
+    universe = await SupabaseInstrumentUniverse.create(repo)
+    overrides_ref = universe.coingecko_id_overrides()
+
+    universe.add_row(
+        InstrumentRow(
+            symbol="POL",
+            name="Polygon Ecosystem Token",
+            asset_class=AssetClass.CRYPTO,
+            currency="USD",
+            coingecko_id="polygon-ecosystem-token",
+        )
+    )
+
+    assert overrides_ref is universe.coingecko_id_overrides()
+    assert overrides_ref["POL"] == "polygon-ecosystem-token"
+
+
+async def test_yfinance_symbol_overrides_is_a_live_reference(
+    fixture_rows: list[InstrumentRow],
+) -> None:
+    repo = _FakeInstrumentCatalogRepository(fixture_rows)
+    universe = await SupabaseInstrumentUniverse.create(repo)
+    overrides_ref = universe.yfinance_symbol_overrides()
+
+    universe.add_row(
+        InstrumentRow(
+            symbol="GBPUSD",
+            name="British Pound / US Dollar",
+            asset_class=AssetClass.FOREX,
+            currency="USD",
+            yfinance_symbol="GBPUSD=X",
+        )
+    )
+
+    assert overrides_ref is universe.yfinance_symbol_overrides()
+    assert overrides_ref["GBPUSD"] == "GBPUSD=X"

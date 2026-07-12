@@ -17,6 +17,7 @@ from app.application.charts.use_cases import (
 from app.application.chat.use_cases import GenerateConversationTitle
 from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.event_intelligence.use_cases import AnalyzeEventImpact, ProcessIncomingEvent
+from app.application.instruments.use_cases import RegisterInstrument, SearchCoins
 from app.application.macro.use_cases import InterpretMacroEvent
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
 from app.application.scenario.use_cases import (
@@ -50,6 +51,7 @@ from app.domain.event_intelligence.ports import (
 )
 from app.domain.market.entities import MacroIndicator
 from app.domain.market.ports import (
+    CoinGeckoSearchProvider,
     FundamentalsProvider,
     InstrumentCatalogRepository,
     InstrumentUniverse,
@@ -107,6 +109,7 @@ from app.infrastructure.macro import (
     RoutingMacroDataProvider,
 )
 from app.infrastructure.marketdata import (
+    CoinGeckoCoinSearchProvider,
     CoinGeckoMarketDataProvider,
     FixtureMarketDataProvider,
     RoutingMarketDataProvider,
@@ -193,6 +196,9 @@ class Container:
         self._news_item_repository: NewsItemRepository | None = None
         self._instrument_catalog_repository: InstrumentCatalogRepository | None = None
         self._instrument_universe: SupabaseInstrumentUniverse | None = None
+        self._coingecko_search_provider: CoinGeckoSearchProvider | None = None
+        self._search_coins_use_case: SearchCoins | None = None
+        self._register_instrument_use_case: RegisterInstrument | None = None
         self._market_data_provider: MarketDataProvider | None = None
         self._macro_data_provider: MacroDataProvider | None = None
         self._fundamentals_provider: FundamentalsProvider | None = None
@@ -682,24 +688,64 @@ class Container:
             )
         return self._instrument_universe
 
+    def get_coingecko_search_provider(self) -> CoinGeckoSearchProvider:
+        """Return the cached CoinGecko `/search` adapter (issue #60 candidate resolution).
+
+        Reuses the same base URL, API key, and cooldown settings as
+        `get_market_data_provider`'s `CoinGeckoMarketDataProvider` — same vendor, same
+        graceful rate-limit degradation (429/timeout -> `[]`, see
+        `CoinGeckoCoinSearchProvider`'s docstring), just a different endpoint.
+        """
+        if self._coingecko_search_provider is None:
+            self._coingecko_search_provider = CoinGeckoCoinSearchProvider(
+                base_url=self._settings.coingecko_base_url,
+                api_key=self._settings.coingecko_api_key,
+                cooldown_seconds=self._settings.coingecko_cooldown_seconds,
+            )
+        return self._coingecko_search_provider
+
+    def get_search_coins_use_case(self) -> SearchCoins:
+        """Return the cached `SearchCoins` use case backing `GET /instruments/search`."""
+        if self._search_coins_use_case is None:
+            self._search_coins_use_case = SearchCoins(
+                search_provider=self.get_coingecko_search_provider()
+            )
+        return self._search_coins_use_case
+
+    def get_register_instrument_use_case(self) -> RegisterInstrument:
+        """Return the cached `RegisterInstrument` use case backing `POST /instruments`.
+
+        Depends on the domain `MutableInstrumentUniverse` protocol (design's FIX #6)
+        via the same `InstrumentUniverse` singleton every other pipeline uses —
+        `SupabaseInstrumentUniverse.add()` satisfies it structurally.
+        """
+        if self._register_instrument_use_case is None:
+            self._register_instrument_use_case = RegisterInstrument(
+                catalog_repository=self.get_instrument_catalog_repository(),
+                universe=self.get_instrument_universe(),
+                watchlist_repository=self.get_watchlist_repository(),
+            )
+        return self._register_instrument_use_case
+
     def get_market_data_provider(self) -> MarketDataProvider:
         """Return the routing MarketDataProvider (CoinGecko/yfinance + fixture fallback).
 
         `yfinance`/CoinGecko symbol overrides come from the prebuilt instrument
-        universe's `all_rows()` (FIX #7) — a sync read over the already-loaded
-        catalog singleton, not a fresh async DB call — so those vendor details
-        never touch the pure `Instrument` entity.
+        universe's LIVE `coingecko_id_overrides()`/`yfinance_symbol_overrides()`
+        dicts (CRITICAL fix, post-hoc adversarial review) — NOT a one-time
+        snapshot comprehension over `all_rows()`. The previous snapshot approach
+        meant a coin registered via `POST /instruments` after this provider was
+        first built would never resolve a live price until process restart,
+        because `CoinGeckoMarketDataProvider` holds `self._overrides` as a
+        reference and the snapshot dict was never updated. Passing the SAME
+        dict objects the universe mutates in `add_row()` makes every subsequent
+        registration visible immediately, with no rebuild.
         """
         if self._market_data_provider is None:
             self.get_instrument_universe()  # raises if the universe wasn't built yet
             assert self._instrument_universe is not None
-            universe_rows = self._instrument_universe.all_rows()
-            yfinance_overrides = {
-                row.symbol: row.yfinance_symbol for row in universe_rows if row.yfinance_symbol
-            }
-            coingecko_overrides = {
-                row.symbol: row.coingecko_id for row in universe_rows if row.coingecko_id
-            }
+            coingecko_overrides = self._instrument_universe.coingecko_id_overrides()
+            yfinance_overrides = self._instrument_universe.yfinance_symbol_overrides()
             fixture_provider = FixtureMarketDataProvider()
             self._market_data_provider = RoutingMarketDataProvider(
                 yfinance_provider=YFinanceMarketDataProvider(symbol_overrides=yfinance_overrides),
