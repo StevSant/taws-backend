@@ -20,6 +20,7 @@ from app.core.di import get_container
 from app.domain.agents.entities import EphemeralRealtimeSession
 from app.domain.market.entities import AssetClass, Instrument, PriceCandle, PriceSeries
 from app.domain.signals.entities import ImpactClass, Signal
+from app.domain.watchlist.entities import Watchlist, WatchlistItem
 from app.main import app
 
 _USER = CurrentUser(id="jwt-user-1", email="voice@example.com")
@@ -187,6 +188,28 @@ def test_tool_market_data_dispatch() -> None:
 
     assert response.status_code == 200
     assert response.json()["output"]["last_price"] == 201.0
+
+
+def test_tool_get_watchlist_scopes_to_jwt_user_id() -> None:
+    """The user-scoped tool endpoint must scope by the JWT user id, never a client value."""
+    repo = Mock()
+    repo.list_for_user = AsyncMock(
+        return_value=[Watchlist(id="wl-1", user_id="jwt-user-1", name="Tech")]
+    )
+    repo.list_items = AsyncMock(
+        return_value=[WatchlistItem(id="it-1", watchlist_id="wl-1", symbol="AAPL")]
+    )
+    container = _fake_container(get_watchlist_repository=repo)
+
+    response = _post_tool(
+        container, {"call_id": "c4", "name": "get_watchlist", "arguments": {}}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["call_id"] == "c4"
+    assert body["output"]["watchlists"][0]["symbols"] == ["AAPL"]
+    repo.list_for_user.assert_awaited_once_with("jwt-user-1")
 
 
 def test_tool_recoverable_error_returns_structured_output_not_500() -> None:

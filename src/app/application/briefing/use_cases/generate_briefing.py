@@ -44,21 +44,38 @@ You never recommend trades, promise returns, or give buy/sell/execution instruct
 research and alert-worthy points only (e.g. "worth reviewing", "watch for..."). Always make \
 clear this is not personalized financial advice."""
 
-_NO_SIGNALS_SUMMARY_TEMPLATE = (
-    "No Analyst signals have been generated yet for this watchlist's instruments ({symbols}). "
-    "Run the Analyst pipeline (POST /api/v1/signals/generate) for one or more of them, then "
-    "generate this briefing again."
-)
+# User-facing empty/degraded-state copy (issue #61): friendly and localized — never a raw
+# developer instruction or an API endpoint path. When no signals exist yet, the frontend
+# auto-runs the Analyst pipeline before composing; if a section is still empty afterward,
+# these honest "not available yet" strings are shown instead of "run POST /api/...".
+_DEFAULT_LANG = "en"
 
-_NO_SIGNALS_INSTRUMENT_NARRATIVE_TEMPLATE = (
-    "No Analyst signals recorded yet for {symbol}. Run the Analyst pipeline "
-    "(POST /api/v1/signals/generate) to populate this section."
-)
+_NO_SIGNALS_SUMMARY: dict[str, str] = {
+    "es": (
+        "Todavía no hay análisis disponibles para los instrumentos de esta lista de "
+        "seguimiento ({symbols}). Volvé a generar el informe en unos minutos."
+    ),
+    "en": (
+        "No analysis is available yet for this watchlist's instruments ({symbols}). "
+        "Try generating this briefing again in a few minutes."
+    ),
+}
 
-_FALLBACK_EXECUTIVE_SUMMARY = (
-    "Structured composition unavailable for this run. See the per-instrument breakdown and "
-    "linked signals below for the underlying evidence."
-)
+_NO_SIGNALS_INSTRUMENT_NARRATIVE: dict[str, str] = {
+    "es": "Todavía no hay análisis disponible para {symbol}.",
+    "en": "No analysis available yet for {symbol}.",
+}
+
+_FALLBACK_EXECUTIVE_SUMMARY: dict[str, str] = {
+    "es": (
+        "Resumen automático no disponible en este momento. Consultá el detalle por "
+        "instrumento y las señales vinculadas más abajo para ver la evidencia."
+    ),
+    "en": (
+        "Automated summary is unavailable right now. See the per-instrument breakdown and "
+        "linked signals below for the underlying evidence."
+    ),
+}
 
 
 class GenerateBriefing:
@@ -137,10 +154,12 @@ class GenerateBriefing:
             linked_signal_ids = [signal.id for signal in capped_signals]
         else:
             composition = None
-            executive_summary = _NO_SIGNALS_SUMMARY_TEMPLATE.format(symbols=", ".join(symbols))
+            executive_summary = _no_signals_summary(symbols, locale)
             linked_signal_ids = []
 
-        instrument_breakdown = _build_instrument_breakdown(symbols, capped_by_symbol, composition)
+        instrument_breakdown = _build_instrument_breakdown(
+            symbols, capped_by_symbol, composition, locale
+        )
         open_review_items = await self._gather_open_review_items(watchlist_id, all_signals)
 
         briefing = Briefing(
@@ -206,7 +225,7 @@ class GenerateBriefing:
             # above. Either way, caught here and downgraded to a deterministic, data-derived
             # composition instead of crashing the pipeline — same broad-catch shape as
             # `GenerateSignal._classify_impact`'s guard.
-            return _fallback_composition(capped_by_symbol)
+            return _fallback_composition(capped_by_symbol, locale)
 
     async def _gather_open_review_items(
         self, watchlist_id: str, signals: list[Signal]
@@ -270,10 +289,28 @@ def _flatten_sorted(signals_by_symbol: dict[str, list[Signal]]) -> list[Signal]:
     return all_signals
 
 
+def _lang(locale: str) -> str:
+    """Primary language subtag of `locale` (e.g. `es-MX` -> `es`), defaulting to English."""
+    return locale.split("-", 1)[0].lower() if locale else _DEFAULT_LANG
+
+
+def _no_signals_summary(symbols: list[str], locale: str) -> str:
+    template = _NO_SIGNALS_SUMMARY.get(_lang(locale), _NO_SIGNALS_SUMMARY[_DEFAULT_LANG])
+    return template.format(symbols=", ".join(symbols))
+
+
+def _no_signals_narrative(symbol: str, locale: str) -> str:
+    template = _NO_SIGNALS_INSTRUMENT_NARRATIVE.get(
+        _lang(locale), _NO_SIGNALS_INSTRUMENT_NARRATIVE[_DEFAULT_LANG]
+    )
+    return template.format(symbol=symbol)
+
+
 def _build_instrument_breakdown(
     symbols: list[str],
     capped_by_symbol: dict[str, list[Signal]],
     composition: BriefingComposition | None,
+    locale: str,
 ) -> list[BriefingInstrumentSection]:
     narratives_by_symbol = (
         {item.symbol: item.narrative for item in composition.instrument_narratives}
@@ -289,10 +326,10 @@ def _build_instrument_breakdown(
             # narrative, however unlikely, despite the system prompt's instruction not to
             # produce one.
             narrative = narratives_by_symbol.get(
-                symbol, _NO_SIGNALS_INSTRUMENT_NARRATIVE_TEMPLATE.format(symbol=symbol)
+                symbol, _no_signals_narrative(symbol, locale)
             )
         else:
-            narrative = _NO_SIGNALS_INSTRUMENT_NARRATIVE_TEMPLATE.format(symbol=symbol)
+            narrative = _no_signals_narrative(symbol, locale)
         sections.append(
             BriefingInstrumentSection(
                 symbol=symbol,
@@ -318,12 +355,16 @@ def _collect_evidence_sources(signals: list[Signal]) -> list[str]:
     return sources
 
 
-def _fallback_composition(capped_by_symbol: dict[str, list[Signal]]) -> BriefingComposition:
+def _fallback_composition(
+    capped_by_symbol: dict[str, list[Signal]], locale: str
+) -> BriefingComposition:
     return BriefingComposition(
-        executive_summary=_FALLBACK_EXECUTIVE_SUMMARY,
+        executive_summary=_FALLBACK_EXECUTIVE_SUMMARY.get(
+            _lang(locale), _FALLBACK_EXECUTIVE_SUMMARY[_DEFAULT_LANG]
+        ),
         instrument_narratives=[
             InstrumentNarrative(
-                symbol=symbol, narrative=_fallback_instrument_narrative(symbol, signals)
+                symbol=symbol, narrative=_fallback_instrument_narrative(symbol, signals, locale)
             )
             for symbol, signals in capped_by_symbol.items()
             if signals
@@ -331,12 +372,18 @@ def _fallback_composition(capped_by_symbol: dict[str, list[Signal]]) -> Briefing
     )
 
 
-def _fallback_instrument_narrative(symbol: str, signals: list[Signal]) -> str:
+def _fallback_instrument_narrative(symbol: str, signals: list[Signal], locale: str) -> str:
     latest = signals[0]
+    if _lang(locale) == "es":
+        return (
+            f"{len(signals)} señal(es) registrada(s) para {symbol}; impacto más reciente: "
+            f"{latest.impact_class.value} (confianza {latest.confidence:.0%}). Consultá las "
+            "señales vinculadas y su evidencia para el detalle."
+        )
     return (
         f"{len(signals)} signal(s) recorded for {symbol}; most recent impact: "
-        f"{latest.impact_class.value} (confidence {latest.confidence:.0%}). Structured "
-        "composition unavailable — see linked signals and evidence for detail."
+        f"{latest.impact_class.value} (confidence {latest.confidence:.0%}). See the linked "
+        "signals and their evidence for detail."
     )
 
 

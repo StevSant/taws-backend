@@ -1,8 +1,11 @@
+import logging
 from dataclasses import replace
 
 from app.domain.market.entities import AnalysisStatus, AssetClass, NewsItem
 from app.domain.market.ports import NewsItemRepository, NewsProvider
 from app.domain.signals.ports import SignalRepository
+
+logger = logging.getLogger(__name__)
 
 
 class IngestNews:
@@ -39,7 +42,7 @@ class IngestNews:
             symbols=symbols, asset_class=asset_class, since_hours=since_hours, limit=limit
         )
         prepared = await self._backfill_analysis_status(fetched)
-        persisted = await self._news_item_repository.upsert_many(prepared)
+        persisted = await self._persist(prepared)
 
         # `upsert_many` doesn't guarantee input order (it returns rows from a `SELECT ...
         # IN (urls)`); restore the provider's relevance/recency ordering before truncating
@@ -48,6 +51,23 @@ class IngestNews:
         order = {item.url: index for index, item in enumerate(fetched)}
         persisted.sort(key=lambda item: order.get(item.url, len(order)))
         return persisted[:limit]
+
+    async def _persist(self, prepared: list[NewsItem]) -> list[NewsItem]:
+        """Persist-then-read, degrading to the freshly-fetched items when the store is
+        unreachable so a Supabase outage can't 500 `GET /api/v1/news` — the news itself
+        was already fetched (issue #1 keeps `/news` as resilient as `/instruments/enriched`
+        already is). Returned items keep their computed `analysis_status` but won't reflect
+        a prior `AnalyzePendingNews` run's persisted status until the store recovers.
+        """
+        try:
+            return await self._news_item_repository.upsert_many(prepared)
+        except Exception:
+            logger.warning(
+                "News store upsert failed; serving %d freshly-fetched item(s) without persistence.",
+                len(prepared),
+                exc_info=True,
+            )
+            return prepared
 
     async def _backfill_analysis_status(self, items: list[NewsItem]) -> list[NewsItem]:
         """Best-effort default for items this pipeline hasn't seen before: if a `Signal`
@@ -63,9 +83,9 @@ class IngestNews:
 
         latest_signal_id_by_symbol: dict[str, str] = {}
         for symbol in symbols:
-            existing = await self._signal_repository.list_for_instrument(symbol)
-            if existing:
-                latest_signal_id_by_symbol[symbol] = existing[0].id
+            signal_id = await self._latest_signal_id(symbol)
+            if signal_id is not None:
+                latest_signal_id_by_symbol[symbol] = signal_id
 
         if not latest_signal_id_by_symbol:
             return items
@@ -87,3 +107,18 @@ class IngestNews:
                     replace(item, analysis_status=AnalysisStatus.ANALYZED, signal_id=signal_id)
                 )
         return prepared
+
+    async def _latest_signal_id(self, symbol: str) -> str | None:
+        """Newest signal id for `symbol`, or `None` if none exists — or if the signal
+        store is unreachable. A transient lookup failure degrades to "no prior signal"
+        (item stays `pending`) rather than failing the whole request, matching
+        `ListEnrichedInstruments._latest_signal`.
+        """
+        try:
+            existing = await self._signal_repository.list_for_instrument(symbol)
+        except Exception:
+            logger.warning(
+                "Signal lookup failed for %s; news backfill skips it.", symbol, exc_info=True
+            )
+            return None
+        return existing[0].id if existing else None

@@ -6,6 +6,7 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from openai.types.shared_params import ResponseFormatJSONSchema
 
+from app.domain.agents import LLMProviderUnavailableError
 from app.domain.agents.entities import Message
 from app.domain.agents.ports import LLMProvider
 
@@ -68,7 +69,7 @@ class OpenAIProvider(LLMProvider):
         self, messages: list[Message], schema: dict[str, Any], schema_name: str
     ) -> dict[str, Any]:
         if self._client is None:
-            raise RuntimeError(_NO_KEY_STRUCTURED_ERROR)
+            raise LLMProviderUnavailableError(_NO_KEY_STRUCTURED_ERROR)
 
         response_format = cast(
             ResponseFormatJSONSchema,

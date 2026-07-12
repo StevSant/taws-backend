@@ -1,14 +1,36 @@
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, ToolMessage
 from langchain_core.tools import BaseTool
+from langgraph.config import get_stream_writer
+
+from app.domain.agents.entities import ToolCallEventKind
 
 # Bounds the tool-calling loop below so a model that keeps requesting tools (or a
 # misbehaving tool) can never hang a request indefinitely.
 _MAX_TOOL_ITERATIONS = 3
 
 
+def _emit_tool_event(agent_name: str, tool_name: str, event: ToolCallEventKind) -> None:
+    try:
+        get_stream_writer()(
+            {
+                "kind": "tool",
+                "agent": agent_name,
+                "name": tool_name,
+                "event": event.value,
+            }
+        )
+    except RuntimeError:
+        # Outside a LangGraph runtime (unit tests / direct calls).
+        return
+
+
 async def invoke_with_bound_tools(
-    model: BaseChatModel, messages: list[BaseMessage], tools: list[BaseTool]
+    model: BaseChatModel,
+    messages: list[BaseMessage],
+    tools: list[BaseTool],
+    *,
+    agent_name: str | None = None,
 ) -> BaseMessage:
     """Run a bounded tool-calling loop entirely inside one graph node.
 
@@ -26,6 +48,9 @@ async def invoke_with_bound_tools(
     (`infrastructure/llm/fallback_chat_model.build_fallback_chat_model`) raises
     `NotImplementedError` on `bind_tools`, same guard shape as
     `supervisor_router_node.py`'s `with_structured_output` guard.
+
+    When `agent_name` is provided, emits `{"kind": "tool", ...}` custom-stream frames
+    before and after each tool invocation so the chat UI can show live tool activity.
     """
     try:
         bound_model = model.bind_tools(tools)
@@ -43,12 +68,19 @@ async def invoke_with_bound_tools(
 
         conversation.append(response)
         for call in tool_calls:
-            tool = tools_by_name.get(call["name"])
+            tool_name = call["name"]
+            if agent_name:
+                _emit_tool_event(agent_name, tool_name, ToolCallEventKind.START)
+
+            tool = tools_by_name.get(tool_name)
             if tool is None:
                 conversation.append(
-                    ToolMessage(content=f"Unknown tool: {call['name']}", tool_call_id=call["id"])
+                    ToolMessage(content=f"Unknown tool: {tool_name}", tool_call_id=call["id"])
                 )
-                continue
-            conversation.append(await tool.ainvoke(call))
+            else:
+                conversation.append(await tool.ainvoke(call))
+
+            if agent_name:
+                _emit_tool_event(agent_name, tool_name, ToolCallEventKind.DONE)
 
     return await bound_model.ainvoke(conversation)

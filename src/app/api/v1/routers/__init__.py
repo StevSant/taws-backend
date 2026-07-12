@@ -9,7 +9,9 @@ from app.api.v1.routers.health import router as health_router
 from app.api.v1.routers.instruments import router as instruments_router
 from app.api.v1.routers.macro import router as macro_router
 from app.api.v1.routers.news import router as news_router
+from app.api.v1.routers.notes import router as notes_router
 from app.api.v1.routers.quant import router as quant_router
+from app.api.v1.routers.realtime_ws import router as realtime_ws_router
 from app.api.v1.routers.reviews import router as reviews_router
 from app.api.v1.routers.scenarios import router as scenarios_router
 from app.api.v1.routers.sentiment import router as sentiment_router
@@ -30,7 +32,9 @@ __all__ = [
     "instruments_router",
     "macro_router",
     "news_router",
+    "notes_router",
     "quant_router",
+    "realtime_ws_router",
     "reviews_router",
     "scenarios_router",
     "sentiment_router",

@@ -14,6 +14,7 @@ from app.application.charts.use_cases import (
     BuildSentimentGauge,
     RenderChart,
 )
+from app.application.chat.use_cases import GenerateConversationTitle
 from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.event_intelligence.use_cases import AnalyzeEventImpact, ProcessIncomingEvent
 from app.application.macro.use_cases import InterpretMacroEvent
@@ -28,6 +29,7 @@ from app.application.sentiment.use_cases import AnalyzeSentiment
 from app.application.signals.use_cases import GenerateSignal
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.application.watchdog import AlertedSignalTracker
+from app.application.watchlist.use_cases import ReorderWatchlists
 from app.core.config import Settings, get_settings
 from app.domain.agents.ports import (
     AgentMemory,
@@ -47,6 +49,7 @@ from app.domain.event_intelligence.ports import (
     EventRepositoryPort,
     NewsProviderPort,
 )
+from app.domain.market.entities import MacroIndicator
 from app.domain.market.ports import (
     FundamentalsProvider,
     InstrumentUniverse,
@@ -55,6 +58,7 @@ from app.domain.market.ports import (
     NewsItemRepository,
     NewsProvider,
 )
+from app.domain.notes.ports import NoteRepository
 from app.domain.notification.ports import EmailSender, NotificationChannel
 from app.domain.scenario.ports import ScenarioRepository
 from app.domain.sentiment.ports import FearGreedProvider
@@ -68,6 +72,7 @@ from app.domain.telegram.ports import (
 )
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
+from app.infrastructure.agents.personas import MIDAS_PERSONA
 from app.infrastructure.agents.scenario import ScenarioSimulationRunner, build_scenario_graph
 from app.infrastructure.agents.tools import (
     build_advisor_grounding_tools,
@@ -127,6 +132,7 @@ from app.infrastructure.persistence import (
     SupabaseBriefingRepository,
     SupabaseConversationRepository,
     SupabaseNewsItemRepository,
+    SupabaseNoteRepository,
     SupabaseScenarioRepository,
     SupabaseSignalRepository,
     SupabaseTelegramLinkRepository,
@@ -180,6 +186,8 @@ class Container:
         self._agent_memory: AgentMemory | None = None
         self._conversation_repository: ConversationRepository | None = None
         self._watchlist_repository: WatchlistRepository | None = None
+        self._reorder_watchlists_use_case: ReorderWatchlists | None = None
+        self._note_repository: NoteRepository | None = None
         self._signal_repository: SignalRepository | None = None
         self._briefing_repository: BriefingRepository | None = None
         self._news_provider: NewsProvider | None = None
@@ -193,6 +201,7 @@ class Container:
         self._agent_runner: AgentRunner | None = None
         self._realtime_session_provider: RealtimeSessionProvider | None = None
         self._generate_consequence_chain_use_case: GenerateConsequenceChain | None = None
+        self._generate_conversation_title_use_case: GenerateConversationTitle | None = None
         self._notification_channel: NotificationChannel | None = None
         self._alerted_signal_tracker: AlertedSignalTracker | None = None
         self._telegram_link_repository: TelegramLinkRepository | None = None
@@ -325,6 +334,31 @@ class Container:
                 retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._watchlist_repository
+
+    def get_reorder_watchlists_use_case(self) -> ReorderWatchlists:
+        """Return the cached `ReorderWatchlists` use case (issue #66).
+
+        Backs `PATCH /api/v1/watchlists/reorder`. Only depends on the watchlist
+        repository, so caching one instance is safe — same shape as the other
+        single-port use cases wired here.
+        """
+        if self._reorder_watchlists_use_case is None:
+            self._reorder_watchlists_use_case = ReorderWatchlists(
+                watchlist_repository=self.get_watchlist_repository()
+            )
+        return self._reorder_watchlists_use_case
+
+    def get_note_repository(self) -> NoteRepository:
+        """Return the cached per-user NoteRepository (issue #62), Supabase-backed with the
+        same retry/config wiring as the other per-user repositories."""
+        if self._note_repository is None:
+            self._note_repository = SupabaseNoteRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
+            )
+        return self._note_repository
 
     def get_signal_repository(self) -> SignalRepository:
         if self._signal_repository is None:
@@ -594,6 +628,10 @@ class Container:
                         api_key=self._settings.newsapi_api_key,
                         base_url=self._settings.newsapi_base_url,
                         default_query=self._settings.newsapi_default_query,
+                        cooldown_seconds=self._settings.newsapi_cooldown_minutes * 60,
+                        rate_limit_cooldown_seconds=(
+                            self._settings.newsapi_rate_limit_cooldown_minutes * 60
+                        ),
                     )
                 )
             if self._settings.finnhub_api_key:
@@ -781,6 +819,20 @@ class Container:
             )
         return self._generate_consequence_chain_use_case
 
+    def get_generate_conversation_title_use_case(self) -> GenerateConversationTitle:
+        """Return the cached conversation-title generator (issue #53 backend half).
+
+        Reuses the `LLMProvider` port and injects the top-level Midas persona as the
+        voice preamble, so titles carry the same voice while `application/` stays free
+        of any infrastructure persona import. Backs `POST /api/v1/chat/title`.
+        """
+        if self._generate_conversation_title_use_case is None:
+            self._generate_conversation_title_use_case = GenerateConversationTitle(
+                llm_provider=self.get_llm_provider(),
+                voice_preamble=MIDAS_PERSONA,
+            )
+        return self._generate_conversation_title_use_case
+
     def get_macro_data_provider(self) -> MacroDataProvider:
         """Return the routing MacroDataProvider (FRED rates/CPI + yfinance VIX + fixture fallback).
 
@@ -789,6 +841,20 @@ class Container:
         `infrastructure/macro/routing_macro_data_provider.py`.
         """
         if self._macro_data_provider is None:
+            indicator_series_ids = {
+                MacroIndicator.RATES: self._settings.fred_rates_series_id,
+                MacroIndicator.CPI: self._settings.fred_cpi_series_id,
+                MacroIndicator.GOLD: self._settings.fred_gold_series_id,
+                MacroIndicator.OIL: self._settings.fred_oil_series_id,
+                MacroIndicator.TREASURY_10Y: self._settings.fred_treasury_10y_series_id,
+            }
+            indicator_fixture_values = {
+                MacroIndicator.RATES: self._settings.fixture_macro_rate,
+                MacroIndicator.CPI: self._settings.fixture_macro_cpi,
+                MacroIndicator.GOLD: self._settings.fixture_macro_gold,
+                MacroIndicator.OIL: self._settings.fixture_macro_oil,
+                MacroIndicator.TREASURY_10Y: self._settings.fixture_macro_treasury_10y,
+            }
             live_provider = FredMacroDataProvider(
                 api_key=self._settings.fred_api_key,
                 base_url=self._settings.fred_base_url,
@@ -798,6 +864,7 @@ class Container:
                 low_threshold=self._settings.vix_low_threshold,
                 elevated_threshold=self._settings.vix_elevated_threshold,
                 high_threshold=self._settings.vix_high_threshold,
+                indicator_series_ids=indicator_series_ids,
                 timeout_seconds=self._settings.fred_timeout_seconds,
             )
             fixture_provider = FixtureMacroDataProvider(
@@ -809,6 +876,8 @@ class Container:
                 low_threshold=self._settings.vix_low_threshold,
                 elevated_threshold=self._settings.vix_elevated_threshold,
                 high_threshold=self._settings.vix_high_threshold,
+                indicator_series_ids=indicator_series_ids,
+                indicator_fixture_values=indicator_fixture_values,
             )
             self._macro_data_provider = RoutingMacroDataProvider(
                 live_provider=live_provider, fixture_provider=fixture_provider
@@ -990,6 +1059,7 @@ class Container:
             synthesize_result = SynthesizeScenarioResult(
                 llm_provider=self.get_llm_provider(),
                 instrument_universe=self.get_instrument_universe(),
+                max_synthesis_attempts=self._settings.scenario_synthesis_max_attempts,
             )
             graph = build_scenario_graph(
                 normalize_scenario_intake=normalize_intake,

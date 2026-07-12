@@ -5,7 +5,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.middleware import RequestIDMiddleware, unhandled_exception_handler
+from app.api.middleware import (
+    RequestIDMiddleware,
+    duplicate_watchlist_item_handler,
+    invalid_watchlist_identifier_handler,
+    unhandled_exception_handler,
+)
 from app.api.v1.dependencies import dev_fallback_allowed
 from app.api.v1.routers import (
     briefing_export_router,
@@ -19,7 +24,9 @@ from app.api.v1.routers import (
     instruments_router,
     macro_router,
     news_router,
+    notes_router,
     quant_router,
+    realtime_ws_router,
     reviews_router,
     scenarios_router,
     sentiment_router,
@@ -31,6 +38,10 @@ from app.api.v1.routers import (
 from app.core.config import Settings, get_settings
 from app.core.di import get_container
 from app.core.logging import configure_logging
+from app.domain.watchlist.errors import (
+    DuplicateWatchlistItemError,
+    InvalidWatchlistIdentifierError,
+)
 from app.infrastructure.scheduling import build_watchdog_scheduler
 
 logger = logging.getLogger(__name__)
@@ -106,17 +117,23 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_middleware(RequestIDMiddleware)
+    # Watchlist domain errors → meaningful HTTP status (issue #22); the catch-all stays
+    # last as the 500 backstop for everything else.
+    app.add_exception_handler(DuplicateWatchlistItemError, duplicate_watchlist_item_handler)
+    app.add_exception_handler(InvalidWatchlistIdentifierError, invalid_watchlist_identifier_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
     app.include_router(health_router)
     app.include_router(charts_router, prefix="/api/v1")
     app.include_router(chat_router, prefix="/api/v1")
+    app.include_router(realtime_ws_router, prefix="/api/v1")
     app.include_router(instruments_router, prefix="/api/v1")
     app.include_router(news_router, prefix="/api/v1")
     app.include_router(quant_router, prefix="/api/v1")
     app.include_router(reviews_router, prefix="/api/v1")
     app.include_router(signals_router, prefix="/api/v1")
     app.include_router(watchlists_router, prefix="/api/v1")
+    app.include_router(notes_router, prefix="/api/v1")
     app.include_router(briefings_router, prefix="/api/v1")
     app.include_router(briefing_export_router, prefix="/api/v1")
     app.include_router(consequence_chains_router, prefix="/api/v1")

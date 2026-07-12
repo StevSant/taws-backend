@@ -72,6 +72,8 @@ async def generate_signal(
             embedding_provider=embedding_provider, vector_store=vector_store
         ),
         min_distinct_sources=settings.min_distinct_news_sources,
+        retry_max_attempts=settings.signal_classification_retry_max_attempts,
+        retry_backoff_base_seconds=settings.signal_classification_retry_backoff_base_seconds,
     )
     try:
         locale = payload.locale or settings.default_locale

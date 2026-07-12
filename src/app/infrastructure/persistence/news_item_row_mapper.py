@@ -24,6 +24,7 @@ def news_item_from_row(row: Any) -> NewsItem:
         sentiment_score=row.get("sentiment_score"),
         analysis_status=AnalysisStatus(row["analysis_status"]),
         signal_id=row.get("signal_id"),
+        image_url=row.get("image_url"),
     )
 
 
@@ -47,6 +48,7 @@ def news_item_to_insert_row(item: NewsItem) -> dict[str, Any]:
         "sentiment_score": item.sentiment_score,
         "analysis_status": item.analysis_status.value,
         "signal_id": item.signal_id,
+        "image_url": item.image_url,
     }
 
 

@@ -3,15 +3,21 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.v1.dependencies import get_watchlist_repository, require_current_user
+from app.api.v1.dependencies import (
+    get_reorder_watchlists_use_case,
+    get_watchlist_repository,
+    require_current_user,
+)
 from app.api.v1.schemas import (
     CurrentUser,
     WatchlistCreateRequest,
     WatchlistItemAddRequest,
     WatchlistItemResponse,
     WatchlistRenameRequest,
+    WatchlistReorderRequest,
     WatchlistResponse,
 )
+from app.application.watchlist.use_cases import ReorderWatchlists
 from app.domain.watchlist.entities import Watchlist
 from app.domain.watchlist.ports import WatchlistRepository
 
@@ -52,6 +58,21 @@ async def list_watchlists(
     """List every watchlist owned by the authenticated user."""
     watchlists = await repository.list_for_user(user.id)
     return [WatchlistResponse.model_validate(watchlist) for watchlist in watchlists]
+
+
+@router.patch("/reorder", status_code=status.HTTP_204_NO_CONTENT)
+async def reorder_watchlists(
+    payload: WatchlistReorderRequest,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    use_case: Annotated[ReorderWatchlists, Depends(get_reorder_watchlists_use_case)],
+) -> None:
+    """Persist a new display order for the authenticated user's watchlists (issue #66).
+
+    Declared before `PATCH /{watchlist_id}` so the literal `/reorder` path wins over the
+    id-parameter route. Ids not owned by the caller are silently ignored (see
+    `WatchlistRepository.reorder`).
+    """
+    await use_case.execute(user.id, payload.ordered_ids)
 
 
 @router.get("/{watchlist_id}")

@@ -9,6 +9,9 @@ from app.domain.agents.entities.error_event import ErrorEvent
 from app.domain.agents.entities.message import Message
 from app.domain.agents.entities.message_role import MessageRole
 from app.domain.agents.entities.token_event import TokenEvent
+from app.domain.agents.entities.tool_call import ToolCall
+from app.domain.agents.entities.tool_call_event import ToolCallEvent
+from app.domain.agents.entities.tool_call_event_kind import ToolCallEventKind
 from app.domain.agents.entities.trace_event import TraceEvent
 
 __all__ = [
@@ -23,5 +26,8 @@ __all__ = [
     "Message",
     "MessageRole",
     "TokenEvent",
+    "ToolCall",
+    "ToolCallEvent",
+    "ToolCallEventKind",
     "TraceEvent",
 ]

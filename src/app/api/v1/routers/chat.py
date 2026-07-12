@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.api.v1.dependencies import (
     get_agent_runner,
+    get_generate_conversation_title_use_case,
     get_realtime_session_provider,
     get_stt_provider,
     get_tts_provider,
@@ -16,14 +17,16 @@ from app.api.v1.dependencies import (
 )
 from app.api.v1.schemas import (
     ChatRequest,
+    ConversationTitleResponse,
     CurrentUser,
+    GenerateTitleRequest,
     RealtimeSessionResponse,
     RealtimeToolRequest,
     RealtimeToolResponse,
     SpeakRequest,
     TranscriptionResponse,
 )
-from app.application.chat.use_cases import StreamReply
+from app.application.chat.use_cases import GenerateConversationTitle, StreamReply
 from app.core.config import Settings, get_settings
 from app.core.di import Container, get_container
 from app.domain.agents.entities import (
@@ -33,6 +36,7 @@ from app.domain.agents.entities import (
     Message,
     MessageRole,
     TokenEvent,
+    ToolCallEvent,
     TraceEvent,
 )
 from app.domain.agents.ports import (
@@ -41,6 +45,7 @@ from app.domain.agents.ports import (
     STTProvider,
     TTSProvider,
 )
+from app.infrastructure.realtime import REALTIME_INSTRUCTIONS
 from app.infrastructure.realtime.tools import (
     ToolNotFoundError,
     build_realtime_tool_schemas,
@@ -54,17 +59,6 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 _DEFAULT_THREAD_ID = "default"
 
-_REALTIME_INSTRUCTIONS = (
-    "You are TAWS Voice, a spoken market-intelligence assistant. Answer briefly and "
-    "conversationally. Use the provided tools to ground every market claim in real "
-    "data — call get_market_data for prices, get_news for headlines, list_signals for "
-    "existing Analyst signals, and generate_signal to produce a fresh one (acknowledge "
-    "verbally before that slower call). For broad news-impact questions, generate fresh "
-    "signals for up to three related symbols returned by get_news. Omit unsupported impact "
-    "or confidence fields instead of saying they are unspecified. Never give personalized "
-    "financial advice; this is research and information only."
-)
-
 
 def _to_sse_frame(event: AgentStreamEvent) -> str:
     """Serialize one `AgentStreamEvent` to a single SSE v2 `data:` frame.
@@ -75,6 +69,7 @@ def _to_sse_frame(event: AgentStreamEvent) -> str:
       "detail": "<optional text>"}}` (`detail` omitted when `None`)
     - `ErrorEvent` -> `{"error": "<message>"}`
     - `ChartEvent` -> `{"chart": {...}}` (a serialized ChartSpec wire dict)
+    - `ToolCallEvent` -> `{"tool": {"agent": "<name>", "name": "<tool>", "event": "start"|"done"}}`
     """
     payload: dict[str, Any]
     if isinstance(event, TokenEvent):
@@ -91,6 +86,14 @@ def _to_sse_frame(event: AgentStreamEvent) -> str:
         payload = {"error": event.message}
     elif isinstance(event, ChartEvent):
         payload = {"chart": event.chart}
+    elif isinstance(event, ToolCallEvent):
+        payload = {
+            "tool": {
+                "agent": event.tool.agent,
+                "name": event.tool.name,
+                "event": event.tool.event.value,
+            }
+        }
     else:
         raise TypeError(f"Unhandled AgentStreamEvent variant: {event!r}")
     return f"data: {json.dumps(payload)}\n\n"
@@ -133,6 +136,29 @@ async def stream_chat(
     return StreamingResponse(_to_sse(event_stream), media_type="text/event-stream")
 
 
+@router.post("/title", response_model=ConversationTitleResponse)
+async def generate_title(
+    payload: GenerateTitleRequest,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    use_case: Annotated[
+        GenerateConversationTitle, Depends(get_generate_conversation_title_use_case)
+    ],
+) -> ConversationTitleResponse:
+    """Generate a concise 3-6 word topic title for a conversation.
+
+    Called by the frontend after the first exchange (and again when the topic shifts) to
+    replace the transient first-message title in the sessions sidebar. Reuses the Midas
+    voice via the injected use case. Auth-gated like `/stream`; degrades gracefully to a
+    short slice of the first user message when the LLM is unavailable (e.g. no API key),
+    so it never fails the caller.
+    """
+    messages = [
+        Message(role=item.role, content=item.content) for item in payload.messages
+    ]
+    title = await use_case.execute(messages)
+    return ConversationTitleResponse(title=title)
+
+
 @router.post("/realtime/session", response_model=RealtimeSessionResponse)
 async def create_realtime_session(
     user: Annotated[CurrentUser, Depends(require_current_user)],
@@ -161,7 +187,7 @@ async def create_realtime_session(
         user_id=user.id,
         model=settings.openai_realtime_model,
         voice=settings.openai_realtime_voice,
-        instructions=_REALTIME_INSTRUCTIONS,
+        instructions=REALTIME_INSTRUCTIONS,
         tools=tools,
         expires_in_seconds=settings.openai_realtime_ttl_seconds,
     )

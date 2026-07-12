@@ -1,8 +1,13 @@
 import uuid
 from functools import partial
 
+from supabase import PostgrestAPIError
+
 from app.domain.watchlist.entities import Watchlist, WatchlistItem
 from app.domain.watchlist.ports import WatchlistRepository
+from app.infrastructure.persistence.build_watchlist_persistence_error import (
+    build_watchlist_persistence_error,
+)
 from app.infrastructure.persistence.supabase_client_cache import SupabaseClientCache
 from app.infrastructure.persistence.watchlist_item_row_mapper import watchlist_item_from_row
 from app.infrastructure.persistence.watchlist_row_mapper import watchlist_from_row
@@ -55,16 +60,37 @@ class SupabaseWatchlistRepository(WatchlistRepository):
         return watchlist_from_row(response.data[0])
 
     async def get(self, watchlist_id: str) -> Watchlist | None:
+        """Return the watchlist, or raise `InvalidWatchlistIdentifierError` on a bad id.
+
+        A malformed (non-uuid) `watchlist_id` is rejected by Postgres with `22P02`; this
+        is the single read every by-id endpoint funnels through, so translating it here
+        gives all of them a 422 instead of a generic 500.
+        """
         client = await self._clients.get()
-        response = await self._retry(
-            lambda: client.table(_WATCHLISTS_TABLE).select("*").eq("id", watchlist_id).execute()
-        )
+        try:
+            response = await self._retry(
+                lambda: client.table(_WATCHLISTS_TABLE).select("*").eq("id", watchlist_id).execute()
+            )
+        except PostgrestAPIError as exc:
+            translated = build_watchlist_persistence_error(exc)
+            if translated is not None:
+                raise translated from exc
+            raise
         return watchlist_from_row(response.data[0]) if response.data else None
 
     async def list_for_user(self, user_id: str) -> list[Watchlist]:
         client = await self._clients.get()
+        # Ordered by user-defined `position` (issue #66); NULLS LAST so never-reordered
+        # lists fall back to creation order after positioned ones.
         response = await self._retry(
-            lambda: client.table(_WATCHLISTS_TABLE).select("*").eq("user_id", user_id).execute()
+            lambda: (
+                client.table(_WATCHLISTS_TABLE)
+                .select("*")
+                .eq("user_id", user_id)
+                .order("position", desc=False, nullsfirst=False)
+                .order("created_at", desc=False)
+                .execute()
+            )
         )
         return [watchlist_from_row(row) for row in response.data]
 
@@ -84,6 +110,23 @@ class SupabaseWatchlistRepository(WatchlistRepository):
             )
         )
         return watchlist_from_row(response.data[0])
+
+    async def reorder(self, user_id: str, ordered_ids: list[str]) -> None:
+        client = await self._clients.get()
+        # One scoped UPDATE per id: `.eq("user_id", user_id)` makes non-owned (or
+        # non-existent) ids no-ops, satisfying the port's "silently ignore" contract
+        # even though the service-role client bypasses RLS. Default args freeze the
+        # loop variables so each lambda captures its own id/position.
+        for position, watchlist_id in enumerate(ordered_ids):
+            await self._retry(
+                lambda wid=watchlist_id, pos=position: (
+                    client.table(_WATCHLISTS_TABLE)
+                    .update({"position": pos})
+                    .eq("id", wid)
+                    .eq("user_id", user_id)
+                    .execute()
+                )
+            )
 
     async def delete(self, watchlist_id: str) -> None:
         client = await self._clients.get()
@@ -105,24 +148,44 @@ class SupabaseWatchlistRepository(WatchlistRepository):
         return [watchlist_item_from_row(row) for row in response.data]
 
     async def add_item(self, watchlist_id: str, symbol: str) -> WatchlistItem:
+        """Add a symbol, or raise `DuplicateWatchlistItemError` if already tracked.
+
+        A repeat symbol trips the `unique (watchlist_id, symbol)` constraint (`23505`);
+        a malformed `watchlist_id` trips `22P02` — both translated to domain errors so
+        the router maps them to 409 / 422 instead of a generic 500.
+        """
         client = await self._clients.get()
-        response = await self._retry(
-            lambda: (
-                client.table(_WATCHLIST_ITEMS_TABLE)
-                .insert({"id": str(uuid.uuid4()), "watchlist_id": watchlist_id, "symbol": symbol})
-                .execute()
+        try:
+            response = await self._retry(
+                lambda: (
+                    client.table(_WATCHLIST_ITEMS_TABLE)
+                    .insert(
+                        {"id": str(uuid.uuid4()), "watchlist_id": watchlist_id, "symbol": symbol}
+                    )
+                    .execute()
+                )
             )
-        )
+        except PostgrestAPIError as exc:
+            translated = build_watchlist_persistence_error(exc, symbol=symbol)
+            if translated is not None:
+                raise translated from exc
+            raise
         return watchlist_item_from_row(response.data[0])
 
     async def remove_item(self, watchlist_id: str, item_id: str) -> None:
         client = await self._clients.get()
-        await self._retry(
-            lambda: (
-                client.table(_WATCHLIST_ITEMS_TABLE)
-                .delete()
-                .eq("watchlist_id", watchlist_id)
-                .eq("id", item_id)
-                .execute()
+        try:
+            await self._retry(
+                lambda: (
+                    client.table(_WATCHLIST_ITEMS_TABLE)
+                    .delete()
+                    .eq("watchlist_id", watchlist_id)
+                    .eq("id", item_id)
+                    .execute()
+                )
             )
-        )
+        except PostgrestAPIError as exc:
+            translated = build_watchlist_persistence_error(exc)
+            if translated is not None:
+                raise translated from exc
+            raise

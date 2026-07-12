@@ -39,6 +39,7 @@ class NewsItemResponse(BaseModel):
     sentiment_score: float | None = None
     analysis_status: AnalysisStatus
     signal_id: str | None = None
+    image_url: str | None = None
 
     @field_validator("entities", mode="before")
     @classmethod

@@ -16,4 +16,5 @@ def watchlist_from_row(row: Any) -> Watchlist:
         user_id=row["user_id"],
         name=row["name"],
         created_at=parse_supabase_timestamp(row["created_at"]),
+        position=row.get("position"),
     )

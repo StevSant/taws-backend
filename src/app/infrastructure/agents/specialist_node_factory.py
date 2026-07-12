@@ -7,6 +7,7 @@ from langgraph.config import get_stream_writer
 
 from app.domain.agents.entities import AgentTraceEvent
 from app.infrastructure.agents.invoke_with_bound_tools import invoke_with_bound_tools
+from app.infrastructure.agents.personas import MIDAS_PERSONA, RESPONSE_FORMAT_GUIDANCE
 from app.infrastructure.agents.supervisor_state import SupervisorState
 
 
@@ -23,8 +24,10 @@ def build_specialist_node(
     function, just a new persona file + a call to this factory (see the backend
     `CLAUDE.md` "Add a new supervisor specialist" section).
 
-    The persona is prepended to the thread's message history for this call only —
-    it's never included in the returned state, so it doesn't pile up across turns.
+    The top-level `MIDAS_PERSONA` identity is prepended above the specialist `persona`
+    so every reply carries the Midas voice while keeping the specialist's behavior; both
+    are prepended to the thread's message history for this call only — never included in
+    the returned state, so they don't pile up across turns.
     Emits a `START` trace before invoking the model and a `DONE` trace after, via
     `get_stream_writer()`.
 
@@ -45,9 +48,14 @@ def build_specialist_node(
         writer = get_stream_writer()
         writer({"agent": agent_name, "event": AgentTraceEvent.START.value, "detail": None})
 
-        messages = [SystemMessage(content=persona), *state["messages"]]
+        messages = [
+            SystemMessage(content=MIDAS_PERSONA),
+            SystemMessage(content=RESPONSE_FORMAT_GUIDANCE),
+            SystemMessage(content=persona),
+            *state["messages"],
+        ]
         response = (
-            await invoke_with_bound_tools(model, messages, tools)
+            await invoke_with_bound_tools(model, messages, tools, agent_name=agent_name)
             if tools
             else await model.ainvoke(messages)
         )

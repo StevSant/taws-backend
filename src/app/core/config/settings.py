@@ -116,6 +116,13 @@ class Settings(BaseSettings):
     newsapi_base_url: str = "https://newsapi.org/v2"
     # Query used when no instrument symbols are requested (general market news).
     newsapi_default_query: str = "stocks OR crypto OR markets"
+    # Circuit breaker (mirrors Marketaux, issue #9): the free tier caps at 100 requests/day
+    # and this adapter is hit on every `/api/v1/news` poll, so once the quota/rate limit is
+    # reached every subsequent request re-hits an already-failing API. After a 401/426
+    # (key/quota/plan issue that won't clear soon) stop calling NewsAPI for this many
+    # minutes; a 429 (rate limit) uses the shorter cool-down below since it clears sooner.
+    newsapi_cooldown_minutes: int = 20
+    newsapi_rate_limit_cooldown_minutes: int = 5
 
     # --- Finnhub (company-news, behind the NewsProvider port) ---
     finnhub_api_key: str | None = None
@@ -158,7 +165,16 @@ class Settings(BaseSettings):
     fred_base_url: str = "https://api.stlouisfed.org/fred"
     fred_rates_series_id: str = "FEDFUNDS"
     fred_cpi_series_id: str = "CPIAUCSL"
+    # Additional "Contexto de mercado" indicators (issue #58): daily FRED series so their
+    # sparkline history is dense. Gold = London PM fixing (USD/oz), oil = WTI spot (USD/bbl),
+    # 10Y = 10-Year Treasury constant-maturity yield (%).
+    fred_gold_series_id: str = "GOLDPMGBD228NLBM"
+    fred_oil_series_id: str = "DCOILWTICO"
+    fred_treasury_10y_series_id: str = "DGS10"
     fred_timeout_seconds: float = 10.0
+    # Default/max number of observations returned by GET /api/v1/macro/series/{indicator}.
+    macro_series_default_days: int = 90
+    macro_series_max_days: int = 365
 
     # --- VIX (volatility regime, MacroDataProvider port; via yfinance, no key needed) ---
     vix_symbol: str = "^VIX"
@@ -170,6 +186,9 @@ class Settings(BaseSettings):
     fixture_macro_rate: float = 5.25
     fixture_macro_cpi: float = 3.2
     fixture_macro_vix: float = 18.5
+    fixture_macro_gold: float = 2350.0
+    fixture_macro_oil: float = 78.0
+    fixture_macro_treasury_10y: float = 4.25
 
     # --- alternative.me (Crypto Fear & Greed Index; behind the FearGreedProvider port);
     # no key required ---
@@ -209,6 +228,16 @@ class Settings(BaseSettings):
     # source + date attached to each signal"); see `GenerateSignal` in
     # `application/signals/use_cases/generate_signal.py` ---
     min_distinct_news_sources: int = 2
+
+    # Bounded retry around the Analyst's structured-output classification call
+    # (`GenerateSignal._classify_impact`) before it degrades to an honest "uncertain,
+    # analysis unavailable" fallback (issue #55). Covers transient failures only (rate
+    # limit / timeout / malformed or unparseable structured output); a permanently
+    # unavailable provider (no API key -> `LLMProviderUnavailableError`) is not retried.
+    # `max_attempts` counts retries AFTER the first try (so 2 => up to 3 total calls);
+    # backoff is exponential (`base * 2**(attempt-1)`), mirroring `with_supabase_retry`.
+    signal_classification_retry_max_attempts: int = 2
+    signal_classification_retry_backoff_base_seconds: float = 0.5
 
     # --- Pending news pre-filter (issue #3): cheap-relevance floor (see
     # `compute_news_relevance_score`) below which a pending news item is skipped
@@ -290,6 +319,13 @@ class Settings(BaseSettings):
     # --- Gemini (Event Intelligence / Sentinel analyzer) ---
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.0-flash"
+
+    # --- Scenario synthesis resilience (issue #64) ---
+    # Bounded retry around the Synthesis step's structured-output call. A transient
+    # structured-output failure is retried up to this many attempts before the pipeline
+    # surfaces an honest "analysis unavailable" error state, instead of degrading to a
+    # zero-confidence pseudo-result with internal fallback markers.
+    scenario_synthesis_max_attempts: int = 2
 
     # --- Scenario Monitors (arm a saved ScenarioResult as a Watchdog rule, issue #18) ---
     # How long an armed monitor stays active before auto-expiring with no match. Product
