@@ -116,6 +116,13 @@ class Settings(BaseSettings):
     newsapi_base_url: str = "https://newsapi.org/v2"
     # Query used when no instrument symbols are requested (general market news).
     newsapi_default_query: str = "stocks OR crypto OR markets"
+    # Circuit breaker (mirrors Marketaux, issue #9): the free tier caps at 100 requests/day
+    # and this adapter is hit on every `/api/v1/news` poll, so once the quota/rate limit is
+    # reached every subsequent request re-hits an already-failing API. After a 401/426
+    # (key/quota/plan issue that won't clear soon) stop calling NewsAPI for this many
+    # minutes; a 429 (rate limit) uses the shorter cool-down below since it clears sooner.
+    newsapi_cooldown_minutes: int = 20
+    newsapi_rate_limit_cooldown_minutes: int = 5
 
     # --- Finnhub (company-news, behind the NewsProvider port) ---
     finnhub_api_key: str | None = None

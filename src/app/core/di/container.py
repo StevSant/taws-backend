@@ -623,6 +623,10 @@ class Container:
                         api_key=self._settings.newsapi_api_key,
                         base_url=self._settings.newsapi_base_url,
                         default_query=self._settings.newsapi_default_query,
+                        cooldown_seconds=self._settings.newsapi_cooldown_minutes * 60,
+                        rate_limit_cooldown_seconds=(
+                            self._settings.newsapi_rate_limit_cooldown_minutes * 60
+                        ),
                     )
                 )
             if self._settings.finnhub_api_key:
