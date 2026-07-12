@@ -131,6 +131,11 @@ class Settings(BaseSettings):
     # `application/signals/use_cases/generate_signal.py` ---
     min_distinct_news_sources: int = 2
 
+    # --- Pending news pre-filter (issue #3): cheap-relevance floor (see
+    # `compute_news_relevance_score`) below which a pending news item is skipped
+    # (analysis_status -> skipped) without an LLM call. ---
+    news_relevance_skip_threshold: float = 0.35
+
     # --- Historical analogs RAG (behind the VectorStore port, pgvector-backed) ---
     historical_analogs_top_k: int = 3
 
