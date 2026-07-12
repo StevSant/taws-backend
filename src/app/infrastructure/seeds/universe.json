@@ -48,6 +48,54 @@
     "currency": "USD"
   },
   {
+    "symbol": "PLTR",
+    "name": "Palantir Technologies Inc.",
+    "asset_class": "stock",
+    "currency": "USD"
+  },
+  {
+    "symbol": "AMD",
+    "name": "Advanced Micro Devices Inc.",
+    "asset_class": "stock",
+    "currency": "USD"
+  },
+  {
+    "symbol": "AVGO",
+    "name": "Broadcom Inc.",
+    "asset_class": "stock",
+    "currency": "USD"
+  },
+  {
+    "symbol": "NFLX",
+    "name": "Netflix Inc.",
+    "asset_class": "stock",
+    "currency": "USD"
+  },
+  {
+    "symbol": "COIN",
+    "name": "Coinbase Global Inc.",
+    "asset_class": "stock",
+    "currency": "USD"
+  },
+  {
+    "symbol": "MSTR",
+    "name": "MicroStrategy Incorporated",
+    "asset_class": "stock",
+    "currency": "USD"
+  },
+  {
+    "symbol": "SPY",
+    "name": "SPDR S&P 500 ETF Trust",
+    "asset_class": "stock",
+    "currency": "USD"
+  },
+  {
+    "symbol": "QQQ",
+    "name": "Invesco QQQ Trust",
+    "asset_class": "stock",
+    "currency": "USD"
+  },
+  {
     "symbol": "BTC",
     "name": "Bitcoin",
     "asset_class": "crypto",

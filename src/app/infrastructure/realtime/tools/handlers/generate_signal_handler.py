@@ -29,4 +29,15 @@ async def handle_generate_signal(container: Any, args: Any, user_id: str) -> dic
         "key_drivers": signal.key_drivers,
         "risk_factors": signal.risk_factors,
         "analysis_available": signal.analysis_available,
+        "created_at": signal.created_at.isoformat(),
+        "evidence": [
+            {
+                "source": item.source,
+                "published_at": item.published_at.isoformat(),
+                "url": item.url,
+                "detail": item.detail,
+            }
+            for item in signal.evidence
+        ],
+        "disclaimer": signal.disclaimer,
     }

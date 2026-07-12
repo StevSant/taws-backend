@@ -3,7 +3,6 @@ from functools import lru_cache
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.tools import BaseTool
 
 from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
 from app.application.charts.use_cases import (
@@ -72,6 +71,7 @@ from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_gra
 from app.infrastructure.agents.scenario import ScenarioSimulationRunner, build_scenario_graph
 from app.infrastructure.agents.tools import (
     build_advisor_grounding_tools,
+    build_analyst_grounding_tools,
     build_consequence_tools,
     build_event_intelligence_tools,
     build_macro_tools,
@@ -1109,7 +1109,11 @@ class Container:
             # "safe for the unauthenticated chat route" rationale as `quant_tools` above.
             macro_tools = build_macro_tools(use_case=self.get_interpret_macro_event_use_case())
             sentiment_tools = build_sentiment_tools(use_case=self.get_analyze_sentiment_use_case())
-            analyst_chart_tools: list[BaseTool] | None = None
+            analyst_tools = build_analyst_grounding_tools(
+                news_provider=self.get_news_provider(),
+                generate_signal=self.get_generate_signal_use_case(),
+                default_locale=self._settings.default_locale,
+            )
             if self._settings.charts_enabled:
                 config = self.get_chart_config()
                 quant_tools = quant_tools + [
@@ -1130,7 +1134,7 @@ class Container:
                         chart_config=config,
                     ),
                 ]
-                analyst_chart_tools = [
+                analyst_tools = analyst_tools + [
                     build_render_price_chart_tool(
                         build_price_chart=self.get_build_price_chart_use_case(),
                         chart_config=config,
@@ -1167,7 +1171,7 @@ class Container:
                 self._get_chat_model(),
                 checkpointer,
                 advisor_tools=advisor_tools,
-                analyst_tools=analyst_chart_tools,
+                analyst_tools=analyst_tools,
                 consequence_tools=consequence_tools,
                 macro_tools=macro_tools,
                 quant_tools=quant_tools,

@@ -12,6 +12,9 @@ _NAME_STOPWORDS = {
     "group",
     "holdings",
     "company",
+    "etf",
+    "fund",
+    "trust",
     "the",
     "class",
 }

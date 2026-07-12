@@ -59,8 +59,10 @@ _REALTIME_INSTRUCTIONS = (
     "conversationally. Use the provided tools to ground every market claim in real "
     "data — call get_market_data for prices, get_news for headlines, list_signals for "
     "existing Analyst signals, and generate_signal to produce a fresh one (acknowledge "
-    "verbally before that slower call). Never give personalized financial advice; this "
-    "is research and information only."
+    "verbally before that slower call). For broad news-impact questions, generate fresh "
+    "signals for up to three related symbols returned by get_news. Omit unsupported impact "
+    "or confidence fields instead of saying they are unspecified. Never give personalized "
+    "financial advice; this is research and information only."
 )
 
 

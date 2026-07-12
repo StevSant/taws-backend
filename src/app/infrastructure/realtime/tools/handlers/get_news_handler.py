@@ -14,7 +14,11 @@ async def handle_get_news(container: Any, args: Any, user_id: str) -> dict[str, 
     symbols = [typed.symbol.upper()] if typed.symbol else None
 
     provider = container.get_news_provider()
-    items = await provider.fetch_news(symbols=symbols, limit=typed.limit)
+    fetch_limit = typed.limit if typed.symbol else min(typed.limit * 5, 50)
+    items = await provider.fetch_news(symbols=symbols, limit=fetch_limit)
+    if not typed.symbol:
+        items.sort(key=lambda item: bool(getattr(item, "related_symbols", [])), reverse=True)
+    items = items[: typed.limit]
 
     return {
         "count": len(items),
@@ -25,7 +29,8 @@ async def handle_get_news(container: Any, args: Any, user_id: str) -> dict[str, 
                 "source": item.source,
                 "url": item.url,
                 "published_at": item.published_at.isoformat(),
+                "related_symbols": getattr(item, "related_symbols", []),
             }
-            for item in items[: typed.limit]
+            for item in items
         ],
     }

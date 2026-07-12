@@ -1,4 +1,6 @@
+import logging
 from functools import partial
+from typing import Any
 
 from supabase import PostgrestAPIError
 
@@ -21,6 +23,15 @@ from app.infrastructure.persistence.with_supabase_retry import with_supabase_ret
 
 _SIGNALS_TABLE = "signals"
 _REVIEW_STATES_TABLE = "review_states"
+_MISSING_COLUMN_CODE = "PGRST204"
+_OPTIONAL_ANALYSIS_COLUMNS = {
+    "analysis_available",
+    "key_drivers",
+    "risk_factors",
+    "thesis",
+}
+
+logger = logging.getLogger(__name__)
 
 
 class SupabaseSignalRepository(SignalRepository):
@@ -52,28 +63,25 @@ class SupabaseSignalRepository(SignalRepository):
 
     async def create(self, signal: Signal) -> Signal:
         client = await self._clients.get()
-        response = await self._retry(
-            lambda: (
-                client.table(_SIGNALS_TABLE)
-                .insert(
-                    {
-                        "id": signal.id,
-                        "instrument_symbol": signal.instrument_symbol,
-                        "impact_class": signal.impact_class.value,
-                        "confidence": signal.confidence,
-                        "evidence": signal_to_evidence_column(signal.evidence),
-                        "disclaimer": signal.disclaimer,
-                        "thesis": signal.thesis,
-                        "key_drivers": signal.key_drivers,
-                        "risk_factors": signal.risk_factors,
-                        "analysis_available": signal.analysis_available,
-                        "price_delta": signal.price_delta,
-                        "created_at": signal.created_at.isoformat(),
-                    }
-                )
-                .execute()
+        row = _signal_to_row(signal)
+        try:
+            response = await self._retry(
+                lambda: client.table(_SIGNALS_TABLE).insert(row).execute()
             )
-        )
+        except PostgrestAPIError as exc:
+            if not _is_missing_optional_analysis_column(exc):
+                raise
+            logger.warning(
+                "Supabase signals schema is missing migration 0010 analysis columns; "
+                "persisting the compatible core signal fields for this run."
+            )
+            legacy_row = {
+                key: value for key, value in row.items() if key not in _OPTIONAL_ANALYSIS_COLUMNS
+            }
+            await self._retry(
+                lambda: client.table(_SIGNALS_TABLE).insert(legacy_row).execute()
+            )
+            return signal
         return signal_from_row(response.data[0])
 
     async def get(self, signal_id: str) -> Signal | None:
@@ -129,3 +137,27 @@ class SupabaseSignalRepository(SignalRepository):
             )
         )
         return [review_state_from_row(row) for row in response.data]
+
+
+def _signal_to_row(signal: Signal) -> dict[str, Any]:
+    return {
+        "id": signal.id,
+        "instrument_symbol": signal.instrument_symbol,
+        "impact_class": signal.impact_class.value,
+        "confidence": signal.confidence,
+        "evidence": signal_to_evidence_column(signal.evidence),
+        "disclaimer": signal.disclaimer,
+        "thesis": signal.thesis,
+        "key_drivers": signal.key_drivers,
+        "risk_factors": signal.risk_factors,
+        "analysis_available": signal.analysis_available,
+        "price_delta": signal.price_delta,
+        "created_at": signal.created_at.isoformat(),
+    }
+
+
+def _is_missing_optional_analysis_column(exc: PostgrestAPIError) -> bool:
+    message = exc.message or ""
+    return exc.code == _MISSING_COLUMN_CODE and any(
+        column in message for column in _OPTIONAL_ANALYSIS_COLUMNS
+    )

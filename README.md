@@ -33,6 +33,9 @@ uv run ruff check .        # lint
 uv run ruff format .       # format
 uv run pyright             # type-check
 uv run uvicorn app.main:app --reload   # dev server
+
+# Before a live demo: ingest current news and precompute linked Analyst signals
+uv run python scripts/prepare_market_demo.py
 ```
 
 No test suite during the hackathon (time-boxed, intentionally out of scope) — see
