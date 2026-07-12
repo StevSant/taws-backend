@@ -26,6 +26,7 @@ from app.application.scenario.use_cases import (
     SynthesizeScenarioResult,
 )
 from app.application.sentiment.use_cases import AnalyzeSentiment
+from app.application.signals import NewsPrefilterPolicy
 from app.application.signals.use_cases import GenerateSignal
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.application.watchdog import AlertedSignalTracker
@@ -678,6 +679,32 @@ class Container:
                 seed_path=self._settings.universe_seed_path
             )
         return self._instrument_universe
+
+    def get_news_prefilter_policy(self) -> NewsPrefilterPolicy:
+        """Return the Analyst pre-filter's gate tuning (issue #26), assembled from `Settings`.
+
+        The single place these `news_*` settings are read. Both callers of
+        `AnalyzePendingNews` — `POST /api/v1/news/analyze-pending` and the scheduled tick —
+        resolve the policy from here, so an operator retuning the gate can't end up with the
+        endpoint and the background job disagreeing about what gets classified.
+        """
+        settings = self._settings
+        return NewsPrefilterPolicy(
+            skip_threshold=settings.news_relevance_skip_threshold,
+            relevance_weight=settings.news_prefilter_relevance_weight,
+            materiality_weight=settings.news_prefilter_materiality_weight,
+            name_match_score=settings.news_relevance_name_match_score,
+            materiality_keywords=tuple(settings.news_materiality_keywords),
+            materiality_high_impact_sources=tuple(settings.news_materiality_high_impact_sources),
+            materiality_keyword_weight=settings.news_materiality_keyword_weight,
+            materiality_source_weight=settings.news_materiality_source_weight,
+            materiality_sentiment_weight=settings.news_materiality_sentiment_weight,
+            materiality_recency_weight=settings.news_materiality_recency_weight,
+            materiality_recency_half_life_hours=(settings.news_materiality_recency_half_life_hours),
+            materiality_keyword_saturation_count=(
+                settings.news_materiality_keyword_saturation_count
+            ),
+        )
 
     def get_market_data_provider(self) -> MarketDataProvider:
         """Return the routing MarketDataProvider (CoinGecko/yfinance + fixture fallback).

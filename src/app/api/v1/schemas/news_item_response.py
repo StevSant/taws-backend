@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.api.v1.schemas.news_entity_response import NewsEntityResponse
-from app.domain.market.entities import AnalysisStatus
+from app.domain.market.entities import AnalysisStatus, NewsSkipReason
 
 
 class NewsItemResponse(BaseModel):
@@ -23,6 +23,12 @@ class NewsItemResponse(BaseModel):
     `analysis_status`/`signal_id` (issue #1) are read from the persisted `news_items`
     store, so they reflect whatever a prior `AnalyzePendingNews` run decided — not a
     per-request client-side guess.
+
+    `skip_reason` (issue #26) is the machine-readable *why* behind a missing signal — gated as
+    low-relevance, near-duplicate, no linked instrument, insufficient evidence, compliance
+    blocked. It is what lets the news-detail view explain the outcome instead of showing a bare
+    "no signal produced". `None` means there's no explanation to give: the item was analyzed,
+    or nothing has looked at it yet.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -40,6 +46,7 @@ class NewsItemResponse(BaseModel):
     analysis_status: AnalysisStatus
     signal_id: str | None = None
     image_url: str | None = None
+    skip_reason: NewsSkipReason | None = None
 
     @field_validator("entities", mode="before")
     @classmethod
