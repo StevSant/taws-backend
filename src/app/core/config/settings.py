@@ -136,6 +136,18 @@ class Settings(BaseSettings):
     # (analysis_status -> skipped) without an LLM call. ---
     news_relevance_skip_threshold: float = 0.35
 
+    # --- Pending news analysis batch pipeline (issue #2: POST /api/v1/news/analyze-pending
+    # and its scheduled tick) ---
+    # Bounds concurrent `GenerateSignal` calls fanned out by `AnalyzePendingNews`, so a
+    # large pending backlog can't fire unbounded concurrent LLM requests.
+    news_analysis_max_concurrency: int = 5
+    # Max pending news items processed per `AnalyzePendingNews.execute()` run/tick.
+    news_analysis_batch_limit: int = 200
+    # Cadence (minutes) of the scheduled background tick that calls `AnalyzePendingNews`,
+    # so newly-ingested news gets analyzed even while no user is on the page. Reuses the
+    # same APScheduler infra as the Watchdog jobs (`infrastructure/scheduling`).
+    news_analysis_poll_interval_minutes: int = 15
+
     # --- Historical analogs RAG (behind the VectorStore port, pgvector-backed) ---
     historical_analogs_top_k: int = 3
 

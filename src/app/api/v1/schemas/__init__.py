@@ -1,4 +1,5 @@
 from app.api.v1.schemas.alert_response import AlertResponse
+from app.api.v1.schemas.analyze_pending_news_response import AnalyzePendingNewsResponse
 from app.api.v1.schemas.briefing_export_email_request import BriefingExportEmailRequest
 from app.api.v1.schemas.briefing_export_email_response import BriefingExportEmailResponse
 from app.api.v1.schemas.briefing_instrument_section_response import (
@@ -59,6 +60,7 @@ from app.api.v1.schemas.watchlist_response import WatchlistResponse
 
 __all__ = [
     "AlertResponse",
+    "AnalyzePendingNewsResponse",
     "BriefingExportEmailRequest",
     "BriefingExportEmailResponse",
     "BriefingInstrumentSectionResponse",

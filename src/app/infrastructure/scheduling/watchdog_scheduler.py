@@ -4,7 +4,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
 from app.application.briefing.use_cases import GenerateBriefing
+from app.application.signals.use_cases import AnalyzePendingNews
 from app.application.watchdog.use_cases import (
     EvaluateScenarioMonitors,
     RunDailyBriefings,
@@ -18,6 +20,7 @@ logger = logging.getLogger(__name__)
 _SCAN_JOB_ID = "watchdog-scan"
 _DAILY_BRIEFINGS_JOB_ID = "watchdog-daily-briefings"
 _EVALUATE_SCENARIO_MONITORS_JOB_ID = "watchdog-evaluate-scenario-monitors"
+_ANALYZE_PENDING_NEWS_JOB_ID = "analyze-pending-news"
 
 
 async def _run_scan_job(container: Container, settings: Settings) -> None:
@@ -88,11 +91,52 @@ async def _run_evaluate_scenario_monitors_job(container: Container, settings: Se
         logger.exception("scenario monitor evaluation job failed")
 
 
-def build_watchdog_scheduler(container: Container, settings: Settings) -> AsyncIOScheduler:
-    """Build (but don't start) the process-wide APScheduler for the Watchdog/Notifier agent.
+async def _run_analyze_pending_news_job(container: Container, settings: Settings) -> None:
+    """Periodic pending-news analysis tick (issue #2) — the SAME `AnalyzePendingNews` use
+    case `POST /api/v1/news/analyze-pending` triggers on demand (see
+    `api/v1/routers/news.py`), so news ingested while nobody is on the page still gets
+    classified instead of sitting `pending` until a user happens to click "analyze"."""
+    use_case = AnalyzePendingNews(
+        news_item_repository=container.get_news_item_repository(),
+        instrument_universe=container.get_instrument_universe(),
+        market_data_provider=container.get_market_data_provider(),
+        news_provider=container.get_news_provider(),
+        signal_repository=container.get_signal_repository(),
+        llm_provider=container.get_llm_provider(),
+        find_historical_analogs=FindHistoricalAnalogs(
+            embedding_provider=container.get_embedding_provider(),
+            vector_store=container.get_vector_store(),
+            top_k=settings.historical_analogs_top_k,
+        ),
+        index_signal_analog=IndexSignalAnalog(
+            embedding_provider=container.get_embedding_provider(),
+            vector_store=container.get_vector_store(),
+        ),
+        min_distinct_sources=settings.min_distinct_news_sources,
+        relevance_skip_threshold=settings.news_relevance_skip_threshold,
+        max_concurrency=settings.news_analysis_max_concurrency,
+        batch_limit=settings.news_analysis_batch_limit,
+    )
+    try:
+        result = await use_case.execute(locale=settings.default_locale)
+        logger.info(
+            "analyze-pending-news tick complete: %d analyzed, %d skipped, %d failed",
+            result.analyzed_count,
+            result.skipped_count,
+            result.failed_count,
+        )
+    except Exception:  # noqa: BLE001 — same resilience guarantee as the other scheduled jobs
+        logger.exception("analyze-pending-news job failed")
 
-    Three config-driven jobs, all reusing the SAME application use cases as their
-    on-demand HTTP counterparts — no duplicated scan/briefing/evaluation logic:
+
+def build_watchdog_scheduler(container: Container, settings: Settings) -> AsyncIOScheduler:
+    """Build (but don't start) the process-wide APScheduler for the Watchdog/Notifier agent
+    (and the pending-news analysis tick, which piggybacks on this same scheduler rather
+    than standing up a second one — see the module docstring-equivalent note on
+    `_run_analyze_pending_news_job`).
+
+    Four config-driven jobs, all reusing the SAME application use cases as their
+    on-demand HTTP counterparts — no duplicated scan/briefing/evaluation/analysis logic:
 
     - `watchdog-scan` (`RunWatchdogScan`, every `settings.watchdog_poll_interval_minutes`
       minutes): the same pass `POST /api/v1/watchdog/scan` triggers manually.
@@ -102,6 +146,9 @@ def build_watchdog_scheduler(container: Container, settings: Settings) -> AsyncI
     - `watchdog-evaluate-scenario-monitors` (`EvaluateScenarioMonitors`, issue #18, same
       `watchdog_poll_interval_minutes` cadence as the scan job): checks every armed
       `ScenarioMonitor` for a materializing signal/price-move match.
+    - `analyze-pending-news` (`AnalyzePendingNews`, issue #2, every
+      `settings.news_analysis_poll_interval_minutes` minutes): the same batch pass
+      `POST /api/v1/news/analyze-pending` triggers manually.
 
     `AsyncIOScheduler` (not a background thread pool) integrates directly with FastAPI's
     asyncio event loop; `max_instances=1` on each job prevents a slow run from overlapping
@@ -134,6 +181,14 @@ def build_watchdog_scheduler(container: Container, settings: Settings) -> AsyncI
         trigger=IntervalTrigger(minutes=settings.watchdog_poll_interval_minutes),
         args=(container, settings),
         id=_EVALUATE_SCENARIO_MONITORS_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _run_analyze_pending_news_job,
+        trigger=IntervalTrigger(minutes=settings.news_analysis_poll_interval_minutes),
+        args=(container, settings),
+        id=_ANALYZE_PENDING_NEWS_JOB_ID,
         replace_existing=True,
         max_instances=1,
     )
