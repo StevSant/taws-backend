@@ -15,6 +15,7 @@ from app.application.charts.use_cases import (
     BuildSentimentGauge,
     RenderChart,
 )
+from app.application.chat.use_cases import GenerateConversationTitle
 from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.event_intelligence.use_cases import AnalyzeEventImpact, ProcessIncomingEvent
 from app.application.macro.use_cases import InterpretMacroEvent
@@ -69,6 +70,7 @@ from app.domain.telegram.ports import (
 )
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
+from app.infrastructure.agents.personas import MIDAS_PERSONA
 from app.infrastructure.agents.scenario import ScenarioSimulationRunner, build_scenario_graph
 from app.infrastructure.agents.tools import (
     build_advisor_grounding_tools,
@@ -192,6 +194,7 @@ class Container:
         self._agent_runner: AgentRunner | None = None
         self._realtime_session_provider: RealtimeSessionProvider | None = None
         self._generate_consequence_chain_use_case: GenerateConsequenceChain | None = None
+        self._generate_conversation_title_use_case: GenerateConversationTitle | None = None
         self._notification_channel: NotificationChannel | None = None
         self._alerted_signal_tracker: AlertedSignalTracker | None = None
         self._telegram_link_repository: TelegramLinkRepository | None = None
@@ -775,6 +778,20 @@ class Container:
                 llm_provider=self.get_llm_provider()
             )
         return self._generate_consequence_chain_use_case
+
+    def get_generate_conversation_title_use_case(self) -> GenerateConversationTitle:
+        """Return the cached conversation-title generator (issue #53 backend half).
+
+        Reuses the `LLMProvider` port and injects the top-level Midas persona as the
+        voice preamble, so titles carry the same voice while `application/` stays free
+        of any infrastructure persona import. Backs `POST /api/v1/chat/title`.
+        """
+        if self._generate_conversation_title_use_case is None:
+            self._generate_conversation_title_use_case = GenerateConversationTitle(
+                llm_provider=self.get_llm_provider(),
+                voice_preamble=MIDAS_PERSONA,
+            )
+        return self._generate_conversation_title_use_case
 
     def get_macro_data_provider(self) -> MacroDataProvider:
         """Return the routing MacroDataProvider (FRED rates/CPI + yfinance VIX + fixture fallback).

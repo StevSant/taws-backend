@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.api.v1.dependencies import (
     get_agent_runner,
+    get_generate_conversation_title_use_case,
     get_realtime_session_provider,
     get_stt_provider,
     get_tts_provider,
@@ -16,14 +17,16 @@ from app.api.v1.dependencies import (
 )
 from app.api.v1.schemas import (
     ChatRequest,
+    ConversationTitleResponse,
     CurrentUser,
+    GenerateTitleRequest,
     RealtimeSessionResponse,
     RealtimeToolRequest,
     RealtimeToolResponse,
     SpeakRequest,
     TranscriptionResponse,
 )
-from app.application.chat.use_cases import StreamReply
+from app.application.chat.use_cases import GenerateConversationTitle, StreamReply
 from app.core.config import Settings, get_settings
 from app.core.di import Container, get_container
 from app.domain.agents.entities import (
@@ -129,6 +132,29 @@ async def stream_chat(
 
     event_stream = use_case.execute(thread_id, message, user.id)
     return StreamingResponse(_to_sse(event_stream), media_type="text/event-stream")
+
+
+@router.post("/title", response_model=ConversationTitleResponse)
+async def generate_title(
+    payload: GenerateTitleRequest,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    use_case: Annotated[
+        GenerateConversationTitle, Depends(get_generate_conversation_title_use_case)
+    ],
+) -> ConversationTitleResponse:
+    """Generate a concise 3-6 word topic title for a conversation.
+
+    Called by the frontend after the first exchange (and again when the topic shifts) to
+    replace the transient first-message title in the sessions sidebar. Reuses the Midas
+    voice via the injected use case. Auth-gated like `/stream`; degrades gracefully to a
+    short slice of the first user message when the LLM is unavailable (e.g. no API key),
+    so it never fails the caller.
+    """
+    messages = [
+        Message(role=item.role, content=item.content) for item in payload.messages
+    ]
+    title = await use_case.execute(messages)
+    return ConversationTitleResponse(title=title)
 
 
 @router.post("/realtime/session", response_model=RealtimeSessionResponse)

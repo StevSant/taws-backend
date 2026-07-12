@@ -10,10 +10,12 @@ from app.api.v1.schemas.candle_response import CandleResponse
 from app.api.v1.schemas.chart_render_request import ChartRenderRequest
 from app.api.v1.schemas.chat_request import ChatRequest
 from app.api.v1.schemas.chat_response import ChatResponse
+from app.api.v1.schemas.chat_title_message import ChatTitleMessage
 from app.api.v1.schemas.chat_token import ChatToken
 from app.api.v1.schemas.consequence_chain_response import ConsequenceChainResponse
 from app.api.v1.schemas.consequence_edge_response import ConsequenceEdgeResponse
 from app.api.v1.schemas.consequence_node_response import ConsequenceNodeResponse
+from app.api.v1.schemas.conversation_title_response import ConversationTitleResponse
 from app.api.v1.schemas.current_user import CurrentUser
 from app.api.v1.schemas.earnings_calendar_entry_response import EarningsCalendarEntryResponse
 from app.api.v1.schemas.enriched_event_response import EnrichedEventResponse
@@ -21,12 +23,12 @@ from app.api.v1.schemas.event_intelligence_demo_request import EventIntelligence
 from app.api.v1.schemas.event_study_event_response import EventStudyEventResponse
 from app.api.v1.schemas.event_study_response import EventStudyResponse
 from app.api.v1.schemas.fear_greed_reading_response import FearGreedReadingResponse
-from app.api.v1.schemas.market_pulse_response import MarketPulseResponse
 from app.api.v1.schemas.fundamentals_response import FundamentalsResponse
 from app.api.v1.schemas.generate_briefing_request import GenerateBriefingRequest
 from app.api.v1.schemas.generate_consequence_chain_request import GenerateConsequenceChainRequest
 from app.api.v1.schemas.generate_scenario_request import GenerateScenarioRequest
 from app.api.v1.schemas.generate_signal_request import GenerateSignalRequest
+from app.api.v1.schemas.generate_title_request import GenerateTitleRequest
 from app.api.v1.schemas.instrument_fundamentals_response import InstrumentFundamentalsResponse
 from app.api.v1.schemas.instrument_response import InstrumentResponse
 from app.api.v1.schemas.interpret_macro_event_request import InterpretMacroEventRequest
@@ -36,6 +38,7 @@ from app.api.v1.schemas.macro_event_interpretation_response import (
 )
 from app.api.v1.schemas.macro_observation_response import MacroObservationResponse
 from app.api.v1.schemas.macro_state_response import MacroStateResponse
+from app.api.v1.schemas.market_pulse_response import MarketPulseResponse
 from app.api.v1.schemas.market_stats_response import MarketStatsResponse
 from app.api.v1.schemas.news_entity_response import NewsEntityResponse
 from app.api.v1.schemas.news_event_response import NewsEventResponse
@@ -85,8 +88,10 @@ __all__ = [
     "ChartRenderRequest",
     "ChatRequest",
     "ChatResponse",
+    "ChatTitleMessage",
     "ChatToken",
     "ConsequenceChainResponse",
+    "ConversationTitleResponse",
     "ConsequenceEdgeResponse",
     "ConsequenceNodeResponse",
     "CurrentUser",
@@ -102,6 +107,7 @@ __all__ = [
     "GenerateConsequenceChainRequest",
     "GenerateScenarioRequest",
     "GenerateSignalRequest",
+    "GenerateTitleRequest",
     "InstrumentFundamentalsResponse",
     "InstrumentResponse",
     "InterpretMacroEventRequest",
