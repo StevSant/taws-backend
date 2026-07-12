@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from app.api.v1.dependencies import get_realtime_session_provider, require_current_user
 from app.api.v1.schemas import CurrentUser
+from app.core.config import get_settings
 from app.core.di import get_container
 from app.domain.agents.entities import EphemeralRealtimeSession
 from app.domain.market.entities import AssetClass, Instrument, PriceCandle, PriceSeries
@@ -79,10 +80,27 @@ def test_session_returns_ephemeral_secret_and_tools() -> None:
     assert body["client_secret"] == "ek_test_secret"
     assert body["expires_at"] == 1_700_000_600
     tool_names = {t["name"] for t in body["tools"]}
-    assert "get_market_data" in tool_names
+    assert "render_price_chart" in tool_names
+    assert "get_market_data" not in tool_names
     # The mint got the server-authored tools + the JWT user id (never a client value).
     assert provider.calls[0]["user_id"] == "jwt-user-1"
     assert {t["name"] for t in provider.calls[0]["tools"]} == tool_names
+
+
+def test_session_omits_chart_tools_when_charts_disabled() -> None:
+    provider = _FakeSessionProvider()
+    settings = get_settings().model_copy(update={"charts_enabled": False})
+    _override_user()
+    app.dependency_overrides[get_realtime_session_provider] = lambda: provider
+    app.dependency_overrides[get_settings] = lambda: settings
+    try:
+        with TestClient(app) as client:
+            response = client.post("/api/v1/chat/realtime/session")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert all(not tool["name"].startswith("render_") for tool in response.json()["tools"])
 
 
 # --- tool endpoint (security first) ------------------------------------------------
@@ -177,9 +195,7 @@ def test_tool_market_data_dispatch() -> None:
     )
     universe = Mock()
     universe.by_symbol = Mock(return_value=_INSTRUMENT)
-    container = _fake_container(
-        get_instrument_universe=universe, get_market_data_provider=provider
-    )
+    container = _fake_container(get_instrument_universe=universe, get_market_data_provider=provider)
 
     response = _post_tool(
         container,

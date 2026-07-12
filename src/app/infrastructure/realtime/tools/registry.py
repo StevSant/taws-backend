@@ -7,6 +7,12 @@ from app.infrastructure.realtime.tools.args import (
     GetNotesArgs,
     GetWatchlistArgs,
     ListSignalsArgs,
+    RenderComparisonChartArgs,
+    RenderDistributionChartArgs,
+    RenderDrawdownChartArgs,
+    RenderMacroChartArgs,
+    RenderPriceChartArgs,
+    RenderSentimentGaugeArgs,
 )
 from app.infrastructure.realtime.tools.handlers import (
     handle_generate_signal,
@@ -15,6 +21,12 @@ from app.infrastructure.realtime.tools.handlers import (
     handle_get_notes,
     handle_get_watchlist,
     handle_list_signals,
+    handle_render_comparison_chart,
+    handle_render_distribution_chart,
+    handle_render_drawdown_chart,
+    handle_render_macro_chart,
+    handle_render_price_chart,
+    handle_render_sentiment_gauge,
 )
 from app.infrastructure.realtime.tools.realtime_tool import RealtimeTool
 from app.infrastructure.realtime.tools.tool_not_found_error import ToolNotFoundError
@@ -80,10 +92,84 @@ _REALTIME_TOOLS: dict[str, RealtimeTool] = {
         args_model=GetNotesArgs,
         handler=handle_get_notes,
     ),
+    "render_price_chart": RealtimeTool(
+        name="render_price_chart",
+        description=(
+            "Display an interactive candlestick or line price chart directly on the user's "
+            "current voice screen. Use when the user asks to see, plot, chart, generate, "
+            "create, or visualize price history; this tool is the visual capability."
+        ),
+        args_model=RenderPriceChartArgs,
+        handler=handle_render_price_chart,
+    ),
+    "render_comparison_chart": RealtimeTool(
+        name="render_comparison_chart",
+        description=(
+            "Display an interactive comparison chart directly on the user's current voice "
+            "screen, with instruments rebased to 100. Use for visual comparisons, overlays, "
+            "or contrasting asset performance."
+        ),
+        args_model=RenderComparisonChartArgs,
+        handler=handle_render_comparison_chart,
+    ),
+    "render_macro_chart": RealtimeTool(
+        name="render_macro_chart",
+        description=(
+            "Display an interactive macro chart directly on the user's current voice screen "
+            "for rates, CPI, or VIX. Use for interest rates, inflation, or volatility."
+        ),
+        args_model=RenderMacroChartArgs,
+        handler=handle_render_macro_chart,
+    ),
+    "render_drawdown_chart": RealtimeTool(
+        name="render_drawdown_chart",
+        description=(
+            "Display an interactive drawdown chart directly on the user's current voice "
+            "screen. Use for loss-from-peak or downside-risk questions."
+        ),
+        args_model=RenderDrawdownChartArgs,
+        handler=handle_render_drawdown_chart,
+    ),
+    "render_distribution_chart": RealtimeTool(
+        name="render_distribution_chart",
+        description=(
+            "Display an interactive return histogram directly on the user's current voice "
+            "screen. Use for distribution, dispersion, or tail-behavior questions."
+        ),
+        args_model=RenderDistributionChartArgs,
+        handler=handle_render_distribution_chart,
+    ),
+    "render_sentiment_gauge": RealtimeTool(
+        name="render_sentiment_gauge",
+        description=(
+            "Display the interactive Crypto Fear & Greed gauge directly on the user's "
+            "current voice screen. Use for market sentiment or Fear & Greed requests."
+        ),
+        args_model=RenderSentimentGaugeArgs,
+        handler=handle_render_sentiment_gauge,
+    ),
+}
+
+_CHART_TOOL_NAMES = {
+    "render_price_chart",
+    "render_comparison_chart",
+    "render_macro_chart",
+    "render_drawdown_chart",
+    "render_distribution_chart",
+    "render_sentiment_gauge",
 }
 
 
-def build_realtime_tool_schemas() -> list[dict[str, Any]]:
+def _is_session_tool_enabled(name: str, *, charts_enabled: bool) -> bool:
+    if charts_enabled:
+        # Price chart already fetches and summarizes the same market series. Hiding the
+        # data-only alternative makes visual requests deterministic instead of letting the
+        # model choose get_market_data and then incorrectly claim it cannot show a chart.
+        return name != "get_market_data"
+    return name not in _CHART_TOOL_NAMES
+
+
+def build_realtime_tool_schemas(charts_enabled: bool = True) -> list[dict[str, Any]]:
     """Return the OpenAI Realtime tool-declaration list for every registered tool.
 
     Flat `{"type": "function", "name", "description", "parameters"}` shape — the exact
@@ -98,7 +184,8 @@ def build_realtime_tool_schemas() -> list[dict[str, Any]]:
             "description": tool.description,
             "parameters": tool.args_model.model_json_schema(),
         }
-        for tool in _REALTIME_TOOLS.values()
+        for name, tool in _REALTIME_TOOLS.items()
+        if _is_session_tool_enabled(name, charts_enabled=charts_enabled)
     ]
 
 

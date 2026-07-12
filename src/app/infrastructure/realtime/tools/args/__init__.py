@@ -4,6 +4,14 @@ from app.infrastructure.realtime.tools.args.get_news_args import GetNewsArgs
 from app.infrastructure.realtime.tools.args.get_notes_args import GetNotesArgs
 from app.infrastructure.realtime.tools.args.get_watchlist_args import GetWatchlistArgs
 from app.infrastructure.realtime.tools.args.list_signals_args import ListSignalsArgs
+from app.infrastructure.realtime.tools.args.render_chart_args import (
+    RenderComparisonChartArgs,
+    RenderDistributionChartArgs,
+    RenderDrawdownChartArgs,
+    RenderMacroChartArgs,
+    RenderPriceChartArgs,
+    RenderSentimentGaugeArgs,
+)
 
 __all__ = [
     "GenerateSignalArgs",
@@ -12,4 +20,10 @@ __all__ = [
     "GetNotesArgs",
     "GetWatchlistArgs",
     "ListSignalsArgs",
+    "RenderComparisonChartArgs",
+    "RenderDistributionChartArgs",
+    "RenderDrawdownChartArgs",
+    "RenderMacroChartArgs",
+    "RenderPriceChartArgs",
+    "RenderSentimentGaugeArgs",
 ]

@@ -12,6 +12,14 @@ from app.infrastructure.realtime.tools.handlers.get_watchlist_handler import (
 from app.infrastructure.realtime.tools.handlers.list_signals_handler import (
     handle_list_signals,
 )
+from app.infrastructure.realtime.tools.handlers.render_chart_handlers import (
+    handle_render_comparison_chart,
+    handle_render_distribution_chart,
+    handle_render_drawdown_chart,
+    handle_render_macro_chart,
+    handle_render_price_chart,
+    handle_render_sentiment_gauge,
+)
 
 __all__ = [
     "handle_generate_signal",
@@ -20,4 +28,10 @@ __all__ = [
     "handle_get_notes",
     "handle_get_watchlist",
     "handle_list_signals",
+    "handle_render_comparison_chart",
+    "handle_render_distribution_chart",
+    "handle_render_drawdown_chart",
+    "handle_render_macro_chart",
+    "handle_render_price_chart",
+    "handle_render_sentiment_gauge",
 ]

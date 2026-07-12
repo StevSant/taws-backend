@@ -1,3 +1,4 @@
+from app.api.middleware.cors_headers import build_cors_headers_for_origin
 from app.api.middleware.duplicate_watchlist_item_handler import (
     duplicate_watchlist_item_handler,
 )
@@ -9,6 +10,7 @@ from app.api.middleware.request_id import RequestIDMiddleware
 
 __all__ = [
     "RequestIDMiddleware",
+    "build_cors_headers_for_origin",
     "duplicate_watchlist_item_handler",
     "invalid_watchlist_identifier_handler",
     "unhandled_exception_handler",
