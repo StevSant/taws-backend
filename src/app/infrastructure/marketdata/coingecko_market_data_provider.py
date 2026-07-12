@@ -1,3 +1,5 @@
+import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -6,6 +8,8 @@ import httpx
 from app.domain.market.entities import Instrument, PriceCandle, PriceSeries
 from app.domain.market.ports import MarketDataProvider
 from app.infrastructure.caching import TtlCache
+
+logger = logging.getLogger(__name__)
 
 
 class CoinGeckoMarketDataProvider(MarketDataProvider):
@@ -45,10 +49,15 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
         coingecko_id_overrides: dict[str, str] | None = None,
         timeout_seconds: float = 10.0,
         cache_ttl_seconds: float = 60.0,
+        api_key: str | None = None,
+        cooldown_seconds: float = 300.0,
     ) -> None:
         self._base_url = base_url
         self._overrides = coingecko_id_overrides or {}
         self._timeout_seconds = timeout_seconds
+        # Optional free "Demo" API key, sent as the `x-cg-demo-api-key` header to lift the
+        # keyless public rate limits. Empty string -> None -> no header (keyless mode).
+        self._api_key = api_key or None
         # Short-TTL cache (issue #8): CoinGecko's free tier rate-limits (429) hard when
         # the same handful of crypto instruments get polled every ~60s. Keyed by
         # `(coin_id, days)` for series, plain `coin_id` for last-price — two independent
@@ -57,6 +66,14 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
             cache_ttl_seconds
         )
         self._last_price_cache: TtlCache[str, float | None] = TtlCache(cache_ttl_seconds)
+        # Circuit breaker: the TtlCache only ever stores *successful* responses, so while
+        # CoinGecko is rate-limiting (429) the cache never populates and every request
+        # re-hits the live API — turning one 429 into a continuous per-poll storm. Once a
+        # live call fails, back off for `cooldown_seconds` and serve fixtures (by returning
+        # an empty result the RoutingMarketDataProvider falls back on) instead of hammering
+        # the API on every poll. `None` = not currently backing off.
+        self._cooldown_seconds = cooldown_seconds
+        self._cooldown_until: float | None = None
 
     async def get_price_series(self, instrument: Instrument, days: int = 30) -> PriceSeries:
         coin_id = self._resolve_id(instrument)
@@ -64,16 +81,22 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
         cached = self._price_series_cache.get(cache_key)
         if cached is not None:
             return cached
+        if self._in_cooldown():
+            return PriceSeries(symbol=instrument.symbol, candles=[])
 
-        async with httpx.AsyncClient(
-            base_url=self._base_url, timeout=self._timeout_seconds
-        ) as client:
-            response = await client.get(
-                f"/coins/{coin_id}/market_chart",
-                params={"vs_currency": "usd", "days": days, "interval": "daily"},
-            )
-            response.raise_for_status()
-            payload = response.json()
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=self._timeout_seconds, headers=self._headers()
+            ) as client:
+                response = await client.get(
+                    f"/coins/{coin_id}/market_chart",
+                    params={"vs_currency": "usd", "days": days, "interval": "daily"},
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPError as error:
+            self._enter_cooldown(error)
+            return PriceSeries(symbol=instrument.symbol, candles=[])
 
         candles = [self._to_candle(point) for point in payload.get("prices", [])]
         series = PriceSeries(symbol=instrument.symbol, candles=candles)
@@ -85,15 +108,21 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
         cached = self._last_price_cache.get(coin_id)
         if cached is not None:
             return cached
+        if self._in_cooldown():
+            return None
 
-        async with httpx.AsyncClient(
-            base_url=self._base_url, timeout=self._timeout_seconds
-        ) as client:
-            response = await client.get(
-                "/simple/price", params={"ids": coin_id, "vs_currencies": "usd"}
-            )
-            response.raise_for_status()
-            payload = response.json()
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=self._timeout_seconds, headers=self._headers()
+            ) as client:
+                response = await client.get(
+                    "/simple/price", params={"ids": coin_id, "vs_currencies": "usd"}
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPError as error:
+            self._enter_cooldown(error)
+            return None
 
         price = payload.get(coin_id, {}).get("usd")
         result = float(price) if price is not None else None
@@ -102,6 +131,28 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
 
     def _resolve_id(self, instrument: Instrument) -> str:
         return self._overrides.get(instrument.symbol, instrument.symbol.lower())
+
+    def _headers(self) -> dict[str, str]:
+        """CoinGecko Demo API key header when configured; empty (keyless) otherwise."""
+        return {"x-cg-demo-api-key": self._api_key} if self._api_key else {}
+
+    def _in_cooldown(self) -> bool:
+        """True while backing off from a recent live failure; clears itself once elapsed."""
+        if self._cooldown_until is None:
+            return False
+        if time.monotonic() >= self._cooldown_until:
+            self._cooldown_until = None
+            return False
+        return True
+
+    def _enter_cooldown(self, error: Exception) -> None:
+        """Back off from CoinGecko after a live failure, logging once per cooldown window."""
+        self._cooldown_until = time.monotonic() + self._cooldown_seconds
+        logger.warning(
+            "CoinGecko unavailable (%s); backing off for %.0fs and serving fixtures.",
+            error,
+            self._cooldown_seconds,
+        )
 
     @staticmethod
     def _to_candle(point: list[Any]) -> PriceCandle:

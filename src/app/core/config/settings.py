@@ -88,6 +88,14 @@ class Settings(BaseSettings):
     # instruments are polled every ~60s; a cache this short still keeps prices fresh
     # enough for the product's polling cadence while cutting redundant calls.
     coingecko_cache_ttl_seconds: float = 60.0
+    # Optional free "Demo" API key (https://www.coingecko.com/en/api/pricing -> Demo plan):
+    # sent as the `x-cg-demo-api-key` header to lift the keyless public rate limits
+    # (~30 calls/min, 10k/month). Leave empty to use the keyless public API.
+    coingecko_api_key: str = ""
+    # Circuit-breaker backoff: once a live CoinGecko call fails (e.g. 429), stop calling it
+    # for this many seconds and serve fixtures instead, so one rate-limit doesn't turn into
+    # a per-request storm (the in-process cache only ever stores successful responses).
+    coingecko_cooldown_seconds: float = 300.0
 
     # --- FRED (macro: rates, CPI; behind the MacroDataProvider port) ---
     # Free key at https://fred.stlouisfed.org/docs/api/api_key.html. Leave empty to serve
