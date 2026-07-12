@@ -64,11 +64,16 @@ class TelegramBotRegistration(BotRegistrationPort):
         The user must have sent at least one message to the bot before calling this.
         Returns the `chat_id` from the first message, or `None` if no messages exist.
         """
+        await self._delete_webhook(bot_token)
         url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+        except Exception:
+            logger.exception("Failed to call getUpdates for bot token %s", bot_token[:8])
+            return None
 
         if not data.get("ok") or not data.get("result"):
             return None
@@ -86,20 +91,33 @@ class TelegramBotRegistration(BotRegistrationPort):
 
         return None
 
+    async def _delete_webhook(self, bot_token: str) -> None:
+        """Delete any existing webhook for this bot so `getUpdates` can be used."""
+        url = f"https://api.telegram.org/bot{bot_token}/deleteWebhook"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, timeout=10)
+                response.raise_for_status()
+        except Exception:
+            logger.exception("Failed to delete webhook for bot token %s", bot_token[:8])
+
     async def _set_webhook(self, bot_token: str, bot_id: str) -> None:
         """Set the Telegram webhook for this bot.
 
         The webhook URL is `{webhook_base_url}/api/v1/telegram/webhook/{bot_id}`.
         """
-        webhook_url = f"{self._webhook_base_url.rstrip('/')}/api/v1/telegram/webhook/{bot_id}"
+        webhook_url = f"{self._webhook_base_url.rstrip('/')}/{bot_id}"
         url = f"https://api.telegram.org/bot{bot_token}/setWebhook"
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, json={"url": webhook_url}, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            if not data.get("ok"):
-                logger.warning(
-                    "Telegram setWebhook returned not-ok for bot %s: %s",
-                    bot_id,
-                    data,
-                )
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json={"url": webhook_url}, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                if not data.get("ok"):
+                    logger.warning(
+                        "Telegram setWebhook returned not-ok for bot %s: %s",
+                        bot_id,
+                        data,
+                    )
+        except Exception:
+            logger.exception("Failed to set webhook for bot %s", bot_id)

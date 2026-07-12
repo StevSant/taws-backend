@@ -77,7 +77,10 @@ async def register_bot(
 
     The user must send at least one message to their bot before calling this endpoint.
     """
-    bot = await registration.register(user_id=user.id, botfather_text=body.botfather_text)
+    try:
+        bot = await registration.register(user_id=user.id, botfather_text=body.botfather_text)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
     return RegisterBotResponse(
         bot_id=bot.id,
         bot_username=bot.bot_username,
