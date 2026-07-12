@@ -44,6 +44,9 @@ class _UnusedWatchlistRepository(WatchlistRepository):
     async def rename(self, watchlist_id: str, name: str) -> Watchlist:
         raise NotImplementedError
 
+    async def reorder(self, user_id: str, ordered_ids: list[str]) -> None:
+        raise NotImplementedError
+
     async def delete(self, watchlist_id: str) -> None:
         raise NotImplementedError
 

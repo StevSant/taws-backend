@@ -10,3 +10,6 @@ class Watchlist:
     user_id: str
     name: str
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    position: int | None = None
+    """User-defined display order (issue #66). `None` = never reordered; the list API
+    sorts those after positioned lists, by `created_at`."""

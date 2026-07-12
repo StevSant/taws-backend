@@ -63,8 +63,17 @@ class SupabaseWatchlistRepository(WatchlistRepository):
 
     async def list_for_user(self, user_id: str) -> list[Watchlist]:
         client = await self._clients.get()
+        # Ordered by user-defined `position` (issue #66); NULLS LAST so never-reordered
+        # lists fall back to creation order after positioned ones.
         response = await self._retry(
-            lambda: client.table(_WATCHLISTS_TABLE).select("*").eq("user_id", user_id).execute()
+            lambda: (
+                client.table(_WATCHLISTS_TABLE)
+                .select("*")
+                .eq("user_id", user_id)
+                .order("position", desc=False, nullsfirst=False)
+                .order("created_at", desc=False)
+                .execute()
+            )
         )
         return [watchlist_from_row(row) for row in response.data]
 
@@ -84,6 +93,23 @@ class SupabaseWatchlistRepository(WatchlistRepository):
             )
         )
         return watchlist_from_row(response.data[0])
+
+    async def reorder(self, user_id: str, ordered_ids: list[str]) -> None:
+        client = await self._clients.get()
+        # One scoped UPDATE per id: `.eq("user_id", user_id)` makes non-owned (or
+        # non-existent) ids no-ops, satisfying the port's "silently ignore" contract
+        # even though the service-role client bypasses RLS. Default args freeze the
+        # loop variables so each lambda captures its own id/position.
+        for position, watchlist_id in enumerate(ordered_ids):
+            await self._retry(
+                lambda wid=watchlist_id, pos=position: (
+                    client.table(_WATCHLISTS_TABLE)
+                    .update({"position": pos})
+                    .eq("id", wid)
+                    .eq("user_id", user_id)
+                    .execute()
+                )
+            )
 
     async def delete(self, watchlist_id: str) -> None:
         client = await self._clients.get()
