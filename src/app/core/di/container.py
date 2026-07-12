@@ -5,6 +5,7 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 
 from app.application.analogs.use_cases import FindHistoricalAnalogs
+from app.application.charts.use_cases import BuildPriceChart
 from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.macro.use_cases import InterpretMacroEvent
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
@@ -26,6 +27,7 @@ from app.domain.agents.ports import (
     VectorStore,
 )
 from app.domain.briefing.ports import BriefingDocumentRenderer, BriefingRepository
+from app.domain.charts.entities import ChartConfig
 from app.domain.chat.ports import ConversationRepository
 from app.domain.market.ports import (
     FundamentalsProvider,
@@ -51,6 +53,7 @@ from app.infrastructure.agents.tools import (
     build_consequence_tools,
     build_macro_tools,
     build_quant_grounding_tools,
+    build_render_price_chart_tool,
     build_scenario_tools,
     build_sentiment_tools,
 )
@@ -162,6 +165,8 @@ class Container:
         self._fear_greed_provider: FearGreedProvider | None = None
         self._analyze_sentiment_use_case: AnalyzeSentiment | None = None
         self._interpret_macro_event_use_case: InterpretMacroEvent | None = None
+        self._chart_config: ChartConfig | None = None
+        self._build_price_chart_use_case: BuildPriceChart | None = None
 
     def get_llm_provider(self) -> LLMProvider:
         if self._llm_provider is None:
@@ -489,6 +494,27 @@ class Container:
             )
         return self._market_data_provider
 
+    def get_chart_config(self) -> ChartConfig:
+        """Return the cached ChartConfig built from Settings (single source for chart limits)."""
+        if self._chart_config is None:
+            self._chart_config = ChartConfig(
+                default_timeframe=self._settings.chart_default_timeframe,
+                max_points=self._settings.chart_max_points,
+                available_timeframes=list(self._settings.chart_available_timeframes),
+                timeframe_days=dict(self._settings.chart_timeframe_days),
+            )
+        return self._chart_config
+
+    def get_build_price_chart_use_case(self) -> BuildPriceChart:
+        """Return the cached BuildPriceChart use case (shared by the chart tool + endpoint)."""
+        if self._build_price_chart_use_case is None:
+            self._build_price_chart_use_case = BuildPriceChart(
+                market_data_provider=self.get_market_data_provider(),
+                instrument_universe=self.get_instrument_universe(),
+                chart_config=self.get_chart_config(),
+            )
+        return self._build_price_chart_use_case
+
     def get_generate_consequence_chain_use_case(self) -> GenerateConsequenceChain:
         """Return the cached Consequence Chain Analyst use case (issue #8).
 
@@ -734,6 +760,13 @@ class Container:
                     instrument_universe=self.get_instrument_universe(),
                 ),
             )
+            if self._settings.charts_enabled:
+                quant_tools = quant_tools + [
+                    build_render_price_chart_tool(
+                        build_price_chart=self.get_build_price_chart_use_case(),
+                        chart_config=self.get_chart_config(),
+                    )
+                ]
             # `macro`/`sentiment` tools (issue #21): both public, non-per-user data — same
             # "safe for the unauthenticated chat route" rationale as `quant_tools` above.
             macro_tools = build_macro_tools(use_case=self.get_interpret_macro_event_use_case())

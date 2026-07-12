@@ -129,6 +129,25 @@ class Settings(BaseSettings):
     # --- Historical analogs RAG (behind the VectorStore port, pgvector-backed) ---
     historical_analogs_top_k: int = 3
 
+    # --- Chart visualizations (inline agent charts, behind the ChartConfig value object) ---
+    # Master switch; when False the DI container binds no chart tools to any specialist.
+    charts_enabled: bool = True
+    # Default timeframe a chart tool uses when the LLM omits one.
+    chart_default_timeframe: str = "1y"
+    # Timeframe labels offered to the user (drives the frontend timeframe buttons — never
+    # hardcode these client-side).
+    chart_available_timeframes: list[str] = ["1m", "3m", "6m", "1y", "max"]
+    # Timeframe label -> days of history to fetch. Keys must cover every available label.
+    chart_timeframe_days: dict[str, int] = {
+        "1m": 30,
+        "3m": 90,
+        "6m": 180,
+        "1y": 365,
+        "max": 1825,
+    }
+    # Downsample cap: max points/bars shipped to the browser per series (perf guard).
+    chart_max_points: int = 500
+
     # --- Track-5 seed data paths (packaged with the app; override for custom fixtures) ---
     universe_seed_path: Path = _MARKET_SEEDS_DIR / "universe.json"
     news_fixture_seed_path: Path = _MARKET_SEEDS_DIR / "news_fixture.json"
