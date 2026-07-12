@@ -27,6 +27,7 @@ def map_marketaux_article(article: dict) -> NewsItem:
         summary=article.get("description") or article.get("snippet") or "",
         url=article.get("url") or "",
         source=article.get("source") or "",
+        provider="marketaux",
         published_at=_parse_published_at(article.get("published_at")),
         related_symbols=[entity.symbol for entity in entities],
         entities=entities,

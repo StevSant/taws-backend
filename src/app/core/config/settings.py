@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     supabase_url: str | None = None
     supabase_key: str | None = None
     supabase_jwt_secret: str | None = None
+    # Retry-with-backoff applied around every Supabase*Repository client call (issue #7):
+    # only transient network failures (DNS blips, dropped connections) are retried, never
+    # application-level Postgrest errors. See `with_supabase_retry`.
+    supabase_retry_max_attempts: int = 2
+    supabase_retry_backoff_base_seconds: float = 0.2
 
     database_url: str | None = None
 
@@ -44,6 +49,13 @@ class Settings(BaseSettings):
     # Free plan returns max 3 articles per request and 100 requests/day; keep the
     # per-fetch pagination small so scheduled polls stay within quota.
     marketaux_max_pages: int = 3
+    # Circuit breaker (issue #9): once a non-transient error (402 quota-exhausted/401
+    # unauthorized, or 429 rate-limited) is seen, stop calling Marketaux for this many
+    # minutes instead of retrying every poll. 402/401 (billing/config issues that won't
+    # resolve themselves soon) use the longer cool-down; 429 (rate limiting) uses the
+    # shorter one since it's likely to clear within the polling window.
+    marketaux_cooldown_minutes: int = 20
+    marketaux_rate_limit_cooldown_minutes: int = 5
 
     # --- NewsAPI.org (behind the NewsProvider port) ---
     newsapi_api_key: str | None = None
@@ -71,6 +83,11 @@ class Settings(BaseSettings):
 
     # --- CoinGecko (crypto prices, behind the MarketDataProvider port); no key required ---
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"
+    # Short-TTL in-process cache in front of get_price_series/get_last_price (issue #8) —
+    # CoinGecko's free tier rate-limits (429) hard when the same handful of crypto
+    # instruments are polled every ~60s; a cache this short still keeps prices fresh
+    # enough for the product's polling cadence while cutting redundant calls.
+    coingecko_cache_ttl_seconds: float = 60.0
 
     # --- FRED (macro: rates, CPI; behind the MacroDataProvider port) ---
     # Free key at https://fred.stlouisfed.org/docs/api/api_key.html. Leave empty to serve
@@ -130,6 +147,23 @@ class Settings(BaseSettings):
     # source + date attached to each signal"); see `GenerateSignal` in
     # `application/signals/use_cases/generate_signal.py` ---
     min_distinct_news_sources: int = 2
+
+    # --- Pending news pre-filter (issue #3): cheap-relevance floor (see
+    # `compute_news_relevance_score`) below which a pending news item is skipped
+    # (analysis_status -> skipped) without an LLM call. ---
+    news_relevance_skip_threshold: float = 0.35
+
+    # --- Pending news analysis batch pipeline (issue #2: POST /api/v1/news/analyze-pending
+    # and its scheduled tick) ---
+    # Bounds concurrent `GenerateSignal` calls fanned out by `AnalyzePendingNews`, so a
+    # large pending backlog can't fire unbounded concurrent LLM requests.
+    news_analysis_max_concurrency: int = 5
+    # Max pending news items processed per `AnalyzePendingNews.execute()` run/tick.
+    news_analysis_batch_limit: int = 200
+    # Cadence (minutes) of the scheduled background tick that calls `AnalyzePendingNews`,
+    # so newly-ingested news gets analyzed even while no user is on the page. Reuses the
+    # same APScheduler infra as the Watchdog jobs (`infrastructure/scheduling`).
+    news_analysis_poll_interval_minutes: int = 15
 
     # --- Historical analogs RAG (behind the VectorStore port, pgvector-backed) ---
     historical_analogs_top_k: int = 3

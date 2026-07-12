@@ -49,6 +49,7 @@ from app.domain.market.ports import (
     InstrumentUniverse,
     MacroDataProvider,
     MarketDataProvider,
+    NewsItemRepository,
     NewsProvider,
 )
 from app.domain.notification.ports import EmailSender, NotificationChannel
@@ -120,6 +121,7 @@ from app.infrastructure.notification import (
 from app.infrastructure.persistence import (
     SupabaseBriefingRepository,
     SupabaseConversationRepository,
+    SupabaseNewsItemRepository,
     SupabaseScenarioRepository,
     SupabaseSignalRepository,
     SupabaseTelegramLinkRepository,
@@ -171,6 +173,7 @@ class Container:
         self._signal_repository: SignalRepository | None = None
         self._briefing_repository: BriefingRepository | None = None
         self._news_provider: NewsProvider | None = None
+        self._news_item_repository: NewsItemRepository | None = None
         self._instrument_universe: InstrumentUniverse | None = None
         self._market_data_provider: MarketDataProvider | None = None
         self._macro_data_provider: MacroDataProvider | None = None
@@ -266,6 +269,8 @@ class Container:
             self._watchlist_repository = SupabaseWatchlistRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._watchlist_repository
 
@@ -274,14 +279,27 @@ class Container:
             self._signal_repository = SupabaseSignalRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._signal_repository
+
+    def get_news_item_repository(self) -> NewsItemRepository:
+        """Return the cached NewsItemRepository (issue #1's persisted news store)."""
+        if self._news_item_repository is None:
+            self._news_item_repository = SupabaseNewsItemRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+            )
+        return self._news_item_repository
 
     def get_briefing_repository(self) -> BriefingRepository:
         if self._briefing_repository is None:
             self._briefing_repository = SupabaseBriefingRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._briefing_repository
 
@@ -346,6 +364,8 @@ class Container:
             self._telegram_link_repository = SupabaseTelegramLinkRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._telegram_link_repository
 
@@ -354,6 +374,8 @@ class Container:
             self._telegram_link_token_repository = SupabaseTelegramLinkTokenRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._telegram_link_token_repository
 
@@ -504,6 +526,10 @@ class Container:
                         languages=self._settings.marketaux_languages,
                         timeout_seconds=self._settings.marketaux_timeout_seconds,
                         max_pages=self._settings.marketaux_max_pages,
+                        cooldown_seconds=self._settings.marketaux_cooldown_minutes * 60,
+                        rate_limit_cooldown_seconds=(
+                            self._settings.marketaux_rate_limit_cooldown_minutes * 60
+                        ),
                     )
                 )
             if self._settings.newsapi_api_key:
@@ -592,6 +618,7 @@ class Container:
                 coingecko_provider=CoinGeckoMarketDataProvider(
                     base_url=self._settings.coingecko_base_url,
                     coingecko_id_overrides=coingecko_overrides,
+                    cache_ttl_seconds=self._settings.coingecko_cache_ttl_seconds,
                 ),
                 fixture_provider=fixture_provider,
             )
@@ -865,6 +892,8 @@ class Container:
             self._scenario_repository = SupabaseScenarioRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._scenario_repository
 

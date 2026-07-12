@@ -3,7 +3,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.v1.dependencies import get_instrument_universe, get_market_data_provider
-from app.api.v1.schemas import EventStudyResponse, MarketStatsResponse
+from app.api.v1.mappers import map_price_candle_to_candle_response
+from app.api.v1.schemas import EventStudyResponse, MarketStatsResponse, UnusualMoveResponse
 from app.application.quant.unknown_instrument_error import UnknownInstrumentError
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
 from app.domain.market.ports import InstrumentUniverse, MarketDataProvider
@@ -38,7 +39,19 @@ async def get_market_stats(
         stats = await use_case.execute(instrument.upper(), window_days)
     except UnknownInstrumentError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    return MarketStatsResponse.model_validate(stats)
+    # `candles` is mapped explicitly (domain PriceCandle -> compact OHLC schema); every
+    # other field maps by name via `from_attributes`.
+    return MarketStatsResponse(
+        instrument_symbol=stats.instrument_symbol,
+        window_days=stats.window_days,
+        last_price=stats.last_price,
+        price_delta_pct=stats.price_delta_pct,
+        volatility_pct=stats.volatility_pct,
+        volatility_regime=stats.volatility_regime,
+        unusual_moves=[UnusualMoveResponse.model_validate(m) for m in stats.unusual_moves],
+        candles=[map_price_candle_to_candle_response(c) for c in stats.candles],
+        as_of=stats.as_of,
+    )
 
 
 @router.get("/event-study")

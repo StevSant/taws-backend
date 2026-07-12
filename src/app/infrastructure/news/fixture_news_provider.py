@@ -35,6 +35,7 @@ class FixtureNewsProvider(NewsProvider):
                 summary=row["summary"],
                 url=row["url"],
                 source=row["source"],
+                provider="fixture",
                 published_at=now - timedelta(hours=row["hours_ago"]),
                 related_symbols=list(row.get("related_symbols", [])),
             )

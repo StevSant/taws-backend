@@ -5,6 +5,7 @@ import httpx
 
 from app.domain.market.entities import Instrument, PriceCandle, PriceSeries
 from app.domain.market.ports import MarketDataProvider
+from app.infrastructure.caching import TtlCache
 
 
 class CoinGeckoMarketDataProvider(MarketDataProvider):
@@ -43,13 +44,27 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
         base_url: str,
         coingecko_id_overrides: dict[str, str] | None = None,
         timeout_seconds: float = 10.0,
+        cache_ttl_seconds: float = 60.0,
     ) -> None:
         self._base_url = base_url
         self._overrides = coingecko_id_overrides or {}
         self._timeout_seconds = timeout_seconds
+        # Short-TTL cache (issue #8): CoinGecko's free tier rate-limits (429) hard when
+        # the same handful of crypto instruments get polled every ~60s. Keyed by
+        # `(coin_id, days)` for series, plain `coin_id` for last-price — two independent
+        # caches since they hit different endpoints and shapes.
+        self._price_series_cache: TtlCache[tuple[str, int], PriceSeries] = TtlCache(
+            cache_ttl_seconds
+        )
+        self._last_price_cache: TtlCache[str, float | None] = TtlCache(cache_ttl_seconds)
 
     async def get_price_series(self, instrument: Instrument, days: int = 30) -> PriceSeries:
         coin_id = self._resolve_id(instrument)
+        cache_key = (coin_id, days)
+        cached = self._price_series_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         async with httpx.AsyncClient(
             base_url=self._base_url, timeout=self._timeout_seconds
         ) as client:
@@ -61,10 +76,16 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
             payload = response.json()
 
         candles = [self._to_candle(point) for point in payload.get("prices", [])]
-        return PriceSeries(symbol=instrument.symbol, candles=candles)
+        series = PriceSeries(symbol=instrument.symbol, candles=candles)
+        self._price_series_cache.set(cache_key, series)
+        return series
 
     async def get_last_price(self, instrument: Instrument) -> float | None:
         coin_id = self._resolve_id(instrument)
+        cached = self._last_price_cache.get(coin_id)
+        if cached is not None:
+            return cached
+
         async with httpx.AsyncClient(
             base_url=self._base_url, timeout=self._timeout_seconds
         ) as client:
@@ -75,7 +96,9 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
             payload = response.json()
 
         price = payload.get(coin_id, {}).get("usd")
-        return float(price) if price is not None else None
+        result = float(price) if price is not None else None
+        self._last_price_cache.set(coin_id, result)
+        return result
 
     def _resolve_id(self, instrument: Instrument) -> str:
         return self._overrides.get(instrument.symbol, instrument.symbol.lower())

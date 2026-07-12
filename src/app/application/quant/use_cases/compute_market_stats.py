@@ -96,6 +96,7 @@ class ComputeMarketStats:
             volatility_pct=volatility_pct,
             volatility_regime=_classify_volatility_regime(volatility_pct),
             unusual_moves=_detect_unusual_moves(return_pairs),
+            candles=candles,
             as_of=datetime.now(UTC),
         )
 

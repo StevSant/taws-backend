@@ -1,10 +1,12 @@
 from app.api.v1.schemas.alert_response import AlertResponse
+from app.api.v1.schemas.analyze_pending_news_response import AnalyzePendingNewsResponse
 from app.api.v1.schemas.briefing_export_email_request import BriefingExportEmailRequest
 from app.api.v1.schemas.briefing_export_email_response import BriefingExportEmailResponse
 from app.api.v1.schemas.briefing_instrument_section_response import (
     BriefingInstrumentSectionResponse,
 )
 from app.api.v1.schemas.briefing_response import BriefingResponse
+from app.api.v1.schemas.candle_response import CandleResponse
 from app.api.v1.schemas.chart_render_request import ChartRenderRequest
 from app.api.v1.schemas.chat_request import ChatRequest
 from app.api.v1.schemas.chat_response import ChatResponse
@@ -34,8 +36,10 @@ from app.api.v1.schemas.macro_event_interpretation_response import (
 from app.api.v1.schemas.macro_observation_response import MacroObservationResponse
 from app.api.v1.schemas.macro_state_response import MacroStateResponse
 from app.api.v1.schemas.market_stats_response import MarketStatsResponse
+from app.api.v1.schemas.news_entity_response import NewsEntityResponse
 from app.api.v1.schemas.news_event_response import NewsEventResponse
 from app.api.v1.schemas.news_item_response import NewsItemResponse
+from app.api.v1.schemas.news_list_response import NewsListResponse
 from app.api.v1.schemas.open_review_item_response import OpenReviewItemResponse
 from app.api.v1.schemas.review_decision_request import ReviewDecisionRequest
 from app.api.v1.schemas.review_state_response import ReviewStateResponse
@@ -64,12 +68,14 @@ from app.api.v1.schemas.watchlist_response import WatchlistResponse
 
 __all__ = [
     "AlertResponse",
+    "AnalyzePendingNewsResponse",
     "BriefingExportEmailRequest",
     "RegisterBotRequest",
     "RegisterBotResponse",
     "BriefingExportEmailResponse",
     "BriefingInstrumentSectionResponse",
     "BriefingResponse",
+    "CandleResponse",
     "ChartRenderRequest",
     "ChatRequest",
     "ChatResponse",
@@ -97,8 +103,10 @@ __all__ = [
     "MacroObservationResponse",
     "MacroStateResponse",
     "MarketStatsResponse",
+    "NewsEntityResponse",
     "NewsEventResponse",
     "NewsItemResponse",
+    "NewsListResponse",
     "OpenReviewItemResponse",
     "ReviewDecisionRequest",
     "ReviewStateResponse",
