@@ -43,5 +43,10 @@ class LLMProvider(ABC):
         when structured output isn't available (e.g. no API key configured) — callers
         are expected to catch broadly and degrade gracefully, the same way
         `application/signals/use_cases/generate_signal.py` does around this call.
+
+        Raise `LLMProviderUnavailableError` specifically for a *permanent* unavailability
+        that no retry can fix (e.g. no API key configured); raise ordinary exceptions for
+        *transient* failures (rate limits, timeouts, malformed/unparseable structured
+        output) so callers can distinguish "fall back now" from "retry, then fall back".
         """
         raise NotImplementedError
