@@ -26,10 +26,14 @@ class AggregatingNewsProvider(NewsProvider):
         providers: list[NewsProvider],
         fixture_provider: NewsProvider,
         instrument_universe: InstrumentUniverse,
+        provider_timeout_seconds: float = 2.5,
+        live_fetch_budget_seconds: float = 3.5,
     ) -> None:
         self._providers = providers
         self._fixture_provider = fixture_provider
         self._instrument_universe = instrument_universe
+        self._provider_timeout_seconds = provider_timeout_seconds
+        self._live_fetch_budget_seconds = live_fetch_budget_seconds
 
     async def fetch_news(
         self,
@@ -41,7 +45,12 @@ class AggregatingNewsProvider(NewsProvider):
         items = await self._collect_from_live_providers(symbols, asset_class, since_hours, limit)
         if not items:
             items = await self._safe_fetch(
-                self._fixture_provider, symbols, asset_class, since_hours, limit
+                self._fixture_provider,
+                symbols,
+                asset_class,
+                since_hours,
+                limit,
+                apply_timeout=False,
             )
 
         items = dedupe_news_items(items)
@@ -60,26 +69,51 @@ class AggregatingNewsProvider(NewsProvider):
         if not self._providers:
             return []
 
-        results = await asyncio.gather(
-            *(
-                self._safe_fetch(provider, symbols, asset_class, since_hours, limit)
-                for provider in self._providers
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(
+                    *(
+                        self._safe_fetch(provider, symbols, asset_class, since_hours, limit)
+                        for provider in self._providers
+                    )
+                ),
+                timeout=self._live_fetch_budget_seconds,
             )
-        )
+        except TimeoutError:
+            logger.warning(
+                "Live news fan-out exceeded %.1fs budget; falling back to fixture.",
+                self._live_fetch_budget_seconds,
+            )
+            return []
+
         return [item for provider_items in results for item in provider_items]
 
-    @staticmethod
     async def _safe_fetch(
+        self,
         provider: NewsProvider,
         symbols: list[str] | None,
         asset_class: AssetClass | None,
         since_hours: int,
         limit: int,
+        *,
+        apply_timeout: bool = True,
     ) -> list[NewsItem]:
         try:
-            return await provider.fetch_news(
+            fetch = provider.fetch_news(
                 symbols=symbols, asset_class=asset_class, since_hours=since_hours, limit=limit
             )
+            if apply_timeout:
+                items = await asyncio.wait_for(fetch, timeout=self._provider_timeout_seconds)
+            else:
+                items = await fetch
+            return items
+        except TimeoutError:
+            logger.warning(
+                "NewsProvider %s timed out after %.1fs; skipping it.",
+                type(provider).__name__,
+                self._provider_timeout_seconds,
+            )
+            return []
         except Exception:
             logger.warning(
                 "NewsProvider %s failed; skipping it.", type(provider).__name__, exc_info=True

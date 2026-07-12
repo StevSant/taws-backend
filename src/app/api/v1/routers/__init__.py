@@ -1,5 +1,6 @@
 from app.api.v1.routers.briefing_export import router as briefing_export_router
 from app.api.v1.routers.briefings import router as briefings_router
+from app.api.v1.routers.charts import router as charts_router
 from app.api.v1.routers.chat import router as chat_router
 from app.api.v1.routers.consequence_chains import router as consequence_chains_router
 from app.api.v1.routers.event_intelligence import router as event_intelligence_router
@@ -20,6 +21,7 @@ from app.api.v1.routers.watchlists import router as watchlists_router
 __all__ = [
     "briefing_export_router",
     "briefings_router",
+    "charts_router",
     "chat_router",
     "consequence_chains_router",
     "event_intelligence_router",

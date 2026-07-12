@@ -3,9 +3,18 @@ from functools import lru_cache
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import BaseTool
 
 from app.application.analogs.use_cases import FindHistoricalAnalogs
-from app.application.charts.use_cases import BuildPriceChart
+from app.application.charts.use_cases import (
+    BuildComparisonChart,
+    BuildDistributionChart,
+    BuildDrawdownChart,
+    BuildMacroChart,
+    BuildPriceChart,
+    BuildSentimentGauge,
+    RenderChart,
+)
 from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.event_intelligence.use_cases import AnalyzeEventImpact, ProcessIncomingEvent
 from app.application.macro.use_cases import InterpretMacroEvent
@@ -60,7 +69,12 @@ from app.infrastructure.agents.tools import (
     build_event_intelligence_tools,
     build_macro_tools,
     build_quant_grounding_tools,
+    build_render_comparison_chart_tool,
+    build_render_distribution_chart_tool,
+    build_render_drawdown_chart_tool,
+    build_render_macro_chart_tool,
     build_render_price_chart_tool,
+    build_render_sentiment_gauge_tool,
     build_scenario_tools,
     build_sentiment_tools,
 )
@@ -185,6 +199,12 @@ class Container:
         self._process_incoming_event_use_case: ProcessIncomingEvent | None = None
         self._chart_config: ChartConfig | None = None
         self._build_price_chart_use_case: BuildPriceChart | None = None
+        self._build_comparison_chart_use_case: BuildComparisonChart | None = None
+        self._build_drawdown_chart_use_case: BuildDrawdownChart | None = None
+        self._build_distribution_chart_use_case: BuildDistributionChart | None = None
+        self._build_macro_chart_use_case: BuildMacroChart | None = None
+        self._build_sentiment_gauge_use_case: BuildSentimentGauge | None = None
+        self._render_chart_use_case: RenderChart | None = None
 
     def get_llm_provider(self) -> LLMProvider:
         if self._llm_provider is None:
@@ -496,11 +516,23 @@ class Container:
                     )
                 )
 
+            has_vendor_news_keys = bool(
+                self._settings.marketaux_api_key
+                or self._settings.newsapi_api_key
+                or self._settings.finnhub_api_key
+            )
+            if self._settings.app_env == "development" and not has_vendor_news_keys:
+                # RSS/Yahoo and SEC EDGAR often stall on local networks; fixture data
+                # is enough for the hackathon UI when no paid news keys are configured.
+                live_providers = []
+
             fixture_provider = FixtureNewsProvider(seed_path=self._settings.news_fixture_seed_path)
             self._news_provider = AggregatingNewsProvider(
                 providers=live_providers,
                 fixture_provider=fixture_provider,
                 instrument_universe=self.get_instrument_universe(),
+                provider_timeout_seconds=self._settings.news_provider_timeout_seconds,
+                live_fetch_budget_seconds=self._settings.news_live_fetch_budget_seconds,
             )
         return self._news_provider
 
@@ -561,6 +593,67 @@ class Container:
                 chart_config=self.get_chart_config(),
             )
         return self._build_price_chart_use_case
+
+    def get_build_comparison_chart_use_case(self) -> BuildComparisonChart:
+        """Return the cached BuildComparisonChart use case."""
+        if self._build_comparison_chart_use_case is None:
+            self._build_comparison_chart_use_case = BuildComparisonChart(
+                market_data_provider=self.get_market_data_provider(),
+                instrument_universe=self.get_instrument_universe(),
+                chart_config=self.get_chart_config(),
+            )
+        return self._build_comparison_chart_use_case
+
+    def get_build_drawdown_chart_use_case(self) -> BuildDrawdownChart:
+        """Return the cached BuildDrawdownChart use case."""
+        if self._build_drawdown_chart_use_case is None:
+            self._build_drawdown_chart_use_case = BuildDrawdownChart(
+                market_data_provider=self.get_market_data_provider(),
+                instrument_universe=self.get_instrument_universe(),
+                chart_config=self.get_chart_config(),
+            )
+        return self._build_drawdown_chart_use_case
+
+    def get_build_distribution_chart_use_case(self) -> BuildDistributionChart:
+        """Return the cached BuildDistributionChart use case."""
+        if self._build_distribution_chart_use_case is None:
+            self._build_distribution_chart_use_case = BuildDistributionChart(
+                market_data_provider=self.get_market_data_provider(),
+                instrument_universe=self.get_instrument_universe(),
+                chart_config=self.get_chart_config(),
+            )
+        return self._build_distribution_chart_use_case
+
+    def get_build_macro_chart_use_case(self) -> BuildMacroChart:
+        """Return the cached BuildMacroChart use case."""
+        if self._build_macro_chart_use_case is None:
+            self._build_macro_chart_use_case = BuildMacroChart(
+                macro_data_provider=self.get_macro_data_provider(),
+                chart_config=self.get_chart_config(),
+            )
+        return self._build_macro_chart_use_case
+
+    def get_build_sentiment_gauge_use_case(self) -> BuildSentimentGauge:
+        """Return the cached BuildSentimentGauge use case."""
+        if self._build_sentiment_gauge_use_case is None:
+            self._build_sentiment_gauge_use_case = BuildSentimentGauge(
+                fear_greed_provider=self.get_fear_greed_provider(),
+                chart_config=self.get_chart_config(),
+            )
+        return self._build_sentiment_gauge_use_case
+
+    def get_render_chart_use_case(self) -> RenderChart:
+        """Return the cached RenderChart dispatcher (timeframe-toggle endpoint)."""
+        if self._render_chart_use_case is None:
+            self._render_chart_use_case = RenderChart(
+                build_price_chart=self.get_build_price_chart_use_case(),
+                build_comparison_chart=self.get_build_comparison_chart_use_case(),
+                build_drawdown_chart=self.get_build_drawdown_chart_use_case(),
+                build_distribution_chart=self.get_build_distribution_chart_use_case(),
+                build_macro_chart=self.get_build_macro_chart_use_case(),
+                build_sentiment_gauge=self.get_build_sentiment_gauge_use_case(),
+            )
+        return self._render_chart_use_case
 
     def get_generate_consequence_chain_use_case(self) -> GenerateConsequenceChain:
         """Return the cached Consequence Chain Analyst use case (issue #8).
@@ -856,21 +949,69 @@ class Container:
                     instrument_universe=self.get_instrument_universe(),
                 ),
             )
-            if self._settings.charts_enabled:
-                quant_tools = quant_tools + [
-                    build_render_price_chart_tool(
-                        build_price_chart=self.get_build_price_chart_use_case(),
-                        chart_config=self.get_chart_config(),
-                    )
-                ]
             # `macro`/`sentiment` tools (issue #21): both public, non-per-user data — same
             # "safe for the unauthenticated chat route" rationale as `quant_tools` above.
             macro_tools = build_macro_tools(use_case=self.get_interpret_macro_event_use_case())
             sentiment_tools = build_sentiment_tools(use_case=self.get_analyze_sentiment_use_case())
+            analyst_chart_tools: list[BaseTool] | None = None
+            if self._settings.charts_enabled:
+                config = self.get_chart_config()
+                quant_tools = quant_tools + [
+                    build_render_price_chart_tool(
+                        build_price_chart=self.get_build_price_chart_use_case(),
+                        chart_config=config,
+                    ),
+                    build_render_comparison_chart_tool(
+                        build_comparison_chart=self.get_build_comparison_chart_use_case(),
+                        chart_config=config,
+                    ),
+                    build_render_drawdown_chart_tool(
+                        build_drawdown_chart=self.get_build_drawdown_chart_use_case(),
+                        chart_config=config,
+                    ),
+                    build_render_distribution_chart_tool(
+                        build_distribution_chart=self.get_build_distribution_chart_use_case(),
+                        chart_config=config,
+                    ),
+                ]
+                analyst_chart_tools = [
+                    build_render_price_chart_tool(
+                        build_price_chart=self.get_build_price_chart_use_case(),
+                        chart_config=config,
+                    )
+                ]
+                advisor_tools = advisor_tools + [
+                    build_render_comparison_chart_tool(
+                        build_comparison_chart=self.get_build_comparison_chart_use_case(),
+                        chart_config=config,
+                    )
+                ]
+                consequence_tools = consequence_tools + [
+                    build_render_price_chart_tool(
+                        build_price_chart=self.get_build_price_chart_use_case(),
+                        chart_config=config,
+                    )
+                ]
+                macro_tools = macro_tools + [
+                    build_render_macro_chart_tool(
+                        build_macro_chart=self.get_build_macro_chart_use_case(),
+                        chart_config=config,
+                    )
+                ]
+                sentiment_tools = sentiment_tools + [
+                    build_render_sentiment_gauge_tool(
+                        build_sentiment_gauge=self.get_build_sentiment_gauge_use_case(),
+                    ),
+                    build_render_distribution_chart_tool(
+                        build_distribution_chart=self.get_build_distribution_chart_use_case(),
+                        chart_config=config,
+                    ),
+                ]
             self._chat_graph = build_supervisor_graph(
                 self._get_chat_model(),
                 checkpointer,
                 advisor_tools=advisor_tools,
+                analyst_tools=analyst_chart_tools,
                 consequence_tools=consequence_tools,
                 macro_tools=macro_tools,
                 quant_tools=quant_tools,

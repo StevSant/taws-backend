@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +9,7 @@ from app.api.middleware import RequestIDMiddleware, unhandled_exception_handler
 from app.api.v1.routers import (
     briefing_export_router,
     briefings_router,
+    charts_router,
     chat_router,
     consequence_chains_router,
     event_intelligence_router,
@@ -31,16 +33,27 @@ from app.core.logging import configure_logging
 from app.infrastructure.scheduling import build_watchdog_scheduler
 from app.infrastructure.telegram import register_telegram_webhook
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
     settings = get_settings()
+    container = get_container()
+
+    # Preload radar reads so the first browser visit does not pay cold-start DI +
+    # fixture assembly on the request path.
+    try:
+        container.get_instrument_universe()
+        await container.get_news_provider().fetch_news(since_hours=48, limit=50)
+    except Exception:
+        logger.warning("Radar warmup failed; first /radar load may be slower.", exc_info=True)
 
     # Watchdog/Notifier scheduled jobs (issue #10) — started on boot, shut down on exit so
     # no background task is left dangling. Scan/job logic itself lives in
     # `infrastructure/scheduling`; this is deliberately just start/stop wiring.
-    scheduler = build_watchdog_scheduler(get_container(), settings)
+    scheduler = build_watchdog_scheduler(container, settings)
     scheduler.start()
 
     # Telegram webhook registration (issue #14) — best-effort, never blocks boot. Only
@@ -77,6 +90,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
     app.include_router(health_router)
+    app.include_router(charts_router, prefix="/api/v1")
     app.include_router(chat_router, prefix="/api/v1")
     app.include_router(instruments_router, prefix="/api/v1")
     app.include_router(news_router, prefix="/api/v1")
