@@ -2,6 +2,7 @@ from app.api.v1.dependencies.decode_bearer_token import decode_bearer_token
 from app.api.v1.dependencies.get_agent_runner import get_agent_runner
 from app.api.v1.dependencies.get_alerted_signal_tracker import get_alerted_signal_tracker
 from app.api.v1.dependencies.get_analyze_sentiment_use_case import get_analyze_sentiment_use_case
+from app.api.v1.dependencies.get_bot_registration import get_bot_registration
 from app.api.v1.dependencies.get_briefing_command_handler import get_briefing_command_handler
 from app.api.v1.dependencies.get_briefing_document_renderer import get_briefing_document_renderer
 from app.api.v1.dependencies.get_briefing_repository import get_briefing_repository
@@ -38,6 +39,7 @@ from app.api.v1.dependencies.get_signal_command_handler import get_signal_comman
 from app.api.v1.dependencies.get_signal_repository import get_signal_repository
 from app.api.v1.dependencies.get_simulate_command_handler import get_simulate_command_handler
 from app.api.v1.dependencies.get_telegram_link_repository import get_telegram_link_repository
+from app.api.v1.dependencies.get_user_bot_repository import get_user_bot_repository
 from app.api.v1.dependencies.get_telegram_link_token_repository import (
     get_telegram_link_token_repository,
 )
@@ -78,8 +80,10 @@ __all__ = [
     "get_signal_command_handler",
     "get_signal_repository",
     "get_simulate_command_handler",
+    "get_bot_registration",
     "get_telegram_link_repository",
     "get_telegram_link_token_repository",
+    "get_user_bot_repository",
     "get_telegram_messenger",
     "get_vector_store",
     "get_watchlist_repository",

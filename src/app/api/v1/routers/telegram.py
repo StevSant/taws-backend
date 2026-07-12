@@ -6,6 +6,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 
 from app.api.v1.dependencies import (
+    get_bot_registration,
     get_briefing_command_handler,
     get_chat_message_handler,
     get_impact_command_handler,
@@ -15,16 +16,25 @@ from app.api.v1.dependencies import (
     get_telegram_link_repository,
     get_telegram_link_token_repository,
     get_telegram_messenger,
+    get_user_bot_repository,
     require_current_user,
 )
-from app.api.v1.schemas import CurrentUser, TelegramLinkStatusResponse, TelegramLinkTokenResponse
+from app.api.v1.schemas import (
+    CurrentUser,
+    RegisterBotRequest,
+    RegisterBotResponse,
+    TelegramLinkStatusResponse,
+    TelegramLinkTokenResponse,
+)
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.core.config import Settings, get_settings
 from app.domain.telegram.entities import TelegramLinkToken
 from app.domain.telegram.ports import (
+    BotRegistrationPort,
     TelegramLinkRepository,
     TelegramLinkTokenRepository,
     TelegramMessenger,
+    UserBotRepository,
 )
 from app.infrastructure.telegram import (
     BriefingCommand,
@@ -38,6 +48,7 @@ from app.infrastructure.telegram import (
     SimulateCommand,
     SimulateCommandHandler,
     StartCommand,
+    TelegramBotClient,
     UnknownCommand,
     format_unknown_command_reply,
     format_welcome_reply,
@@ -47,6 +58,32 @@ from app.infrastructure.telegram import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
+
+
+@router.post("/register-bot", status_code=status.HTTP_201_CREATED)
+async def register_bot(
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    body: RegisterBotRequest,
+    registration: Annotated[BotRegistrationPort, Depends(get_bot_registration)],
+) -> RegisterBotResponse:
+    """Register a user-owned Telegram bot from BotFather's welcome message.
+
+    The user pastes the full message they received from BotFather after creating
+    their bot. The system:
+    1. Extracts the bot token and username from the text
+    2. Calls `getUpdates` to find the user's chat_id
+    3. Sets up the webhook for this bot
+    4. Persists the bot registration
+
+    The user must send at least one message to their bot before calling this endpoint.
+    """
+    bot = await registration.register(user_id=user.id, botfather_text=body.botfather_text)
+    return RegisterBotResponse(
+        bot_id=bot.id,
+        bot_username=bot.bot_username,
+        chat_id=bot.chat_id,
+        status="ok",
+    )
 
 
 @router.post("/link-token", status_code=status.HTTP_201_CREATED)
@@ -156,16 +193,6 @@ async def telegram_webhook(
     if command is None:
         return {"ok": True}
 
-    # "Always ack 200 to Telegram" is a webhook-contract concern (avoid retry storms), not
-    # a domain concern — so it's enforced HERE at the router boundary, not inside any
-    # handler (same split as `chat.py`'s SSE stream: the domain layer surfaces its own
-    # errors, the transport boundary decides how to keep its contract intact around
-    # them). `LinkTelegramAccount.execute()`'s `consume()`/`link()` can raise on a
-    # transient Supabase/network error; that's safe to swallow because `consume()` is
-    # idempotent — a Telegram retry of the same `/start <token>` update after a transient
-    # failure just re-attempts the same (safe) consume, it doesn't double-link anything.
-    # The other handlers' lookups are all safe to retry too (reads, or — for `/simular`'s
-    # ack step — a message send that's fine to duplicate on a genuine Telegram retry).
     try:
         match command:
             case StartCommand():
@@ -201,11 +228,90 @@ async def telegram_webhook(
                 if messenger is not None:
                     await messenger.send_text(command.chat_id, format_unknown_command_reply())
                 return {"ok": True}
-            case _:  # pragma: no cover — TelegramCommand is a closed union; unreachable.
+            case _:
                 return {"ok": True}
-    except Exception:  # noqa: BLE001 — must always ack 200; see docstring above.
+    except Exception:
         logger.exception(
             "Unhandled error handling Telegram command for chat_id=%s", command.chat_id
+        )
+        return {"ok": False}
+
+
+@router.post("/webhook/{bot_id}", status_code=status.HTTP_200_OK)
+async def telegram_webhook_for_bot(
+    bot_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    bot_repository: Annotated[UserBotRepository, Depends(get_user_bot_repository)],
+    briefing_handler: Annotated[
+        BriefingCommandHandler | None, Depends(get_briefing_command_handler)
+    ],
+    signal_handler: Annotated[SignalCommandHandler | None, Depends(get_signal_command_handler)],
+    simulate_handler: Annotated[
+        SimulateCommandHandler | None, Depends(get_simulate_command_handler)
+    ],
+    impact_handler: Annotated[
+        ImpactCommandHandler | None, Depends(get_impact_command_handler)
+    ],
+    chat_handler: Annotated[
+        ChatMessageHandler | None, Depends(get_chat_message_handler)
+    ],
+) -> dict[str, bool]:
+    """Webhook endpoint for a user-registered Telegram bot.
+
+    Identical logic to the main webhook, but uses the registered bot's token
+    to send replies instead of the `.env` bot token. The user's bot is looked
+    up by `bot_id` from the URL path.
+    """
+    bot = await bot_repository.get_by_id(bot_id)
+    if bot is None:
+        logger.warning("Unknown bot_id %s in webhook call", bot_id)
+        return {"ok": False}
+
+    payload: dict[str, Any] = await request.json()
+    command = parse_telegram_command(payload)
+    if command is None:
+        return {"ok": True}
+
+    messenger = TelegramBotClient(bot_token=bot.bot_token)
+
+    try:
+        match command:
+            case StartCommand():
+                await messenger.send_text(command.chat_id, format_welcome_reply())
+                return {"ok": True}
+            case BriefingCommand():
+                if briefing_handler is not None:
+                    await briefing_handler.handle(command)
+                return {"ok": True}
+            case SignalCommand():
+                if signal_handler is not None:
+                    await signal_handler.handle(command)
+                return {"ok": True}
+            case SimulateCommand():
+                if simulate_handler is not None:
+                    should_run = await simulate_handler.send_acknowledgement(command)
+                    if should_run:
+                        background_tasks.add_task(simulate_handler.deliver_result, command)
+                return {"ok": True}
+            case ImpactCommand():
+                if impact_handler is not None:
+                    await impact_handler.handle(command)
+                return {"ok": True}
+            case ChatMessage():
+                if chat_handler is not None:
+                    await chat_handler.handle(command)
+                return {"ok": True}
+            case UnknownCommand():
+                await messenger.send_text(command.chat_id, format_unknown_command_reply())
+                return {"ok": True}
+            case _:
+                return {"ok": True}
+    except Exception:
+        logger.exception(
+            "Unhandled error handling Telegram command for bot_id=%s, chat_id=%s",
+            bot_id,
+            command.chat_id,
         )
         return {"ok": False}
 

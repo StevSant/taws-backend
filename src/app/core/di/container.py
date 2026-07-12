@@ -56,9 +56,11 @@ from app.domain.scenario.ports import ScenarioRepository
 from app.domain.sentiment.ports import FearGreedProvider
 from app.domain.signals.ports import SignalRepository
 from app.domain.telegram.ports import (
+    BotRegistrationPort,
     TelegramLinkRepository,
     TelegramLinkTokenRepository,
     TelegramMessenger,
+    UserBotRepository,
 )
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
@@ -122,6 +124,7 @@ from app.infrastructure.persistence import (
     SupabaseSignalRepository,
     SupabaseTelegramLinkRepository,
     SupabaseTelegramLinkTokenRepository,
+    SupabaseUserBotRepository,
     SupabaseWatchlistRepository,
 )
 from app.infrastructure.seeds import load_preset_scenarios_seed, load_universe_seed
@@ -137,6 +140,7 @@ from app.infrastructure.telegram import (
     SignalCommandHandler,
     SimulateCommandHandler,
     TelegramBotClient,
+    TelegramBotRegistration,
 )
 from app.infrastructure.universe import JsonInstrumentUniverse
 from app.infrastructure.vectorstore import PgvectorStore
@@ -181,6 +185,8 @@ class Container:
         self._telegram_link_token_repository: TelegramLinkTokenRepository | None = None
         self._telegram_messenger: TelegramMessenger | None = None
         self._link_telegram_account_use_case: LinkTelegramAccount | None = None
+        self._user_bot_repository: UserBotRepository | None = None
+        self._bot_registration: BotRegistrationPort | None = None
         self._scenario_repository: ScenarioRepository | None = None
         self._scenario_simulation_runner: ScenarioSimulationRunner | None = None
         self._briefing_command_handler: BriefingCommandHandler | None = None
@@ -378,6 +384,24 @@ class Container:
                 messenger=messenger,
             )
         return self._link_telegram_account_use_case
+
+    def get_user_bot_repository(self) -> UserBotRepository:
+        """Return the cached `UserBotRepository` backed by Supabase."""
+        if self._user_bot_repository is None:
+            self._user_bot_repository = SupabaseUserBotRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+            )
+        return self._user_bot_repository
+
+    def get_bot_registration(self) -> BotRegistrationPort:
+        """Return the cached `BotRegistrationPort` for registering user-owned bots."""
+        if self._bot_registration is None:
+            self._bot_registration = TelegramBotRegistration(
+                repository=self.get_user_bot_repository(),
+                webhook_base_url=self._settings.telegram_webhook_url or "",
+            )
+        return self._bot_registration
 
     def get_briefing_command_handler(self) -> BriefingCommandHandler | None:
         """Return the cached `/briefing` command handler, or `None` when Telegram isn't

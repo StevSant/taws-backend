@@ -1,3 +1,4 @@
+from app.infrastructure.telegram.botfather_parser import BotfatherParseResult, parse_botfather_text
 from app.infrastructure.telegram.briefing_command import BriefingCommand
 from app.infrastructure.telegram.briefing_command_handler import BriefingCommandHandler
 from app.infrastructure.telegram.chat_message import ChatMessage
@@ -25,10 +26,12 @@ from app.infrastructure.telegram.simulate_command import SimulateCommand
 from app.infrastructure.telegram.simulate_command_handler import SimulateCommandHandler
 from app.infrastructure.telegram.start_command import StartCommand
 from app.infrastructure.telegram.telegram_bot_client import TelegramBotClient
+from app.infrastructure.telegram.telegram_bot_registration import TelegramBotRegistration
 from app.infrastructure.telegram.telegram_command import TelegramCommand
 from app.infrastructure.telegram.unknown_command import UnknownCommand
 
 __all__ = [
+    "BotfatherParseResult",
     "BriefingCommand",
     "BriefingCommandHandler",
     "ChatMessage",
@@ -41,6 +44,7 @@ __all__ = [
     "SimulateCommandHandler",
     "StartCommand",
     "TelegramBotClient",
+    "TelegramBotRegistration",
     "TelegramCommand",
     "UnknownCommand",
     "format_briefing_reply",
@@ -57,5 +61,6 @@ __all__ = [
     "parse_simulate_command",
     "parse_start_command",
     "parse_telegram_command",
+    "parse_botfather_text",
     "register_telegram_webhook",
 ]

@@ -50,6 +50,8 @@ from app.api.v1.schemas.scenario_spec_response import ScenarioSpecResponse
 from app.api.v1.schemas.sentiment_reading_response import SentimentReadingResponse
 from app.api.v1.schemas.signal_evidence_response import SignalEvidenceResponse
 from app.api.v1.schemas.signal_response import SignalResponse
+from app.api.v1.schemas.register_bot_request import RegisterBotRequest
+from app.api.v1.schemas.register_bot_response import RegisterBotResponse
 from app.api.v1.schemas.telegram_link_status_response import TelegramLinkStatusResponse
 from app.api.v1.schemas.telegram_link_token_response import TelegramLinkTokenResponse
 from app.api.v1.schemas.unusual_move_response import UnusualMoveResponse
@@ -63,6 +65,8 @@ from app.api.v1.schemas.watchlist_response import WatchlistResponse
 __all__ = [
     "AlertResponse",
     "BriefingExportEmailRequest",
+    "RegisterBotRequest",
+    "RegisterBotResponse",
     "BriefingExportEmailResponse",
     "BriefingInstrumentSectionResponse",
     "BriefingResponse",
