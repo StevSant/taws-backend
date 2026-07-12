@@ -19,6 +19,14 @@ class UserBotRepository(ABC):
         ...
 
     @abstractmethod
+    async def get_by_chat_id(self, chat_id: str) -> list[UserBot]:
+        ...
+
+    @abstractmethod
+    async def get_all(self) -> list[UserBot]:
+        ...
+
+    @abstractmethod
     async def save(self, bot: UserBot) -> UserBot:
         ...
 

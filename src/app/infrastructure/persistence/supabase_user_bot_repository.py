@@ -27,6 +27,16 @@ class SupabaseUserBotRepository(UserBotRepository):
         response = await client.table(_TABLE).select("*").eq("id", bot_id).execute()
         return user_bot_from_row(response.data[0]) if response.data else None
 
+    async def get_by_chat_id(self, chat_id: str) -> list[UserBot]:
+        client = await self._clients.get()
+        response = await client.table(_TABLE).select("*").eq("chat_id", chat_id).execute()
+        return [user_bot_from_row(row) for row in response.data]
+
+    async def get_all(self) -> list[UserBot]:
+        client = await self._clients.get()
+        response = await client.table(_TABLE).select("*").execute()
+        return [user_bot_from_row(row) for row in response.data]
+
     async def save(self, bot: UserBot) -> UserBot:
         client = await self._clients.get()
         row = {

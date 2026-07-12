@@ -20,6 +20,7 @@ from app.api.v1.dependencies import (
     get_user_bot_repository,
     require_current_user,
 )
+from app.core.di import Container, get_container
 from app.api.v1.schemas import (
     CurrentUser,
     RegisterBotRequest,
@@ -250,6 +251,7 @@ async def telegram_webhook_for_bot(
     request: Request,
     background_tasks: BackgroundTasks,
     bot_repository: Annotated[UserBotRepository, Depends(get_user_bot_repository)],
+    container: Annotated[Container, Depends(get_container)],
     briefing_handler: Annotated[
         BriefingCommandHandler | None, Depends(get_briefing_command_handler)
     ],
@@ -306,8 +308,11 @@ async def telegram_webhook_for_bot(
                     await impact_handler.handle(command)
                 return {"ok": True}
             case ChatMessage():
-                if chat_handler is not None:
-                    await chat_handler.handle(command)
+                handler = chat_handler or ChatMessageHandler(
+                    agent_runner=container.get_agent_runner(),
+                    messenger=messenger,
+                )
+                await handler.handle(command)
                 return {"ok": True}
             case UnknownCommand():
                 await messenger.send_text(command.chat_id, format_unknown_command_reply())

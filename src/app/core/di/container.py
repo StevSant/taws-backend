@@ -120,6 +120,7 @@ from app.infrastructure.news import (
 from app.infrastructure.notification import (
     LoggingEmailSender,
     LoggingNotificationChannel,
+    MultiBotNotificationChannel,
     TelegramNotificationChannel,
 )
 from app.infrastructure.persistence import (
@@ -382,8 +383,8 @@ class Container:
         """Return the cached Watchdog alert delivery channel.
 
         `TelegramNotificationChannel` when `TELEGRAM_BOT_TOKEN` is configured (issue #14);
-        `LoggingNotificationChannel` (no-op/logging stand-in) otherwise — same
-        "graceful degradation when unconfigured" pattern as `get_agent_memory`'s Redis
+        `MultiBotNotificationChannel` (fans out to all registered user bots) otherwise —
+        same "graceful degradation when unconfigured" pattern as `get_agent_memory`'s Redis
         fallback and `get_news_provider`'s per-key-gated fan-out. Nothing in
         `application/` or `api/` needs to know which adapter is behind the port.
         """
@@ -396,7 +397,11 @@ class Container:
                     telegram_link_repository=self.get_telegram_link_repository(),
                 )
             else:
-                self._notification_channel = LoggingNotificationChannel()
+                self._notification_channel = MultiBotNotificationChannel(
+                    user_bot_repository=self.get_user_bot_repository(),
+                    watchlist_repository=self.get_watchlist_repository(),
+                    telegram_link_repository=self.get_telegram_link_repository(),
+                )
         return self._notification_channel
 
     def get_alerted_signal_tracker(self) -> AlertedSignalTracker:
