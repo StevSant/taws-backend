@@ -1,4 +1,15 @@
+from app.api.middleware.duplicate_watchlist_item_handler import (
+    duplicate_watchlist_item_handler,
+)
 from app.api.middleware.exception_handler import unhandled_exception_handler
+from app.api.middleware.invalid_watchlist_identifier_handler import (
+    invalid_watchlist_identifier_handler,
+)
 from app.api.middleware.request_id import RequestIDMiddleware
 
-__all__ = ["RequestIDMiddleware", "unhandled_exception_handler"]
+__all__ = [
+    "RequestIDMiddleware",
+    "duplicate_watchlist_item_handler",
+    "invalid_watchlist_identifier_handler",
+    "unhandled_exception_handler",
+]
