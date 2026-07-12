@@ -24,3 +24,24 @@ class SignalClassification(BaseModel):
             "news evidence — never facts outside it."
         )
     )
+    thesis: str = Field(
+        default="",
+        description=(
+            "A 3-5 sentence analytical thesis: what the evidence implies for the "
+            "instrument's outlook and why. Grounded strictly in the provided news, price "
+            "context, and historical analogs — never facts outside them."
+        ),
+    )
+    key_drivers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The concrete factors from the evidence driving this call, each a short phrase."
+        ),
+    )
+    risk_factors: list[str] = Field(
+        default_factory=list,
+        description=(
+            "What would invalidate this call — the main risks or counterpoints, each a "
+            "short phrase."
+        ),
+    )

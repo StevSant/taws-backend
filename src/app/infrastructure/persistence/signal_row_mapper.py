@@ -18,6 +18,12 @@ def signal_from_row(row: Any) -> Signal:
         confidence=row["confidence"],
         evidence=[_evidence_from_row(item) for item in row.get("evidence") or []],
         disclaimer=row["disclaimer"],
+        thesis=row.get("thesis") or "",
+        key_drivers=list(row.get("key_drivers") or []),
+        risk_factors=list(row.get("risk_factors") or []),
+        # Default True so rows predating the analysis columns (issue #40) read as real
+        # analyses rather than being mislabeled "análisis no disponible".
+        analysis_available=row.get("analysis_available", True),
         price_delta=row.get("price_delta"),
         created_at=parse_supabase_timestamp(row["created_at"]),
     )
