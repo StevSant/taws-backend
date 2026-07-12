@@ -32,7 +32,9 @@ from app.api.v1.schemas.macro_event_interpretation_response import (
 from app.api.v1.schemas.macro_observation_response import MacroObservationResponse
 from app.api.v1.schemas.macro_state_response import MacroStateResponse
 from app.api.v1.schemas.market_stats_response import MarketStatsResponse
+from app.api.v1.schemas.news_entity_response import NewsEntityResponse
 from app.api.v1.schemas.news_item_response import NewsItemResponse
+from app.api.v1.schemas.news_list_response import NewsListResponse
 from app.api.v1.schemas.open_review_item_response import OpenReviewItemResponse
 from app.api.v1.schemas.review_decision_request import ReviewDecisionRequest
 from app.api.v1.schemas.review_state_response import ReviewStateResponse
@@ -88,7 +90,9 @@ __all__ = [
     "MacroObservationResponse",
     "MacroStateResponse",
     "MarketStatsResponse",
+    "NewsEntityResponse",
     "NewsItemResponse",
+    "NewsListResponse",
     "OpenReviewItemResponse",
     "ReviewDecisionRequest",
     "ReviewStateResponse",
