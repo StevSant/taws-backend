@@ -158,7 +158,16 @@ class Settings(BaseSettings):
     fred_base_url: str = "https://api.stlouisfed.org/fred"
     fred_rates_series_id: str = "FEDFUNDS"
     fred_cpi_series_id: str = "CPIAUCSL"
+    # Additional "Contexto de mercado" indicators (issue #58): daily FRED series so their
+    # sparkline history is dense. Gold = London PM fixing (USD/oz), oil = WTI spot (USD/bbl),
+    # 10Y = 10-Year Treasury constant-maturity yield (%).
+    fred_gold_series_id: str = "GOLDPMGBD228NLBM"
+    fred_oil_series_id: str = "DCOILWTICO"
+    fred_treasury_10y_series_id: str = "DGS10"
     fred_timeout_seconds: float = 10.0
+    # Default/max number of observations returned by GET /api/v1/macro/series/{indicator}.
+    macro_series_default_days: int = 90
+    macro_series_max_days: int = 365
 
     # --- VIX (volatility regime, MacroDataProvider port; via yfinance, no key needed) ---
     vix_symbol: str = "^VIX"
@@ -170,6 +179,9 @@ class Settings(BaseSettings):
     fixture_macro_rate: float = 5.25
     fixture_macro_cpi: float = 3.2
     fixture_macro_vix: float = 18.5
+    fixture_macro_gold: float = 2350.0
+    fixture_macro_oil: float = 78.0
+    fixture_macro_treasury_10y: float = 4.25
 
     # --- alternative.me (Crypto Fear & Greed Index; behind the FearGreedProvider port);
     # no key required ---

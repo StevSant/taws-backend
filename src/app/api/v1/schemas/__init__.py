@@ -19,6 +19,7 @@ from app.api.v1.schemas.conversation_title_response import ConversationTitleResp
 from app.api.v1.schemas.current_user import CurrentUser
 from app.api.v1.schemas.earnings_calendar_entry_response import EarningsCalendarEntryResponse
 from app.api.v1.schemas.enriched_event_response import EnrichedEventResponse
+from app.api.v1.schemas.enriched_instrument_response import EnrichedInstrumentResponse
 from app.api.v1.schemas.event_intelligence_demo_request import EventIntelligenceDemoRequest
 from app.api.v1.schemas.event_study_event_response import EventStudyEventResponse
 from app.api.v1.schemas.event_study_response import EventStudyResponse
@@ -30,6 +31,8 @@ from app.api.v1.schemas.generate_scenario_request import GenerateScenarioRequest
 from app.api.v1.schemas.generate_signal_request import GenerateSignalRequest
 from app.api.v1.schemas.generate_title_request import GenerateTitleRequest
 from app.api.v1.schemas.instrument_fundamentals_response import InstrumentFundamentalsResponse
+from app.api.v1.schemas.instrument_highlights_response import InstrumentHighlightsResponse
+from app.api.v1.schemas.instrument_page_response import InstrumentPageResponse
 from app.api.v1.schemas.instrument_response import InstrumentResponse
 from app.api.v1.schemas.interpret_macro_event_request import InterpretMacroEventRequest
 from app.api.v1.schemas.macro_asset_class_impact_response import MacroAssetClassImpactResponse
@@ -37,6 +40,7 @@ from app.api.v1.schemas.macro_event_interpretation_response import (
     MacroEventInterpretationResponse,
 )
 from app.api.v1.schemas.macro_observation_response import MacroObservationResponse
+from app.api.v1.schemas.macro_series_response import MacroSeriesResponse
 from app.api.v1.schemas.macro_state_response import MacroStateResponse
 from app.api.v1.schemas.market_pulse_response import MarketPulseResponse
 from app.api.v1.schemas.market_stats_response import MarketStatsResponse
@@ -97,6 +101,7 @@ __all__ = [
     "CurrentUser",
     "EarningsCalendarEntryResponse",
     "EnrichedEventResponse",
+    "EnrichedInstrumentResponse",
     "EventIntelligenceDemoRequest",
     "EventStudyEventResponse",
     "EventStudyResponse",
@@ -109,11 +114,14 @@ __all__ = [
     "GenerateSignalRequest",
     "GenerateTitleRequest",
     "InstrumentFundamentalsResponse",
+    "InstrumentHighlightsResponse",
+    "InstrumentPageResponse",
     "InstrumentResponse",
     "InterpretMacroEventRequest",
     "MacroAssetClassImpactResponse",
     "MacroEventInterpretationResponse",
     "MacroObservationResponse",
+    "MacroSeriesResponse",
     "MacroStateResponse",
     "MarketStatsResponse",
     "NewsEntityResponse",
