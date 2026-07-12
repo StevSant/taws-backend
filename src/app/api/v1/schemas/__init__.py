@@ -79,6 +79,7 @@ from app.api.v1.schemas.watchlist_create_request import WatchlistCreateRequest
 from app.api.v1.schemas.watchlist_item_add_request import WatchlistItemAddRequest
 from app.api.v1.schemas.watchlist_item_response import WatchlistItemResponse
 from app.api.v1.schemas.watchlist_rename_request import WatchlistRenameRequest
+from app.api.v1.schemas.watchlist_reorder_request import WatchlistReorderRequest
 from app.api.v1.schemas.watchlist_response import WatchlistResponse
 
 __all__ = [
@@ -157,5 +158,6 @@ __all__ = [
     "WatchlistItemAddRequest",
     "WatchlistItemResponse",
     "WatchlistRenameRequest",
+    "WatchlistReorderRequest",
     "WatchlistResponse",
 ]

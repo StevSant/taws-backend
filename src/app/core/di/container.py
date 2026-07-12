@@ -29,6 +29,7 @@ from app.application.sentiment.use_cases import AnalyzeSentiment
 from app.application.signals.use_cases import GenerateSignal
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.application.watchdog import AlertedSignalTracker
+from app.application.watchlist.use_cases import ReorderWatchlists
 from app.core.config import Settings, get_settings
 from app.domain.agents.ports import (
     AgentMemory,
@@ -184,6 +185,7 @@ class Container:
         self._agent_memory: AgentMemory | None = None
         self._conversation_repository: ConversationRepository | None = None
         self._watchlist_repository: WatchlistRepository | None = None
+        self._reorder_watchlists_use_case: ReorderWatchlists | None = None
         self._note_repository: NoteRepository | None = None
         self._signal_repository: SignalRepository | None = None
         self._briefing_repository: BriefingRepository | None = None
@@ -331,6 +333,19 @@ class Container:
                 retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._watchlist_repository
+
+    def get_reorder_watchlists_use_case(self) -> ReorderWatchlists:
+        """Return the cached `ReorderWatchlists` use case (issue #66).
+
+        Backs `PATCH /api/v1/watchlists/reorder`. Only depends on the watchlist
+        repository, so caching one instance is safe — same shape as the other
+        single-port use cases wired here.
+        """
+        if self._reorder_watchlists_use_case is None:
+            self._reorder_watchlists_use_case = ReorderWatchlists(
+                watchlist_repository=self.get_watchlist_repository()
+            )
+        return self._reorder_watchlists_use_case
 
     def get_note_repository(self) -> NoteRepository:
         """Return the cached per-user NoteRepository (issue #62), Supabase-backed with the

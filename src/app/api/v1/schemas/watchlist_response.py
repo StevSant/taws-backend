@@ -12,3 +12,4 @@ class WatchlistResponse(BaseModel):
     user_id: str
     name: str
     created_at: datetime
+    position: int | None = None
