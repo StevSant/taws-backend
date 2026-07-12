@@ -10,6 +10,8 @@ from pydantic import ValidationError
 from app.api.v1.dependencies import (
     get_agent_runner,
     get_generate_conversation_title_use_case,
+    get_instrument_universe,
+    get_news_item_repository,
     get_realtime_session_provider,
     get_stt_provider,
     get_tts_provider,
@@ -45,6 +47,7 @@ from app.domain.agents.ports import (
     STTProvider,
     TTSProvider,
 )
+from app.domain.market.ports import InstrumentUniverse, NewsItemRepository
 from app.infrastructure.realtime import REALTIME_INSTRUCTIONS
 from app.infrastructure.realtime.tools import (
     ToolNotFoundError,
@@ -117,6 +120,8 @@ async def stream_chat(
     payload: ChatRequest,
     user: Annotated[CurrentUser, Depends(require_current_user)],
     agent_runner: Annotated[AgentRunner, Depends(get_agent_runner)],
+    instrument_universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
+    news_item_repository: Annotated[NewsItemRepository, Depends(get_news_item_repository)],
 ) -> StreamingResponse:
     """Stream an assistant reply over Server-Sent Events (SSE protocol v2).
 
@@ -127,12 +132,26 @@ async def stream_chat(
     kept by the graph's checkpointer, keyed by `payload.thread_id`. Requires an
     authenticated user (see `require_current_user`); `user.id` is threaded through to
     the agent graph's config for future per-tenant tool access.
+
+    An optional `payload.asset_symbol` or `payload.news_id` (issue #73) is resolved via
+    the injected `InstrumentUniverse` / `NewsItemRepository` ports into a grounding string
+    that anchors the agent's answer on that asset/news; omit both to behave as before.
     """
-    use_case = StreamReply(agent_runner=agent_runner)
+    use_case = StreamReply(
+        agent_runner=agent_runner,
+        instrument_universe=instrument_universe,
+        news_item_repository=news_item_repository,
+    )
     thread_id = payload.thread_id or _DEFAULT_THREAD_ID
     message = Message(role=MessageRole.USER, content=payload.message)
 
-    event_stream = use_case.execute(thread_id, message, user.id)
+    event_stream = use_case.execute(
+        thread_id,
+        message,
+        user.id,
+        asset_symbol=payload.asset_symbol,
+        news_id=payload.news_id,
+    )
     return StreamingResponse(_to_sse(event_stream), media_type="text/event-stream")
 
 
