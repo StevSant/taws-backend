@@ -24,7 +24,9 @@ Given a news event, produce a structured JSON analysis with the following fields
 - reasoning: brief explanation of the analysis
 - suggestedQuestions: list of 1-3 follow-up questions a trader might ask
 
-Respond ONLY with valid JSON. No markdown, no code fences, no extra text."""
+Respond ONLY with valid JSON. No markdown, no code fences, no extra text.
+
+IMPORTANT: Write the summary, reasoning, and suggestedQuestions in the SAME LANGUAGE as the event title and content."""  # noqa: E501
 
 _IMPACT_SYSTEM_PROMPT = """You are a financial intelligence analyst. Your job is to analyze \
 how a specific market sector or asset is affected by a given news event.
@@ -36,7 +38,9 @@ Consider:
 - Time horizon: short-term vs long-term implications
 - Magnitude: mild, moderate, or severe impact
 
-Respond with a plain text analysis (2-4 paragraphs). No markdown, no JSON, no extra formatting."""
+Respond with a plain text analysis (2-4 paragraphs). No markdown, no JSON, no extra formatting.
+
+IMPORTANT: Write the analysis in the SAME LANGUAGE as the event title and content."""  # noqa: E501
 
 _ANALYSIS_RESPONSE_SCHEMA = {
     "type": "object",
