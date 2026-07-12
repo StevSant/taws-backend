@@ -35,6 +35,9 @@ from app.api.v1.dependencies.get_preset_scenario_rows import get_preset_scenario
 from app.api.v1.dependencies.get_process_incoming_event_use_case import (
     get_process_incoming_event_use_case,
 )
+from app.api.v1.dependencies.get_realtime_session_provider import (
+    get_realtime_session_provider,
+)
 from app.api.v1.dependencies.get_render_chart_use_case import get_render_chart_use_case
 from app.api.v1.dependencies.get_scenario_repository import get_scenario_repository
 from app.api.v1.dependencies.get_scenario_simulation_runner import get_scenario_simulation_runner
@@ -85,6 +88,7 @@ __all__ = [
     "get_notification_channel",
     "get_preset_scenario_rows",
     "get_process_incoming_event_use_case",
+    "get_realtime_session_provider",
     "get_render_chart_use_case",
     "get_scenario_repository",
     "get_scenario_simulation_runner",

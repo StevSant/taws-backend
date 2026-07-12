@@ -1,13 +1,27 @@
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
-from app.api.v1.dependencies import get_agent_runner, require_current_user
-from app.api.v1.schemas import ChatRequest, CurrentUser
+from app.api.v1.dependencies import (
+    get_agent_runner,
+    get_realtime_session_provider,
+    require_current_user,
+)
+from app.api.v1.schemas import (
+    ChatRequest,
+    CurrentUser,
+    RealtimeSessionResponse,
+    RealtimeToolRequest,
+    RealtimeToolResponse,
+)
 from app.application.chat.use_cases import StreamReply
+from app.core.config import Settings, get_settings
+from app.core.di import Container, get_container
 from app.domain.agents.entities import (
     AgentStreamEvent,
     ChartEvent,
@@ -17,11 +31,28 @@ from app.domain.agents.entities import (
     TokenEvent,
     TraceEvent,
 )
-from app.domain.agents.ports import AgentRunner
+from app.domain.agents.ports import AgentRunner, RealtimeSessionProvider
+from app.infrastructure.realtime.tools import (
+    ToolNotFoundError,
+    build_realtime_tool_schemas,
+    dispatch_realtime_tool,
+    validate_tool_args,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 _DEFAULT_THREAD_ID = "default"
+
+_REALTIME_INSTRUCTIONS = (
+    "You are TAWS Voice, a spoken market-intelligence assistant. Answer briefly and "
+    "conversationally. Use the provided tools to ground every market claim in real "
+    "data — call get_market_data for prices, get_news for headlines, list_signals for "
+    "existing Analyst signals, and generate_signal to produce a fresh one (acknowledge "
+    "verbally before that slower call). Never give personalized financial advice; this "
+    "is research and information only."
+)
 
 
 def _to_sse_frame(event: AgentStreamEvent) -> str:
@@ -89,3 +120,87 @@ async def stream_chat(
 
     event_stream = use_case.execute(thread_id, message, user.id)
     return StreamingResponse(_to_sse(event_stream), media_type="text/event-stream")
+
+
+@router.post("/realtime/session", response_model=RealtimeSessionResponse)
+async def create_realtime_session(
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    provider: Annotated[
+        RealtimeSessionProvider | None, Depends(get_realtime_session_provider)
+    ],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> RealtimeSessionResponse:
+    """Mint a short-lived OpenAI Realtime session for the browser's WebRTC connection.
+
+    Requires an authenticated user. Returns 503 when the Realtime feature is disabled or
+    unconfigured (`get_realtime_session_provider` -> `None`), so the frontend can hide the
+    Talk button and fall back to text chat. The server authors the tool schema list and
+    instructions here — the browser never chooses which tools the session exposes — and
+    the acting `user_id` comes from the verified JWT. Only the ephemeral `ek_*` secret is
+    returned; the real Realtime API key never leaves the backend.
+    """
+    if provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Realtime voice is not enabled",
+        )
+
+    tools = build_realtime_tool_schemas()
+    session = await provider.mint_ephemeral_session(
+        user_id=user.id,
+        model=settings.openai_realtime_model,
+        voice=settings.openai_realtime_voice,
+        instructions=_REALTIME_INSTRUCTIONS,
+        tools=tools,
+        expires_in_seconds=settings.openai_realtime_ttl_seconds,
+    )
+    return RealtimeSessionResponse(
+        client_secret=session.client_secret,
+        model=session.model,
+        expires_at=session.expires_at,
+        tools=session.tools,
+    )
+
+
+@router.post("/realtime/tool", response_model=RealtimeToolResponse)
+async def execute_realtime_tool(
+    payload: RealtimeToolRequest,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    container: Annotated[Container, Depends(get_container)],
+) -> RealtimeToolResponse:
+    """Execute one model-relayed function call server-side and return its output.
+
+    Security boundary (the browser relays whatever the model emits):
+    - `payload.name` must be in the server allowlist — otherwise 400 (never dispatched).
+    - `payload.arguments` are validated against the tool's Pydantic schema — 422 on bad
+      input, before any handler runs.
+    - the acting `user_id` is taken from the verified JWT (`user.id`), NEVER from
+      `payload.arguments`.
+
+    Once past validation, a tool/use-case failure is caught and returned as a structured
+    `{"error": ...}` output (HTTP 200) so the voice model can recover verbally, rather
+    than surfacing a 500 mid-conversation.
+    """
+    try:
+        validate_tool_args(payload.name, payload.arguments)
+    except ToolNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors()
+        ) from exc
+
+    try:
+        output = await dispatch_realtime_tool(
+            container, payload.name, payload.arguments, user.id
+        )
+    except Exception as exc:  # noqa: BLE001 — recoverable tool error, not a server fault
+        logger.warning(
+            "Realtime tool %r failed for call %r", payload.name, payload.call_id,
+            exc_info=True,
+        )
+        output = {"error": str(exc)}
+
+    return RealtimeToolResponse(call_id=payload.call_id, output=output)

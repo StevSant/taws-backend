@@ -38,6 +38,21 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     openai_embedding_model: str = "text-embedding-3-small"
 
+    # --- OpenAI Realtime voice agent (ephemeral-session mint + server-side tool dispatch) ---
+    # Master switch; when False the DI container binds no realtime session provider and the
+    # `/chat/realtime/*` endpoints return 503 (same "unconfigured -> degrade" pattern as the
+    # other gated integrations in `Container`).
+    openai_realtime_enabled: bool = False
+    # SEPARATE, billed Realtime API key. MAY be left unset to reuse `openai_api_key` (the DI
+    # container falls back to it) — realtime audio bills differently, so keep the option to
+    # scope/rotate it independently once cost tracking matters.
+    openai_realtime_api_key: str | None = None
+    openai_realtime_model: str = "gpt-realtime-2.1-mini"
+    openai_realtime_voice: str = "alloy"
+    # TTL (seconds) of a minted ephemeral client secret (`ek_*`) before it expires — the
+    # short-lived token the browser holds; the real key never leaves the backend.
+    openai_realtime_ttl_seconds: int = 600
+
     supabase_url: str | None = None
     supabase_key: str | None = None
     supabase_jwt_secret: str | None = None

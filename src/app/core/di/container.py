@@ -5,7 +5,7 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from app.application.analogs.use_cases import FindHistoricalAnalogs
+from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
 from app.application.charts.use_cases import (
     BuildComparisonChart,
     BuildDistributionChart,
@@ -26,6 +26,7 @@ from app.application.scenario.use_cases import (
     SynthesizeScenarioResult,
 )
 from app.application.sentiment.use_cases import AnalyzeSentiment
+from app.application.signals.use_cases import GenerateSignal
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.application.watchdog import AlertedSignalTracker
 from app.core.config import Settings, get_settings
@@ -34,6 +35,7 @@ from app.domain.agents.ports import (
     AgentRunner,
     EmbeddingProvider,
     LLMProvider,
+    RealtimeSessionProvider,
     VectorStore,
 )
 from app.domain.briefing.ports import BriefingDocumentRenderer, BriefingRepository
@@ -129,6 +131,7 @@ from app.infrastructure.persistence import (
     SupabaseUserBotRepository,
     SupabaseWatchlistRepository,
 )
+from app.infrastructure.realtime import OpenAIRealtimeSessionProvider
 from app.infrastructure.seeds import load_preset_scenarios_seed, load_universe_seed
 from app.infrastructure.sentiment import (
     AlternativeMeFearGreedProvider,
@@ -181,6 +184,7 @@ class Container:
         self._chat_model: BaseChatModel | None = None
         self._chat_graph: Any | None = None
         self._agent_runner: AgentRunner | None = None
+        self._realtime_session_provider: RealtimeSessionProvider | None = None
         self._generate_consequence_chain_use_case: GenerateConsequenceChain | None = None
         self._notification_channel: NotificationChannel | None = None
         self._alerted_signal_tracker: AlertedSignalTracker | None = None
@@ -957,6 +961,56 @@ class Container:
         if self._agent_runner is None:
             self._agent_runner = LangGraphAgentRunner(graph=self._get_chat_graph())
         return self._agent_runner
+
+    def get_generate_signal_use_case(self) -> GenerateSignal:
+        """Build the Analyst `GenerateSignal` pipeline from its ports.
+
+        NOT cached: `GenerateSignal` composes several ports (news/market/universe/signal
+        repo/LLM + the analog RAG pair) exactly as `api/v1/routers/signals.py` builds it
+        per-request — the collaborators it depends on are themselves cached singletons, so
+        the only per-call cost is wiring a thin orchestrator. Shared by the signals router
+        and the `generate_signal` realtime tool so both run the identical pipeline.
+        """
+        return GenerateSignal(
+            news_provider=self.get_news_provider(),
+            market_data_provider=self.get_market_data_provider(),
+            instrument_universe=self.get_instrument_universe(),
+            signal_repository=self.get_signal_repository(),
+            llm_provider=self.get_llm_provider(),
+            find_historical_analogs=FindHistoricalAnalogs(
+                embedding_provider=self.get_embedding_provider(),
+                vector_store=self.get_vector_store(),
+                top_k=self._settings.historical_analogs_top_k,
+            ),
+            index_signal_analog=IndexSignalAnalog(
+                embedding_provider=self.get_embedding_provider(),
+                vector_store=self.get_vector_store(),
+            ),
+            min_distinct_sources=self._settings.min_distinct_news_sources,
+        )
+
+    def get_realtime_session_provider(self) -> RealtimeSessionProvider | None:
+        """Return the cached `RealtimeSessionProvider`, or `None` when Realtime is off.
+
+        Gated like `get_tts_provider`/`get_notification_channel`: returns `None` (not an
+        exception) so the `/chat/realtime/*` endpoints can degrade to 503 and the
+        frontend can hide the Talk button. Enabled only when `OPENAI_REALTIME_ENABLED`
+        is set AND a key is available. Hackathon-friction fallback: the dedicated
+        `openai_realtime_api_key` is preferred, but an unset one falls back to
+        `openai_api_key` so a single key can drive both plain chat and voice while the
+        billed Realtime key stays optional to configure. Only the built adapter is
+        cached (not the `None`), matching `get_telegram_messenger`'s pattern — gating is
+        cheap and deterministic from `Settings`.
+        """
+        if self._realtime_session_provider is not None:
+            return self._realtime_session_provider
+        if not self._settings.openai_realtime_enabled:
+            return None
+        api_key = self._settings.openai_realtime_api_key or self._settings.openai_api_key
+        if not api_key:
+            return None
+        self._realtime_session_provider = OpenAIRealtimeSessionProvider(api_key=api_key)
+        return self._realtime_session_provider
 
     def _get_chat_model(self) -> BaseChatModel:
         """Build/cache the LangChain chat model used ONLY by the chat/SSE agent graph

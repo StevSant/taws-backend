@@ -41,6 +41,11 @@ from app.api.v1.schemas.news_event_response import NewsEventResponse
 from app.api.v1.schemas.news_item_response import NewsItemResponse
 from app.api.v1.schemas.news_list_response import NewsListResponse
 from app.api.v1.schemas.open_review_item_response import OpenReviewItemResponse
+from app.api.v1.schemas.realtime_session_response import RealtimeSessionResponse
+from app.api.v1.schemas.realtime_tool_request import RealtimeToolRequest
+from app.api.v1.schemas.realtime_tool_response import RealtimeToolResponse
+from app.api.v1.schemas.register_bot_request import RegisterBotRequest
+from app.api.v1.schemas.register_bot_response import RegisterBotResponse
 from app.api.v1.schemas.review_decision_request import ReviewDecisionRequest
 from app.api.v1.schemas.review_state_response import ReviewStateResponse
 from app.api.v1.schemas.scenario_asset_class_impact_response import (
@@ -54,8 +59,6 @@ from app.api.v1.schemas.scenario_spec_response import ScenarioSpecResponse
 from app.api.v1.schemas.sentiment_reading_response import SentimentReadingResponse
 from app.api.v1.schemas.signal_evidence_response import SignalEvidenceResponse
 from app.api.v1.schemas.signal_response import SignalResponse
-from app.api.v1.schemas.register_bot_request import RegisterBotRequest
-from app.api.v1.schemas.register_bot_response import RegisterBotResponse
 from app.api.v1.schemas.telegram_link_status_response import TelegramLinkStatusResponse
 from app.api.v1.schemas.telegram_link_token_response import TelegramLinkTokenResponse
 from app.api.v1.schemas.unusual_move_response import UnusualMoveResponse
@@ -108,6 +111,9 @@ __all__ = [
     "NewsItemResponse",
     "NewsListResponse",
     "OpenReviewItemResponse",
+    "RealtimeSessionResponse",
+    "RealtimeToolRequest",
+    "RealtimeToolResponse",
     "ReviewDecisionRequest",
     "ReviewStateResponse",
     "ScenarioAssetClassImpactResponse",
