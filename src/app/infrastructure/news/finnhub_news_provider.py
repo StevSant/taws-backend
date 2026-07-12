@@ -80,6 +80,7 @@ class FinnhubNewsProvider(NewsProvider):
                 summary=entry.get("summary") or "",
                 url=entry.get("url") or "",
                 source=entry.get("source") or "Finnhub",
+                provider="finnhub",
                 published_at=datetime.fromtimestamp(entry["datetime"], tz=UTC),
                 related_symbols=[symbol],
             )

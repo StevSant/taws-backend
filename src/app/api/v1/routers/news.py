@@ -12,7 +12,7 @@ from app.api.v1.dependencies import (
     get_signal_repository,
     get_vector_store,
 )
-from app.api.v1.schemas import AnalyzePendingNewsResponse, NewsItemResponse
+from app.api.v1.schemas import AnalyzePendingNewsResponse, NewsItemResponse, NewsListResponse
 from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
 from app.application.market.use_cases import IngestNews
 from app.application.signals.use_cases import AnalyzePendingNews
@@ -31,6 +31,7 @@ router = APIRouter(prefix="/news", tags=["news"])
 
 _MAX_SINCE_HOURS = 24 * 30
 _MAX_LIMIT = 200
+_MAX_OFFSET = 10_000
 
 
 @router.get("")
@@ -42,15 +43,21 @@ async def list_news(
     asset_class: Annotated[AssetClass | None, Query()] = None,
     since_hours: Annotated[int, Query(ge=1, le=_MAX_SINCE_HOURS)] = 48,
     limit: Annotated[int, Query(ge=1, le=_MAX_LIMIT)] = 50,
-) -> list[NewsItemResponse]:
-    """Return recent news (HU1): each item carries `source`, `published_at`,
-    `related_symbols`, and `analysis_status` (issue #1), optionally filtered by
-    instrument symbol / asset class / recency.
+    offset: Annotated[int, Query(ge=0, le=_MAX_OFFSET)] = 0,
+) -> NewsListResponse:
+    """Return recent news (HU1), paginated: each item carries `source`, `provider`,
+    `published_at`, `related_symbols`, and `analysis_status` (issue #1), optionally
+    filtered by instrument symbol / asset class / recency.
 
     Persist-then-read (issue #1): fetched items are upserted into the `news_items`
     store (deduped by URL) before being returned, so `analysis_status` reflects
     whatever a prior `AnalyzePendingNews` run decided and survives across requests
-    instead of being recomputed from scratch on every call.
+    instead of being recomputed from scratch.
+
+    `offset` resumes a previous fetch / pages beyond the first `limit` items;
+    `has_more` on the response tells the caller whether a further page exists.
+    `limit`/`since_hours` filtering behavior for callers that don't pass
+    `offset` is unchanged (defaults to the first page, `offset=0`).
     """
     symbols = [symbol] if symbol else None
     use_case = IngestNews(
@@ -58,10 +65,20 @@ async def list_news(
         news_item_repository=news_item_repository,
         signal_repository=signal_repository,
     )
+    # Ask the pipeline for one item past this page's end so `has_more` can be
+    # derived without a separate, potentially-expensive upstream count query.
     items = await use_case.execute(
-        symbols=symbols, asset_class=asset_class, since_hours=since_hours, limit=limit
+        symbols=symbols,
+        asset_class=asset_class,
+        since_hours=since_hours,
+        limit=offset + limit + 1,
     )
-    return [NewsItemResponse.model_validate(item) for item in items]
+    page = items[offset : offset + limit]
+    has_more = len(items) > offset + limit
+    return NewsListResponse(
+        items=[NewsItemResponse.model_validate(item) for item in page],
+        has_more=has_more,
+    )
 
 
 @router.post("/analyze-pending", status_code=status.HTTP_200_OK)

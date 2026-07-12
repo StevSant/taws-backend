@@ -69,6 +69,7 @@ class NewsApiNewsProvider(NewsProvider):
                 summary=article.get("description") or "",
                 url=article.get("url") or "",
                 source=source.get("name") or "NewsAPI",
+                provider="newsapi",
                 published_at=datetime.fromisoformat(published_raw.replace("Z", "+00:00")),
                 related_symbols=[],
             )

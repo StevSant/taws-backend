@@ -90,6 +90,7 @@ class RssNewsProvider(NewsProvider):
                     summary=entry.get("summary") or "",
                     url=entry.get("link") or "",
                     source=source_name,
+                    provider="rss",
                     published_at=published_at,
                     related_symbols=[],
                 )

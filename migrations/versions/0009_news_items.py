@@ -7,6 +7,11 @@ request and never wrote anything down, so there was no queryable, stable concept
 "has this specific article been analyzed yet" independent of whether some *other*
 article about the same instrument already produced a `Signal`.
 
+Includes `provider` (the fetching adapter's own identity, e.g. `"finnhub"`/`"marketaux"`,
+distinct from `source`'s publisher name) since `NewsItem.provider` (issue #5) landed on
+`main` before this migration merged — kept in the same revision rather than a follow-up
+one, since this table has not shipped to any real database yet.
+
 Backs the `NewsItemRepository` port
 (`src/app/infrastructure/persistence/supabase_news_item_repository.py`), written by
 `IngestNews` (persist-then-read behind `GET /api/v1/news`) and read/written by
@@ -55,6 +60,7 @@ create table if not exists public.news_items (
     summary text not null,
     url text not null unique,
     source text not null,
+    provider text not null,
     published_at timestamptz not null,
     related_symbols text[] not null default '{}',
     entities jsonb not null default '[]'::jsonb,
