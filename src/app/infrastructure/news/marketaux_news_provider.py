@@ -5,10 +5,18 @@ import httpx
 
 from app.domain.market.entities import AssetClass, NewsItem
 from app.domain.market.ports import NewsProvider
+from app.infrastructure.caching import CooldownGate
 from app.infrastructure.news.marketaux_article_mapper import map_marketaux_article
 from app.infrastructure.news.marketaux_entity_types import ASSET_CLASS_TO_ENTITY_TYPES
 
 logger = logging.getLogger(__name__)
+
+# Status codes that mean "this won't succeed again on the next poll" — a config/billing
+# problem (401 unauthorized, 402 quota exhausted) or a rate limit (429) — as opposed to
+# a transient network error or a 5xx, which the existing per-call catch-and-degrade
+# behavior already handles fine without a circuit breaker.
+_NON_TRANSIENT_STATUS_CODES = frozenset({401, 402, 429})
+_RATE_LIMIT_STATUS_CODE = 429
 
 
 class MarketauxNewsProvider(NewsProvider):
@@ -23,6 +31,13 @@ class MarketauxNewsProvider(NewsProvider):
     (3) and requests per day (100), so a fetch paginates at most `max_pages`
     times and callers are expected to cache results rather than hit this per
     user request.
+
+    Circuit breaker (issue #9): a 401/402/429 response means retrying on the very
+    next poll (typically ~60s later) has no realistic chance of succeeding — the
+    quota/billing/rate-limit condition won't have cleared. `_cooldown` gates
+    `fetch_news` shut for `cooldown_seconds` (401/402) or `rate_limit_cooldown_seconds`
+    (429, usually shorter-lived) after such a response, logging exactly one warning per
+    cool-down instead of repeating the failure on every poll — see `CooldownGate`.
     """
 
     def __init__(
@@ -32,12 +47,17 @@ class MarketauxNewsProvider(NewsProvider):
         languages: str,
         timeout_seconds: float,
         max_pages: int,
+        cooldown_seconds: float = 1200.0,
+        rate_limit_cooldown_seconds: float = 300.0,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url
         self._languages = languages
         self._timeout_seconds = timeout_seconds
         self._max_pages = max_pages
+        self._cooldown_seconds = cooldown_seconds
+        self._rate_limit_cooldown_seconds = rate_limit_cooldown_seconds
+        self._cooldown = CooldownGate()
 
     async def fetch_news(
         self,
@@ -46,7 +66,7 @@ class MarketauxNewsProvider(NewsProvider):
         since_hours: int = 48,
         limit: int = 50,
     ) -> list[NewsItem]:
-        if not self._api_key:
+        if not self._api_key or self._cooldown.is_open():
             return []
 
         params = self._build_params(symbols, asset_class, since_hours, limit)
@@ -96,9 +116,25 @@ class MarketauxNewsProvider(NewsProvider):
             response = await client.get("/news/all", params={**params, "page": str(page)})
             response.raise_for_status()
             return response.json()
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            if status_code in _NON_TRANSIENT_STATUS_CODES:
+                cooldown_seconds = (
+                    self._rate_limit_cooldown_seconds
+                    if status_code == _RATE_LIMIT_STATUS_CODE
+                    else self._cooldown_seconds
+                )
+                self._cooldown.trip(
+                    cooldown_seconds,
+                    f"Marketaux returned {status_code}, pausing requests: {exc}",
+                )
+            else:
+                # Degrade gracefully so an aggregating provider can still serve other
+                # sources; a 5xx here is treated as transient, not circuit-broken.
+                logger.warning("Marketaux request failed (page %s): %s", page, exc)
+            return None
         except httpx.HTTPError as exc:
-            # Degrade gracefully so an aggregating provider can still serve
-            # other sources; the quota errors (402/429) land here too.
+            # Network-level errors (connect/timeout/etc) — transient, no circuit break.
             logger.warning("Marketaux request failed (page %s): %s", page, exc)
             return None
 

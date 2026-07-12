@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     # Free plan returns max 3 articles per request and 100 requests/day; keep the
     # per-fetch pagination small so scheduled polls stay within quota.
     marketaux_max_pages: int = 3
+    # Circuit breaker (issue #9): once a non-transient error (402 quota-exhausted/401
+    # unauthorized, or 429 rate-limited) is seen, stop calling Marketaux for this many
+    # minutes instead of retrying every poll. 402/401 (billing/config issues that won't
+    # resolve themselves soon) use the longer cool-down; 429 (rate limiting) uses the
+    # shorter one since it's likely to clear within the polling window.
+    marketaux_cooldown_minutes: int = 20
+    marketaux_rate_limit_cooldown_minutes: int = 5
 
     # --- NewsAPI.org (behind the NewsProvider port) ---
     newsapi_api_key: str | None = None

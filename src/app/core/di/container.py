@@ -443,6 +443,10 @@ class Container:
                         languages=self._settings.marketaux_languages,
                         timeout_seconds=self._settings.marketaux_timeout_seconds,
                         max_pages=self._settings.marketaux_max_pages,
+                        cooldown_seconds=self._settings.marketaux_cooldown_minutes * 60,
+                        rate_limit_cooldown_seconds=(
+                            self._settings.marketaux_rate_limit_cooldown_minutes * 60
+                        ),
                     )
                 )
             if self._settings.newsapi_api_key:
