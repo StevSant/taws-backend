@@ -8,6 +8,7 @@ from app.domain.market.ports import NewsProvider
 from app.infrastructure.caching import CooldownGate
 from app.infrastructure.news.marketaux_article_mapper import map_marketaux_article
 from app.infrastructure.news.marketaux_entity_types import ASSET_CLASS_TO_ENTITY_TYPES
+from app.infrastructure.security import redact_url_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -126,16 +127,22 @@ class MarketauxNewsProvider(NewsProvider):
                 )
                 self._cooldown.trip(
                     cooldown_seconds,
-                    f"Marketaux returned {status_code}, pausing requests: {exc}",
+                    redact_url_secrets(
+                        f"Marketaux returned {status_code}, pausing requests: {exc}"
+                    ),
                 )
             else:
                 # Degrade gracefully so an aggregating provider can still serve other
                 # sources; a 5xx here is treated as transient, not circuit-broken.
-                logger.warning("Marketaux request failed (page %s): %s", page, exc)
+                logger.warning(
+                    "Marketaux request failed (page %s): %s", page, redact_url_secrets(str(exc))
+                )
             return None
         except httpx.HTTPError as exc:
             # Network-level errors (connect/timeout/etc) — transient, no circuit break.
-            logger.warning("Marketaux request failed (page %s): %s", page, exc)
+            logger.warning(
+                "Marketaux request failed (page %s): %s", page, redact_url_secrets(str(exc))
+            )
             return None
 
     @staticmethod

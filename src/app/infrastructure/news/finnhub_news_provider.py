@@ -52,14 +52,18 @@ class FinnhubNewsProvider(NewsProvider):
     async def _fetch_symbol(
         self, client: httpx.AsyncClient, symbol: str, since_date: date
     ) -> list[NewsItem]:
+        # Send the key via the `X-Finnhub-Token` header rather than the `token` query
+        # param, so the secret never lands in a logged request URL (same rationale as the
+        # NewsAPI provider, issue #45) — httpx bakes the URL into HTTPStatusError, which
+        # the aggregating provider logs with a full traceback.
         response = await client.get(
             "/company-news",
             params={
                 "symbol": symbol,
                 "from": since_date.isoformat(),
                 "to": date.today().isoformat(),
-                "token": self._api_key or "",
             },
+            headers={"X-Finnhub-Token": self._api_key or ""},
         )
         response.raise_for_status()
         payload = response.json()
