@@ -32,7 +32,6 @@ from app.core.config import Settings, get_settings
 from app.core.di import get_container
 from app.core.logging import configure_logging
 from app.infrastructure.scheduling import build_watchdog_scheduler
-from app.infrastructure.telegram import register_telegram_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -83,16 +82,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler = build_watchdog_scheduler(container, settings)
     scheduler.start()
 
-    # Telegram webhook registration (issue #14) — best-effort, never blocks boot. Only
-    # attempted when both a bot token and a public webhook URL are configured; see
-    # `register_telegram_webhook`'s docstring for why this can't be live-verified in a
-    # sandbox without a real bot token and a publicly reachable HTTPS URL.
-    if settings.telegram_bot_token and settings.telegram_webhook_url:
-        await register_telegram_webhook(
-            bot_token=settings.telegram_bot_token,
-            webhook_url=settings.telegram_webhook_url,
-            secret_token=settings.telegram_webhook_secret,
-        )
+    # User-bot webhooks are managed individually via the register-bot endpoint.
+    # The legacy single-bot webhook registration is no longer applied at startup
+    # because it would overwrite per-user bot webhooks on every restart.
 
     try:
         yield
