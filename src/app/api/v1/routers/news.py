@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.v1.dependencies import (
     get_embedding_provider,
@@ -79,6 +79,26 @@ async def list_news(
         items=[NewsItemResponse.model_validate(item) for item in page],
         has_more=has_more,
     )
+
+
+@router.get("/{news_id}")
+async def get_news_item(
+    news_id: str,
+    news_item_repository: Annotated[NewsItemRepository, Depends(get_news_item_repository)],
+) -> NewsItemResponse:
+    """Return a single persisted news item by its `news_items.id` (issue #38), or 404.
+
+    Reads straight from the `news_items` store — the item must already have been
+    persisted by a prior `GET /api/v1/news` (persist-then-read) — so `analysis_status`
+    reflects whatever a prior `AnalyzePendingNews` run decided. Not user-scoped (public
+    read, same visibility model as the list endpoint).
+    """
+    item = await news_item_repository.get_by_id(news_id)
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="News item not found"
+        )
+    return NewsItemResponse.model_validate(item)
 
 
 @router.post("/analyze-pending", status_code=status.HTTP_200_OK)

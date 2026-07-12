@@ -20,16 +20,29 @@ _CLASSIFICATION_SCHEMA_NAME = "signal_classification"
 _CLASSIFICATION_SYSTEM_PROMPT = """You are the Analyst — a market-intelligence agent that \
 classifies how recent news impacts a single financial instrument.
 
-Given an instrument and a list of dated, sourced news items, classify the likely impact as \
-positive, negative, neutral, or uncertain, with a confidence score between 0 and 1. Ground \
-your classification strictly in the provided news items — never invent facts, sources, or \
-events that aren't in them. If the news is mixed, ambiguous, or too thin to call a direction, \
-prefer "uncertain" with a low confidence over guessing.
+Given an instrument, its recent price move, any historical analogs, and a list of dated, \
+sourced news items, produce:
+- impact_class: positive, negative, neutral, or uncertain;
+- confidence: a score between 0 and 1;
+- reasoning: one or two sentences grounding the call in the evidence;
+- thesis: a 3-5 sentence analytical thesis explaining what the evidence implies for the \
+instrument's outlook and why;
+- key_drivers: the concrete factors from the evidence driving the call;
+- risk_factors: what would invalidate the call — the main risks or counterpoints.
+
+Ground everything strictly in the provided news items, price context, and historical \
+analogs — never invent facts, sources, or events that aren't in them. If the news is mixed, \
+ambiguous, or too thin to call a direction, prefer "uncertain" with a low confidence over \
+guessing.
 
 This is research/informational output only — never trading instructions, and never phrased as \
 personalized advice."""
 
 _FALLBACK_REASONING = "fallback classification (structured output unavailable)"
+_FALLBACK_THESIS = (
+    "Automated analysis is unavailable for this signal (the classification model could not "
+    "be reached). No thesis was generated; treat this as an unclassified alert only."
+)
 
 
 class GenerateSignal:
@@ -122,25 +135,35 @@ class GenerateSignal:
         if distinct_sources < self._min_distinct_sources:
             raise InsufficientEvidenceError(instrument.symbol, distinct_sources)
 
-        classification = await self._classify_impact(instrument, news_items, locale)
+        # Gather quantitative + historical context BEFORE classification (issue #40) so the
+        # model can actually reason over it. `price_delta` is independent of the impact
+        # class. Historical-analog retrieval (issue #15) is done here too — up to N
+        # semantically similar past signals, attached as `[análogo histórico]`-tagged
+        # evidence and fed into the prompt. Since the real impact class isn't known yet,
+        # the retrieval query uses a neutral `UNCERTAIN` placeholder; the event summary is
+        # what drives the semantic match. Neither call blocks or fails signal generation —
+        # see `_compute_price_delta` / `FindHistoricalAnalogs.execute`'s guards.
         price_delta = await self._compute_price_delta(instrument)
-        evidence = [_to_evidence(item) for item in news_items]
-
-        # --- Historical analogs RAG (issue #15) ---------------------------------------
-        # Retrieve up to N semantically similar past signals and attach them as
-        # `[análogo histórico]`-tagged evidence before finalizing the signal. Never blocks
-        # or fails signal generation — see `FindHistoricalAnalogs.execute`'s guard.
         analog_summary = news_items[0].title
-        evidence += await self._find_historical_analogs.execute(
-            instrument.symbol, classification.impact_class, analog_summary
+        analogs = await self._find_historical_analogs.execute(
+            instrument.symbol, ImpactClass.UNCERTAIN, analog_summary
         )
-        # --------------------------------------------------------------------------------
+
+        classification, analysis_available = await self._classify_impact(
+            instrument, news_items, price_delta, analogs, locale
+        )
+
+        evidence = [_to_evidence(item) for item in news_items] + analogs
 
         signal = Signal(
             id=str(uuid.uuid4()),
             instrument_symbol=instrument.symbol,
             impact_class=classification.impact_class,
             confidence=classification.confidence,
+            thesis=classification.thesis,
+            key_drivers=classification.key_drivers,
+            risk_factors=classification.risk_factors,
+            analysis_available=analysis_available,
             evidence=evidence,
             disclaimer=NOT_PERSONALIZED_ADVICE_DISCLAIMER,
             price_delta=price_delta,
@@ -182,8 +205,19 @@ class GenerateSignal:
         return direct + [item for item in context if item.id not in seen_ids]
 
     async def _classify_impact(
-        self, instrument: Instrument, news_items: list[NewsItem], locale: str
-    ) -> SignalClassification:
+        self,
+        instrument: Instrument,
+        news_items: list[NewsItem],
+        price_delta: float | None,
+        analogs: list[SignalEvidence],
+        locale: str,
+    ) -> tuple[SignalClassification, bool]:
+        """Classify impact, returning `(classification, analysis_available)`.
+
+        `analysis_available` is `False` only on the fallback path below (no LLM key /
+        unparseable response), so the caller can persist a marker distinguishing a real
+        analysis from a degraded, empty one.
+        """
         try:
             raw = await self._llm_provider.complete_structured(
                 messages=[
@@ -193,21 +227,28 @@ class GenerateSignal:
                     ),
                     Message(
                         role=MessageRole.USER,
-                        content=_format_news_context(instrument, news_items),
+                        content=_format_news_context(instrument, news_items, price_delta, analogs),
                     ),
                 ],
                 schema=SignalClassification.model_json_schema(),
                 schema_name=_CLASSIFICATION_SCHEMA_NAME,
             )
-            return SignalClassification.model_validate(raw)
+            return SignalClassification.model_validate(raw), True
         except Exception:
             # `OpenAIProvider.complete_structured` raises when no OPENAI_API_KEY is
             # configured (see its docstring); a malformed/unparseable response raises
             # via `.model_validate(raw)` above. Either way, caught here and downgraded
             # to an explicit "uncertain, zero confidence" call instead of crashing the
             # pipeline — same broad-catch shape as `supervisor_router_node.py`'s guard.
-            return SignalClassification(
-                impact_class=ImpactClass.UNCERTAIN, confidence=0.0, reasoning=_FALLBACK_REASONING
+            # `analysis_available=False` marks this so the frontend can label it.
+            return (
+                SignalClassification(
+                    impact_class=ImpactClass.UNCERTAIN,
+                    confidence=0.0,
+                    reasoning=_FALLBACK_REASONING,
+                    thesis=_FALLBACK_THESIS,
+                ),
+                False,
             )
 
     async def _compute_price_delta(self, instrument: Instrument) -> float | None:
@@ -228,10 +269,25 @@ def _to_evidence(item: NewsItem) -> SignalEvidence:
     )
 
 
-def _format_news_context(instrument: Instrument, news_items: list[NewsItem]) -> str:
-    lines = [
+def _format_news_context(
+    instrument: Instrument,
+    news_items: list[NewsItem],
+    price_delta: float | None,
+    analogs: list[SignalEvidence],
+) -> str:
+    header = f"Instrument: {instrument.symbol} ({instrument.name}, {instrument.asset_class.value})"
+    price_line = (
+        f"Recent price move: {price_delta:+.2f}% over the provider's lookback window."
+        if price_delta is not None
+        else "Recent price move: unavailable."
+    )
+    news_lines = [
         f"- [{item.published_at.isoformat()}] {item.source}: {item.title} — {item.summary}"
         for item in news_items
     ]
-    header = f"Instrument: {instrument.symbol} ({instrument.name}, {instrument.asset_class.value})"
-    return f"{header}\n\nRecent news:\n" + "\n".join(lines)
+    sections = [header, "", price_line, "", "Recent news:", *news_lines]
+    if analogs:
+        analog_lines = [f"- {analog.detail}" for analog in analogs if analog.detail]
+        if analog_lines:
+            sections += ["", "Historical analogs:", *analog_lines]
+    return "\n".join(sections)

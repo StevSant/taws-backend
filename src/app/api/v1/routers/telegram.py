@@ -6,6 +6,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 
 from app.api.v1.dependencies import (
+    dev_fallback_allowed,
     get_bot_registration,
     get_briefing_command_handler,
     get_chat_message_handler,
@@ -56,6 +57,9 @@ from app.infrastructure.telegram import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Emit the "no webhook secret, accepting anonymous POSTs" warning only once per process.
+_telegram_secret_warned = False
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
 
@@ -320,14 +324,34 @@ async def telegram_webhook_for_bot(
 
 
 def _verify_telegram_secret(request: Request, settings: Settings) -> None:
-    """Reject the webhook call if `TELEGRAM_WEBHOOK_SECRET` is configured and the request's
-    `X-Telegram-Bot-Api-Secret-Token` header doesn't match — see `setWebhook`'s
-    `secret_token` param (https://core.telegram.org/bots/api#setwebhook). Skipped entirely
-    when no secret is configured (fine for local/dev)."""
+    """Reject the webhook call if the `X-Telegram-Bot-Api-Secret-Token` header doesn't
+    match the configured `TELEGRAM_WEBHOOK_SECRET` — see `setWebhook`'s `secret_token`
+    param (https://core.telegram.org/bots/api#setwebhook).
+
+    Fail-closed when the secret is unset: permissive only in a development/test env
+    (with a one-time warning); in production/staging an unset secret rejects any
+    anonymous POST with 403 instead of processing it."""
     if not settings.telegram_webhook_secret:
-        return
+        if dev_fallback_allowed(settings):
+            _warn_telegram_secret_unset_once()
+            return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Telegram webhook secret is not configured",
+        )
     header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
     if header != settings.telegram_webhook_secret:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook secret"
         )
+
+
+def _warn_telegram_secret_unset_once() -> None:
+    global _telegram_secret_warned
+    if _telegram_secret_warned:
+        return
+    _telegram_secret_warned = True
+    logger.warning(
+        "TELEGRAM_WEBHOOK_SECRET is not set; the webhook accepts anonymous POSTs. "
+        "This is only allowed in development/test environments."
+    )

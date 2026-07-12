@@ -63,6 +63,10 @@ class SupabaseSignalRepository(SignalRepository):
                         "confidence": signal.confidence,
                         "evidence": signal_to_evidence_column(signal.evidence),
                         "disclaimer": signal.disclaimer,
+                        "thesis": signal.thesis,
+                        "key_drivers": signal.key_drivers,
+                        "risk_factors": signal.risk_factors,
+                        "analysis_available": signal.analysis_available,
                         "price_delta": signal.price_delta,
                         "created_at": signal.created_at.isoformat(),
                     }

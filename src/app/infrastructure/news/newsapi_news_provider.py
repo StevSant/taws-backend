@@ -42,12 +42,14 @@ class NewsApiNewsProvider(NewsProvider):
             "q": query,
             "sortBy": "publishedAt",
             "pageSize": min(limit, 100),
-            "apiKey": self._api_key,
         }
+        # Send the key via the `X-Api-Key` header (NewsAPI supports it) rather than the
+        # `apiKey` query param, so the secret never lands in a logged request URL (issue #45).
+        headers = {"X-Api-Key": self._api_key}
         async with httpx.AsyncClient(
             base_url=self._base_url, timeout=self._timeout_seconds
         ) as client:
-            response = await client.get("/everything", params=params)
+            response = await client.get("/everything", params=params, headers=headers)
             response.raise_for_status()
             payload = response.json()
 
