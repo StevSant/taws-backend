@@ -55,6 +55,7 @@ from app.infrastructure.agents.scenario import ScenarioSimulationRunner, build_s
 from app.infrastructure.agents.tools import (
     build_advisor_grounding_tools,
     build_consequence_tools,
+    build_event_intelligence_tools,
     build_macro_tools,
     build_quant_grounding_tools,
     build_scenario_tools,
@@ -811,6 +812,8 @@ class Container:
             ) + build_scenario_tools(
                 scenario_simulation_runner=self.get_scenario_simulation_runner(),
                 default_locale=self._settings.default_locale,
+            ) + build_event_intelligence_tools(
+                event_repository=self.get_event_repository(),
             )
             consequence_tools = build_consequence_tools(
                 use_case=self.get_generate_consequence_chain_use_case()

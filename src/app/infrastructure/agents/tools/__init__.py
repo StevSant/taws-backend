@@ -3,6 +3,9 @@ from app.infrastructure.agents.tools.build_advisor_grounding_tools import (
     build_advisor_grounding_tools,
 )
 from app.infrastructure.agents.tools.build_consequence_tools import build_consequence_tools
+from app.infrastructure.agents.tools.build_event_intelligence_tools import (
+    build_event_intelligence_tools,
+)
 from app.infrastructure.agents.tools.build_macro_tools import build_macro_tools
 from app.infrastructure.agents.tools.build_quant_grounding_tools import (
     build_quant_grounding_tools,
@@ -30,6 +33,7 @@ __all__ = [
     "build_advisor_grounding_tools",
     "build_analyze_sentiment_tool",
     "build_consequence_tools",
+    "build_event_intelligence_tools",
     "build_generate_consequence_chain_tool",
     "build_get_event_study_stats_tool",
     "build_get_market_stats_tool",
