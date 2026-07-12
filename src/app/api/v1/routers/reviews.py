@@ -6,6 +6,7 @@ from app.api.v1.dependencies import (
     get_briefing_repository,
     get_signal_repository,
     get_watchlist_repository,
+    require_compliance,
     require_current_user,
 )
 from app.api.v1.schemas import CurrentUser, ReviewDecisionRequest, ReviewStateResponse
@@ -45,6 +46,24 @@ async def _get_owned_briefing(
     return briefing
 
 
+async def _get_briefing_or_404(
+    briefing_id: str,
+    briefing_repository: BriefingRepository,
+) -> Briefing:
+    """Return the briefing if it exists, else raise 404 — WITHOUT any ownership check.
+
+    The compliance-review WRITE path uses this (not `_get_owned_briefing`) so a
+    compliance reviewer can record a decision on ANY user's briefing, not only their own.
+    Access to this path is already gated to `require_compliance`, so dropping the
+    owner scope here does not widen exposure to non-compliance callers. Owner-scoped
+    reads (generation, GET history, export) keep using `_get_owned_briefing`.
+    """
+    briefing = await briefing_repository.get(briefing_id)
+    if briefing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Briefing not found")
+    return briefing
+
+
 async def _submit_review(
     use_case: SubmitReviewDecision,
     entity_type: ReviewedEntityType,
@@ -79,14 +98,16 @@ async def _submit_review(
 async def submit_signal_review(
     signal_id: str,
     payload: ReviewDecisionRequest,
-    user: Annotated[CurrentUser, Depends(require_current_user)],
+    user: Annotated[CurrentUser, Depends(require_compliance)],
     signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
     briefing_repository: Annotated[BriefingRepository, Depends(get_briefing_repository)],
 ) -> ReviewStateResponse:
     """Record a review decision (reviewed/escalated/discarded) on a signal.
 
-    Escalation is only ever a `ReviewState` row with `decision="escalated"` — no
-    order, quantity, or execution side effect exists anywhere in this path.
+    Restricted to the `compliance` role via `require_compliance` (an anonymous caller is
+    rejected with 401 there first, never downgraded to 403). Escalation is only ever a
+    `ReviewState` row with `decision="escalated"` — no order, quantity, or execution
+    side effect exists anywhere in this path.
     """
     use_case = SubmitReviewDecision(
         signal_repository=signal_repository, briefing_repository=briefing_repository
@@ -115,19 +136,20 @@ async def list_signal_reviews(
 async def submit_briefing_review(
     briefing_id: str,
     payload: ReviewDecisionRequest,
-    user: Annotated[CurrentUser, Depends(require_current_user)],
+    user: Annotated[CurrentUser, Depends(require_compliance)],
     signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
     briefing_repository: Annotated[BriefingRepository, Depends(get_briefing_repository)],
-    watchlist_repository: Annotated[WatchlistRepository, Depends(get_watchlist_repository)],
 ) -> ReviewStateResponse:
     """Record a review decision (reviewed/escalated/discarded) on a briefing.
 
-    Escalation is only ever a `ReviewState` row with `decision="escalated"` — no
-    order, quantity, or execution side effect exists anywhere in this path. The
-    briefing must belong (via its watchlist) to the authenticated user — see
-    `_get_owned_briefing`.
+    Restricted to the `compliance` role via `require_compliance` (an anonymous caller is
+    rejected with 401 there first, never downgraded to 403). A compliance reviewer may
+    review ANY user's briefing, so this WRITE path uses `_get_briefing_or_404` (existence
+    only) rather than the owner-scoped `_get_owned_briefing` used by the read paths.
+    Escalation is only ever a `ReviewState` row with `decision="escalated"` — no order,
+    quantity, or execution side effect exists anywhere in this path.
     """
-    await _get_owned_briefing(briefing_id, user, briefing_repository, watchlist_repository)
+    await _get_briefing_or_404(briefing_id, briefing_repository)
     use_case = SubmitReviewDecision(
         signal_repository=signal_repository, briefing_repository=briefing_repository
     )

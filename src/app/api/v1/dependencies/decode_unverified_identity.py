@@ -1,9 +1,13 @@
 import jwt
 
+from app.api.v1.dependencies.resolve_user_role import resolve_user_role
 from app.api.v1.schemas import CurrentUser
+from app.core.config import Settings
 
 
-def decode_unverified_identity(authorization: str) -> CurrentUser | None:
+def decode_unverified_identity(
+    authorization: str, settings: Settings
+) -> CurrentUser | None:
     """Read the identity from an `Authorization: Bearer <token>` WITHOUT verifying it.
 
     DANGER — dev fallback ONLY. This decodes the JWT with signature verification DISABLED,
@@ -28,4 +32,5 @@ def decode_unverified_identity(authorization: str) -> CurrentUser | None:
     subject = payload.get("sub")
     if not subject:
         return None
-    return CurrentUser(id=str(subject), email=payload.get("email"))
+    role = resolve_user_role(payload, settings)
+    return CurrentUser(id=str(subject), email=payload.get("email"), role=role)

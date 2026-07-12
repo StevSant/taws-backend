@@ -41,7 +41,7 @@ def require_current_user(
         if dev_fallback_allowed(settings):
             _warn_dev_fallback_once()
             if authorization:
-                unverified_user = decode_unverified_identity(authorization)
+                unverified_user = decode_unverified_identity(authorization, settings)
                 if unverified_user is not None:
                     return unverified_user
             return DEV_FALLBACK_USER
@@ -55,7 +55,9 @@ def require_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header"
         )
 
-    user = decode_bearer_token(authorization, supabase_jwks_url(settings.supabase_url))
+    user = decode_bearer_token(
+        authorization, supabase_jwks_url(settings.supabase_url), settings
+    )
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token"

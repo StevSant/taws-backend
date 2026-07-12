@@ -54,7 +54,9 @@ def _bearer(payload: dict, *, secret: str = "any-secret-signature-not-verified-h
 
 def _stub_decode(monkeypatch: pytest.MonkeyPatch, result: CurrentUser | None) -> None:
     """Replace the verified ES256/JWKS decode so verified-path tests need no network."""
-    monkeypatch.setattr(require_module, "decode_bearer_token", lambda _auth, _url: result)
+    monkeypatch.setattr(
+        require_module, "decode_bearer_token", lambda _auth, _url, _settings: result
+    )
 
 
 # ---- Verified path: SUPABASE_URL set ---------------------------------------------------

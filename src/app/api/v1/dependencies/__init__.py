@@ -51,6 +51,8 @@ from app.api.v1.dependencies.get_vector_store import get_vector_store
 from app.api.v1.dependencies.get_watchlist_repository import get_watchlist_repository
 from app.api.v1.dependencies.jwks_client import get_jwks_client
 from app.api.v1.dependencies.require_current_user import require_current_user
+from app.api.v1.dependencies.require_role import require_compliance, require_role
+from app.api.v1.dependencies.resolve_user_role import resolve_user_role
 from app.api.v1.dependencies.supabase_jwks_url import supabase_jwks_url
 
 __all__ = [
@@ -96,6 +98,9 @@ __all__ = [
     "get_telegram_messenger",
     "get_vector_store",
     "get_watchlist_repository",
+    "require_compliance",
     "require_current_user",
+    "require_role",
+    "resolve_user_role",
     "supabase_jwks_url",
 ]

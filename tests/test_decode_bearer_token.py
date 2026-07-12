@@ -20,6 +20,7 @@ from jwt import PyJWK
 
 from app.api.v1.dependencies.decode_bearer_token import decode_bearer_token
 from app.api.v1.dependencies.jwks_client import get_jwks_client
+from app.core.config import Settings
 
 # The package re-exports `decode_bearer_token` (the function) under the same name as its
 # submodule, so `import ... as decode_module` would bind the function. Fetch the real
@@ -28,6 +29,9 @@ decode_module = sys.modules["app.api.v1.dependencies.decode_bearer_token"]
 
 _KID = "test-kid-1"
 _JWKS_URL = "https://example.supabase.co/auth/v1/.well-known/jwks.json"
+# Role resolution reads from the verified claims; a production env keeps the dev-only
+# email fallback out of the picture for these signature/verification tests.
+_SETTINGS = Settings(app_env="production")
 
 
 @pytest.fixture
@@ -78,7 +82,7 @@ def test_valid_es256_token_returns_current_user(
     monkeypatch: pytest.MonkeyPatch, ec_key: ec.EllipticCurvePrivateKey
 ) -> None:
     _install_client(monkeypatch, _StubJwksClient(_jwk_from_public(ec_key)))
-    user = decode_bearer_token(_sign(ec_key, _valid_payload()), _JWKS_URL)
+    user = decode_bearer_token(_sign(ec_key, _valid_payload()), _JWKS_URL, _SETTINGS)
     assert user is not None
     assert user.id == "real-user-id"
     assert user.email == "real@user.io"
@@ -89,7 +93,7 @@ def test_expired_token_returns_none(
 ) -> None:
     _install_client(monkeypatch, _StubJwksClient(_jwk_from_public(ec_key)))
     expired = _sign(ec_key, {"sub": "x", "exp": datetime.now(UTC) - timedelta(hours=1)})
-    assert decode_bearer_token(expired, _JWKS_URL) is None
+    assert decode_bearer_token(expired, _JWKS_URL, _SETTINGS) is None
 
 
 def test_wrong_key_signature_returns_none(
@@ -99,7 +103,7 @@ def test_wrong_key_signature_returns_none(
     attacker_key = ec.generate_private_key(ec.SECP256R1())
     _install_client(monkeypatch, _StubJwksClient(_jwk_from_public(ec_key)))
     forged = _sign(attacker_key, _valid_payload())
-    assert decode_bearer_token(forged, _JWKS_URL) is None
+    assert decode_bearer_token(forged, _JWKS_URL, _SETTINGS) is None
 
 
 def test_hs256_alg_confusion_token_returns_none(
@@ -111,14 +115,14 @@ def test_hs256_alg_confusion_token_returns_none(
     hs_token = "Bearer " + jwt.encode(
         _valid_payload(), "attacker-shared-secret", algorithm="HS256", headers={"kid": _KID}
     )
-    assert decode_bearer_token(hs_token, _JWKS_URL) is None
+    assert decode_bearer_token(hs_token, _JWKS_URL, _SETTINGS) is None
 
 
 def test_malformed_token_returns_none(
     monkeypatch: pytest.MonkeyPatch, ec_key: ec.EllipticCurvePrivateKey
 ) -> None:
     _install_client(monkeypatch, _StubJwksClient(_jwk_from_public(ec_key)))
-    assert decode_bearer_token("Bearer not-a-real-jwt", _JWKS_URL) is None
+    assert decode_bearer_token("Bearer not-a-real-jwt", _JWKS_URL, _SETTINGS) is None
 
 
 def test_missing_sub_returns_none(
@@ -127,7 +131,7 @@ def test_missing_sub_returns_none(
     _install_client(monkeypatch, _StubJwksClient(_jwk_from_public(ec_key)))
     payload = {"email": "nobody@user.io", "exp": datetime.now(UTC) + timedelta(hours=1)}
     no_sub = _sign(ec_key, payload)
-    assert decode_bearer_token(no_sub, _JWKS_URL) is None
+    assert decode_bearer_token(no_sub, _JWKS_URL, _SETTINGS) is None
 
 
 def test_jwks_client_error_returns_none_fail_closed(
@@ -135,4 +139,4 @@ def test_jwks_client_error_returns_none_fail_closed(
 ) -> None:
     # A JWKS fetch / connection failure must fail closed (None), not raise (500).
     _install_client(monkeypatch, _RaisingJwksClient())
-    assert decode_bearer_token(_sign(ec_key, _valid_payload()), _JWKS_URL) is None
+    assert decode_bearer_token(_sign(ec_key, _valid_payload()), _JWKS_URL, _SETTINGS) is None

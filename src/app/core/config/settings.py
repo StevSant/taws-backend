@@ -20,6 +20,15 @@ class Settings(BaseSettings):
     app_env: str = "development"
     cors_origins: list[str] = ["http://localhost:4200"]
 
+    # Dev-only email->role fallback matching the frontend demo accounts. Consulted ONLY
+    # in a dev env (see `resolve_user_role` / `dev_fallback_allowed`); in production the
+    # role comes solely from the verified JWT claims, never from the email.
+    demo_email_role_map: dict[str, str] = {
+        "analista@midas.demo": "analyst",
+        "gestor@midas.demo": "portfolio",
+        "compliance@midas.demo": "compliance",
+    }
+
     # Locale used for LLM-generated content (signals/briefings/scenarios) when a caller
     # doesn't supply one — e.g. a scheduled job, a chat tool call, or a request that omits
     # the `locale` field. BCP-47-ish tag, e.g. "en", "es", "es-MX".

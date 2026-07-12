@@ -1,10 +1,14 @@
 import jwt
 
 from app.api.v1.dependencies.jwks_client import get_jwks_client
+from app.api.v1.dependencies.resolve_user_role import resolve_user_role
 from app.api.v1.schemas import CurrentUser
+from app.core.config import Settings
 
 
-def decode_bearer_token(authorization: str, jwks_url: str) -> CurrentUser | None:
+def decode_bearer_token(
+    authorization: str, jwks_url: str, settings: Settings
+) -> CurrentUser | None:
     """Verify a Supabase ES256 JWT from an `Authorization: Bearer <token>` header value.
 
     Supabase migrated to asymmetric JWT signing keys (ECC P-256 => ES256): access tokens
@@ -35,4 +39,5 @@ def decode_bearer_token(authorization: str, jwks_url: str) -> CurrentUser | None
     subject = payload.get("sub")
     if not subject:
         return None
-    return CurrentUser(id=str(subject), email=payload.get("email"))
+    role = resolve_user_role(payload, settings)
+    return CurrentUser(id=str(subject), email=payload.get("email"), role=role)
