@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.infrastructure.agents.supervisor_route import SupervisorRoute
 
@@ -10,6 +10,8 @@ class RouteDecision(BaseModel):
     `supervisor_router_node.py`. Kept intentionally tiny (one enum + a reason string)
     since the model only needs to pick one specialist per turn.
     """
+
+    model_config = ConfigDict(ser_json_bytes="utf8")
 
     route: SupervisorRoute = Field(description="The specialist best suited to this turn.")
     reason: str = Field(description="One short sentence explaining the routing choice.")
