@@ -17,6 +17,7 @@ from app.api.v1.schemas.consequence_node_response import ConsequenceNodeResponse
 from app.api.v1.schemas.current_user import CurrentUser
 from app.api.v1.schemas.earnings_calendar_entry_response import EarningsCalendarEntryResponse
 from app.api.v1.schemas.enriched_event_response import EnrichedEventResponse
+from app.api.v1.schemas.enriched_instrument_response import EnrichedInstrumentResponse
 from app.api.v1.schemas.event_intelligence_demo_request import EventIntelligenceDemoRequest
 from app.api.v1.schemas.event_study_event_response import EventStudyEventResponse
 from app.api.v1.schemas.event_study_response import EventStudyResponse
@@ -28,6 +29,8 @@ from app.api.v1.schemas.generate_consequence_chain_request import GenerateConseq
 from app.api.v1.schemas.generate_scenario_request import GenerateScenarioRequest
 from app.api.v1.schemas.generate_signal_request import GenerateSignalRequest
 from app.api.v1.schemas.instrument_fundamentals_response import InstrumentFundamentalsResponse
+from app.api.v1.schemas.instrument_highlights_response import InstrumentHighlightsResponse
+from app.api.v1.schemas.instrument_page_response import InstrumentPageResponse
 from app.api.v1.schemas.instrument_response import InstrumentResponse
 from app.api.v1.schemas.interpret_macro_event_request import InterpretMacroEventRequest
 from app.api.v1.schemas.macro_asset_class_impact_response import MacroAssetClassImpactResponse
@@ -92,6 +95,7 @@ __all__ = [
     "CurrentUser",
     "EarningsCalendarEntryResponse",
     "EnrichedEventResponse",
+    "EnrichedInstrumentResponse",
     "EventIntelligenceDemoRequest",
     "EventStudyEventResponse",
     "EventStudyResponse",
@@ -103,6 +107,8 @@ __all__ = [
     "GenerateScenarioRequest",
     "GenerateSignalRequest",
     "InstrumentFundamentalsResponse",
+    "InstrumentHighlightsResponse",
+    "InstrumentPageResponse",
     "InstrumentResponse",
     "InterpretMacroEventRequest",
     "MacroAssetClassImpactResponse",
