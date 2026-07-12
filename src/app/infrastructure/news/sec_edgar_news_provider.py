@@ -118,6 +118,7 @@ class SecEdgarNewsProvider(NewsProvider):
                     summary=_strip_html_tags(entry.get("summary") or ""),
                     url=entry.get("link") or "",
                     source=_SOURCE_NAME,
+                    provider="sec_edgar",
                     published_at=published_at,
                     related_symbols=[],
                 )
