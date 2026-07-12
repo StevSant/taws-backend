@@ -4,6 +4,7 @@ from app.application.charts.use_cases.build_drawdown_chart import BuildDrawdownC
 from app.application.charts.use_cases.build_macro_chart import BuildMacroChart
 from app.application.charts.use_cases.build_price_chart import BuildPriceChart
 from app.application.charts.use_cases.build_sentiment_gauge import BuildSentimentGauge
+from app.application.charts.use_cases.render_chart import RenderChart
 
 __all__ = [
     "BuildComparisonChart",
@@ -12,4 +13,5 @@ __all__ = [
     "BuildMacroChart",
     "BuildPriceChart",
     "BuildSentimentGauge",
+    "RenderChart",
 ]
