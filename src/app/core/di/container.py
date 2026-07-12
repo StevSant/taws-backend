@@ -43,6 +43,7 @@ from app.domain.market.ports import (
     InstrumentUniverse,
     MacroDataProvider,
     MarketDataProvider,
+    NewsItemRepository,
     NewsProvider,
 )
 from app.domain.notification.ports import EmailSender, NotificationChannel
@@ -108,6 +109,7 @@ from app.infrastructure.notification import (
 from app.infrastructure.persistence import (
     SupabaseBriefingRepository,
     SupabaseConversationRepository,
+    SupabaseNewsItemRepository,
     SupabaseScenarioRepository,
     SupabaseSignalRepository,
     SupabaseTelegramLinkRepository,
@@ -155,6 +157,7 @@ class Container:
         self._signal_repository: SignalRepository | None = None
         self._briefing_repository: BriefingRepository | None = None
         self._news_provider: NewsProvider | None = None
+        self._news_item_repository: NewsItemRepository | None = None
         self._instrument_universe: InstrumentUniverse | None = None
         self._market_data_provider: MarketDataProvider | None = None
         self._macro_data_provider: MacroDataProvider | None = None
@@ -252,6 +255,15 @@ class Container:
                 supabase_key=self._settings.supabase_key,
             )
         return self._signal_repository
+
+    def get_news_item_repository(self) -> NewsItemRepository:
+        """Return the cached NewsItemRepository (issue #1's persisted news store)."""
+        if self._news_item_repository is None:
+            self._news_item_repository = SupabaseNewsItemRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+            )
+        return self._news_item_repository
 
     def get_briefing_repository(self) -> BriefingRepository:
         if self._briefing_repository is None:
