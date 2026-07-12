@@ -1,4 +1,8 @@
+import logging
 import uuid
+from datetime import datetime
+
+from pydantic import ValidationError
 
 from app.application.common import build_locale_instruction
 from app.application.quant.event_study_stats import EventStudyStats
@@ -9,6 +13,9 @@ from app.application.scenario.scenario_asset_class_synthesis_draft import (
 )
 from app.application.scenario.scenario_context import ScenarioContext
 from app.application.scenario.scenario_synthesis_extraction import ScenarioSynthesisExtraction
+from app.application.scenario.scenario_synthesis_unavailable_error import (
+    ScenarioSynthesisUnavailableError,
+)
 from app.domain.agents.entities import Message, MessageRole
 from app.domain.agents.ports import LLMProvider
 from app.domain.compliance import NOT_PERSONALIZED_ADVICE_DISCLAIMER
@@ -23,6 +30,8 @@ from app.domain.scenario.entities import (
     ScenarioSpec,
 )
 from app.domain.signals.entities import ImpactClass
+
+logger = logging.getLogger(__name__)
 
 _EXTRACTION_SCHEMA_NAME = "scenario_synthesis_extraction"
 
@@ -46,8 +55,38 @@ buy/sell/order/execution instructions, and never phrased as personalized advice.
 
 This is research/informational output only."""
 
-_FALLBACK_REASONING = "fallback synthesis (structured output unavailable)"
-_FALLBACK_TITLE_SUFFIX = " (fallback synthesis)"
+# Localized, user-facing reasoning for an asset class the model did not return an impact
+# call for (issue #64: never a raw internal marker — an honest, localized statement).
+_UNASSESSED_REASONING: dict[str, str] = {
+    "es": "No se evaluó esta clase de activo en este escenario.",
+    "en": "This asset class was not assessed in this scenario.",
+}
+
+# Friendly, localized names for the macro series we surface as evidence (issue #65) — the
+# cryptic series id (e.g. FEDFUNDS) is kept in parentheses for traceability rather than
+# shown bare. Keyed by the macro *role*, not the configurable series id, since the id comes
+# from `Settings.fred_rates_series_id`/`fred_cpi_series_id`.
+_MACRO_RATE_LABEL: dict[str, str] = {
+    "es": "Tasa de política monetaria",
+    "en": "Policy rate",
+}
+_MACRO_CPI_LABEL: dict[str, str] = {
+    "es": "Índice de precios al consumidor",
+    "en": "Consumer price index",
+}
+
+_MONTHS: dict[str, list[str]] = {
+    "es": [
+        "ene", "feb", "mar", "abr", "may", "jun",
+        "jul", "ago", "sep", "oct", "nov", "dic",
+    ],
+    "en": [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ],
+}
+_DEFAULT_LANG = "en"
+_UNAVAILABLE: dict[str, str] = {"es": "no disponible", "en": "unavailable"}
 
 
 class SynthesizeScenarioResult:
@@ -60,22 +99,31 @@ class SynthesizeScenarioResult:
     deterministically assembles each `ScenarioAssetClassImpact.evidence` list from the
     real `ScenarioContext`/quant results (tagged `[dato actual]`/`[análogo histórico]`)
     plus exactly one `[razonamiento]`-tagged item per asset class, built from the model's
-    own `reasoning` field.
+    own `reasoning` field. Evidence detail is humanized and localized (issue #65): friendly
+    macro series names, locale-formatted dates, and locale-appropriate phrasing.
 
     Returns an UNPERSISTED `ScenarioResult` (an `id` is assigned, but nothing is written
     yet) — the graph's separate Compliance step gates persistence, same "compliance-gate-
     then-persist" contract as `GenerateSignal`/`GenerateBriefing`, just split across two
-    graph nodes instead of the tail end of one method (see the issue's explicit ask for
-    distinct Synthesis/Compliance graph nodes).
+    graph nodes instead of the tail end of one method.
 
-    Never raises: a structured-output failure downgrades to a deterministic, zero-
-    confidence "uncertain" impact call per requested asset class, same broad-catch shape
-    as `GenerateConsequenceChain._extract_chain`.
+    Resilience (issue #64): the structured-output call is retried up to
+    `max_synthesis_attempts`, logging schema-validation failures distinctly from
+    transport/provider failures. When every attempt fails it raises
+    `ScenarioSynthesisUnavailableError` — it does NOT fabricate a zero-confidence
+    pseudo-result with internal fallback markers. The router turns that into an honest,
+    localized "analysis unavailable" error state for the UI.
     """
 
-    def __init__(self, llm_provider: LLMProvider, instrument_universe: InstrumentUniverse) -> None:
+    def __init__(
+        self,
+        llm_provider: LLMProvider,
+        instrument_universe: InstrumentUniverse,
+        max_synthesis_attempts: int,
+    ) -> None:
         self._llm_provider = llm_provider
         self._instrument_universe = instrument_universe
+        self._max_synthesis_attempts = max(1, max_synthesis_attempts)
 
     async def execute(
         self,
@@ -85,10 +133,10 @@ class SynthesizeScenarioResult:
         quant_results: dict[str, EventStudyStats],
         locale: str,
     ) -> ScenarioResult:
-        evidence_pool = self._build_evidence_pool(spec, context, quant_results)
+        evidence_pool = self._build_evidence_pool(spec, context, quant_results, locale)
         extraction = await self._synthesize(spec, consequence_chain, evidence_pool, locale)
 
-        impact_map = self._build_impact_map(spec, evidence_pool, extraction.impact_map)
+        impact_map = self._build_impact_map(spec, evidence_pool, extraction.impact_map, locale)
 
         return ScenarioResult(
             id=str(uuid.uuid4()),
@@ -108,34 +156,67 @@ class SynthesizeScenarioResult:
         evidence_pool: dict[AssetClass, list[ScenarioEvidence]],
         locale: str,
     ) -> ScenarioSynthesisExtraction:
-        try:
-            raw = await self._llm_provider.complete_structured(
-                messages=[
-                    Message(
-                        role=MessageRole.SYSTEM,
-                        content=_SYNTHESIS_SYSTEM_PROMPT + build_locale_instruction(locale),
-                    ),
-                    Message(
-                        role=MessageRole.USER,
-                        content=_build_synthesis_prompt(spec, consequence_chain, evidence_pool),
-                    ),
-                ],
-                schema=ScenarioSynthesisExtraction.model_json_schema(),
-                schema_name=_EXTRACTION_SCHEMA_NAME,
-            )
-            return ScenarioSynthesisExtraction.model_validate(raw)
-        except Exception:
-            # `OpenAIProvider.complete_structured` raises when no OPENAI_API_KEY is
-            # configured; a malformed/unparseable response raises via `.model_validate`
-            # above. Either way, caught here and downgraded to a fallback synthesis
-            # instead of crashing the pipeline.
-            return _fallback_extraction(spec, evidence_pool)
+        """Call the structured-output model with a bounded retry (issue #64).
+
+        Distinguishes the two real failure modes and logs them distinctly instead of
+        collapsing every failure into one silent fallback:
+        - `ValidationError`: the model replied but its JSON didn't satisfy the schema.
+        - any other exception: the provider call itself failed (no `OPENAI_API_KEY`
+          configured raises `RuntimeError`; transport errors raise their own types).
+
+        Raises `ScenarioSynthesisUnavailableError` once every attempt is exhausted, so the
+        caller surfaces an honest error state rather than a fabricated result.
+        """
+        messages = [
+            Message(
+                role=MessageRole.SYSTEM,
+                content=_SYNTHESIS_SYSTEM_PROMPT + build_locale_instruction(locale),
+            ),
+            Message(
+                role=MessageRole.USER,
+                content=_build_synthesis_prompt(spec, consequence_chain, evidence_pool),
+            ),
+        ]
+        last_error: Exception | None = None
+        for attempt in range(1, self._max_synthesis_attempts + 1):
+            try:
+                raw = await self._llm_provider.complete_structured(
+                    messages=messages,
+                    schema=ScenarioSynthesisExtraction.model_json_schema(),
+                    schema_name=_EXTRACTION_SCHEMA_NAME,
+                )
+                return ScenarioSynthesisExtraction.model_validate(raw)
+            except ValidationError as exc:
+                last_error = exc
+                logger.warning(
+                    "Scenario synthesis structured output failed schema validation "
+                    "(attempt %d/%d): %s",
+                    attempt,
+                    self._max_synthesis_attempts,
+                    exc,
+                )
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Scenario synthesis structured output call failed (attempt %d/%d): %s",
+                    attempt,
+                    self._max_synthesis_attempts,
+                    exc,
+                )
+        logger.error(
+            "Scenario synthesis unavailable for %r after %d attempt(s); surfacing an honest "
+            "error state instead of a degraded pseudo-result.",
+            spec.title,
+            self._max_synthesis_attempts,
+        )
+        raise ScenarioSynthesisUnavailableError(spec.title) from last_error
 
     def _build_evidence_pool(
         self,
         spec: ScenarioSpec,
         context: ScenarioContext,
         quant_results: dict[str, EventStudyStats],
+        locale: str,
     ) -> dict[AssetClass, list[ScenarioEvidence]]:
         """Deterministically bucket every gathered fact by the asset class it's about.
 
@@ -147,15 +228,15 @@ class SynthesizeScenarioResult:
             asset_class: [] for asset_class in spec.affected_asset_classes
         }
 
-        macro_evidence = self._build_macro_evidence(context)
+        macro_evidence = self._build_macro_evidence(context, locale)
         for evidence_list in pool.values():
             evidence_list.extend(macro_evidence)
 
         for symbol, stats in context.market_stats.items():
-            self._append_if_tracked(pool, symbol, _market_stats_evidence(stats))
+            self._append_if_tracked(pool, symbol, _market_stats_evidence(stats, locale))
 
         for symbol, event_study in quant_results.items():
-            self._append_if_tracked(pool, symbol, _event_study_evidence(event_study))
+            self._append_if_tracked(pool, symbol, _event_study_evidence(event_study, locale))
 
         for symbol, analogs in context.historical_analogs.items():
             asset_class = self._asset_class_of(symbol)
@@ -173,7 +254,7 @@ class SynthesizeScenarioResult:
                         detail=format_scenario_evidence(
                             EvidenceType.ACTUAL_DATA,
                             f"{news_item.title} ({news_item.source}, "
-                            f"{news_item.published_at.date().isoformat()})",
+                            f"{_format_date(news_item.published_at, locale)})",
                         ),
                     ),
                 )
@@ -196,29 +277,41 @@ class SynthesizeScenarioResult:
         instrument = self._instrument_universe.by_symbol(symbol)
         return instrument.asset_class if instrument is not None else None
 
-    def _build_macro_evidence(self, context: ScenarioContext) -> list[ScenarioEvidence]:
+    def _build_macro_evidence(
+        self, context: ScenarioContext, locale: str
+    ) -> list[ScenarioEvidence]:
+        lang = _lang(locale)
+        as_of_word = "al" if lang == "es" else "as of"
         items: list[ScenarioEvidence] = []
         if context.macro_rates is not None:
+            label = _MACRO_RATE_LABEL.get(lang, _MACRO_RATE_LABEL[_DEFAULT_LANG])
             items.append(
                 _actual_data_evidence(
-                    f"{context.macro_rates.series_id} (policy rate): "
-                    f"{context.macro_rates.value:.2f} as of "
-                    f"{context.macro_rates.as_of.date().isoformat()}"
+                    f"{label} ({context.macro_rates.series_id}): "
+                    f"{context.macro_rates.value:.2f}% "
+                    f"({as_of_word} {_format_date(context.macro_rates.as_of, locale)})"
                 )
             )
         if context.macro_cpi is not None:
+            label = _MACRO_CPI_LABEL.get(lang, _MACRO_CPI_LABEL[_DEFAULT_LANG])
             items.append(
                 _actual_data_evidence(
-                    f"{context.macro_cpi.series_id} (CPI): {context.macro_cpi.value:.2f} as of "
-                    f"{context.macro_cpi.as_of.date().isoformat()}"
+                    f"{label} ({context.macro_cpi.series_id}): "
+                    f"{context.macro_cpi.value:.2f} "
+                    f"({as_of_word} {_format_date(context.macro_cpi.as_of, locale)})"
                 )
             )
         if context.volatility_regime is not None:
             regime = context.volatility_regime
+            vix_label = (
+                "Índice de volatilidad VIX" if lang == "es" else "VIX volatility index"
+            )
+            regime_word = "régimen" if lang == "es" else "regime"
             items.append(
                 _actual_data_evidence(
-                    f"VIX {regime.vix_level:.2f} ({regime.regime.value} regime) as of "
-                    f"{regime.as_of.date().isoformat()}"
+                    f"{vix_label}: {regime.vix_level:.2f} "
+                    f"({regime_word} {regime.regime.value}) "
+                    f"({as_of_word} {_format_date(regime.as_of, locale)})"
                 )
             )
         return items
@@ -228,29 +321,51 @@ class SynthesizeScenarioResult:
         spec: ScenarioSpec,
         evidence_pool: dict[AssetClass, list[ScenarioEvidence]],
         drafts: list[ScenarioAssetClassSynthesisDraft],
+        locale: str,
     ) -> list[ScenarioAssetClassImpact]:
         drafts_by_class = {draft.asset_class: draft for draft in drafts}
         requested = spec.affected_asset_classes or list(drafts_by_class.keys())
 
         impacts: list[ScenarioAssetClassImpact] = []
         for asset_class in requested:
-            draft = drafts_by_class.get(asset_class) or _fallback_draft(asset_class)
+            draft = drafts_by_class.get(asset_class)
+            reasoning = draft.reasoning if draft is not None else _unassessed_reasoning(locale)
+            direction = draft.direction if draft is not None else ImpactClass.UNCERTAIN
+            confidence = draft.confidence if draft is not None else 0.0
             evidence = [*evidence_pool.get(asset_class, [])]
             evidence.append(
                 ScenarioEvidence(
                     evidence_type=EvidenceType.REASONING,
-                    detail=format_scenario_evidence(EvidenceType.REASONING, draft.reasoning),
+                    detail=format_scenario_evidence(EvidenceType.REASONING, reasoning),
                 )
             )
             impacts.append(
                 ScenarioAssetClassImpact(
                     asset_class=asset_class,
-                    direction=draft.direction,
-                    confidence=draft.confidence,
+                    direction=direction,
+                    confidence=confidence,
                     evidence=evidence,
                 )
             )
         return impacts
+
+
+def _lang(locale: str) -> str:
+    """Primary language subtag of `locale` (e.g. `es-MX` -> `es`), defaulting to English."""
+    return locale.split("-", 1)[0].lower() if locale else _DEFAULT_LANG
+
+
+def _format_date(value: datetime, locale: str) -> str:
+    """Format `value` as a short, locale-appropriate date instead of raw ISO (issue #65)."""
+    months = _MONTHS.get(_lang(locale), _MONTHS[_DEFAULT_LANG])
+    month = months[value.month - 1]
+    if _lang(locale) == "es":
+        return f"{value.day} {month} {value.year}"
+    return f"{month} {value.day}, {value.year}"
+
+
+def _unassessed_reasoning(locale: str) -> str:
+    return _UNASSESSED_REASONING.get(_lang(locale), _UNASSESSED_REASONING[_DEFAULT_LANG])
 
 
 def _actual_data_evidence(text: str) -> ScenarioEvidence:
@@ -260,32 +375,56 @@ def _actual_data_evidence(text: str) -> ScenarioEvidence:
     )
 
 
-def _market_stats_evidence(stats: MarketStats) -> ScenarioEvidence:
-    delta = f"{stats.price_delta_pct:+.2f}%" if stats.price_delta_pct is not None else "unavailable"
+def _market_stats_evidence(stats: MarketStats, locale: str) -> ScenarioEvidence:
+    lang = _lang(locale)
+    unavailable = _UNAVAILABLE.get(lang, _UNAVAILABLE[_DEFAULT_LANG])
+    delta = f"{stats.price_delta_pct:+.2f}%" if stats.price_delta_pct is not None else unavailable
     volatility = (
         f"{stats.volatility_pct:.2f}% ({stats.volatility_regime.value})"
         if stats.volatility_pct is not None and stats.volatility_regime is not None
-        else "unavailable"
+        else unavailable
     )
-    return _actual_data_evidence(
-        f"{stats.instrument_symbol} {stats.window_days}d price delta {delta}, "
-        f"annualized volatility {volatility}"
-    )
-
-
-def _event_study_evidence(stats: EventStudyStats) -> ScenarioEvidence:
-    if stats.sample_size == 0:
+    if lang == "es":
         text = (
-            f"{stats.instrument_symbol}: no historical moves >= {stats.move_threshold_pct:.2f}% "
-            f"found in the last {stats.lookback_days}d"
+            f"{stats.instrument_symbol}: variación de precio a {stats.window_days}d {delta}, "
+            f"volatilidad anualizada {volatility}"
         )
+    else:
+        text = (
+            f"{stats.instrument_symbol} {stats.window_days}d price delta {delta}, "
+            f"annualized volatility {volatility}"
+        )
+    return _actual_data_evidence(text)
+
+
+def _event_study_evidence(stats: EventStudyStats, locale: str) -> ScenarioEvidence:
+    lang = _lang(locale)
+    if stats.sample_size == 0:
+        if lang == "es":
+            text = (
+                f"{stats.instrument_symbol}: sin movimientos históricos "
+                f">= {stats.move_threshold_pct:.2f}% en los últimos {stats.lookback_days}d"
+            )
+        else:
+            text = (
+                f"{stats.instrument_symbol}: no historical moves "
+                f">= {stats.move_threshold_pct:.2f}% found in the last {stats.lookback_days}d"
+            )
         return _actual_data_evidence(text)
-    text = (
-        f"{stats.instrument_symbol} last {stats.sample_size} similar moves "
-        f"(>= {stats.move_threshold_pct:.2f}%, {stats.lookback_days}d lookback): "
-        f"median {stats.median_return_pct:+.2f}%, "
-        f"range {stats.min_return_pct:+.2f}% to {stats.max_return_pct:+.2f}%"
-    )
+    if lang == "es":
+        text = (
+            f"{stats.instrument_symbol}: últimos {stats.sample_size} movimientos similares "
+            f"(>= {stats.move_threshold_pct:.2f}%, ventana {stats.lookback_days}d): "
+            f"mediana {stats.median_return_pct:+.2f}%, "
+            f"rango {stats.min_return_pct:+.2f}% a {stats.max_return_pct:+.2f}%"
+        )
+    else:
+        text = (
+            f"{stats.instrument_symbol} last {stats.sample_size} similar moves "
+            f"(>= {stats.move_threshold_pct:.2f}%, {stats.lookback_days}d lookback): "
+            f"median {stats.median_return_pct:+.2f}%, "
+            f"range {stats.min_return_pct:+.2f}% to {stats.max_return_pct:+.2f}%"
+        )
     return _actual_data_evidence(text)
 
 
@@ -329,31 +468,3 @@ def _format_consequence_chain(chain: ConsequenceChain) -> list[str]:
         f"(confidence={edge.confidence:.2f}): {edge.mechanism}"
         for edge in chain.edges
     ]
-
-
-def _fallback_extraction(
-    spec: ScenarioSpec, evidence_pool: dict[AssetClass, list[ScenarioEvidence]]
-) -> ScenarioSynthesisExtraction:
-    requested = spec.affected_asset_classes or list(evidence_pool.keys())
-    # `ScenarioSynthesisExtraction.impact_map` requires at least one entry; a total
-    # fallback (free-form intake ALSO degraded, so no asset class was even requested) has
-    # nothing real to key off, so it defaults to one degraded `stock` entry rather than
-    # leaving `impact_map` empty — an arbitrary but harmless choice since `confidence=0.0`
-    # and `direction=UNCERTAIN` already signal "no real data", and this only happens when
-    # structured output was unavailable on both the Intake and Synthesis steps.
-    fallback_map = [_fallback_draft(asset_class) for asset_class in requested]
-    return ScenarioSynthesisExtraction(
-        title=spec.title + _FALLBACK_TITLE_SUFFIX,
-        narrative=_FALLBACK_REASONING,
-        impact_map=fallback_map or [_fallback_draft(AssetClass.STOCK)],
-        recommended_actions=[],
-    )
-
-
-def _fallback_draft(asset_class: AssetClass) -> ScenarioAssetClassSynthesisDraft:
-    return ScenarioAssetClassSynthesisDraft(
-        asset_class=asset_class,
-        direction=ImpactClass.UNCERTAIN,
-        confidence=0.0,
-        reasoning=_FALLBACK_REASONING,
-    )

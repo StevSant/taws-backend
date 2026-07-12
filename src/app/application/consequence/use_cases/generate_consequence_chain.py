@@ -1,5 +1,6 @@
 import uuid
 
+from app.application.common import build_locale_instruction
 from app.application.consequence.consequence_chain_extraction import ConsequenceChainExtraction
 from app.application.consequence.consequence_edge_draft import ConsequenceEdgeDraft
 from app.application.consequence.consequence_node_draft import ConsequenceNodeDraft
@@ -63,15 +64,23 @@ class GenerateConsequenceChain:
     def __init__(self, llm_provider: LLMProvider) -> None:
         self._llm_provider = llm_provider
 
-    async def execute(self, subject: str) -> ConsequenceChain:
-        extraction = await self._extract_chain(subject)
+    async def execute(self, subject: str, locale: str | None = None) -> ConsequenceChain:
+        extraction = await self._extract_chain(subject, locale)
         return _to_chain(subject, extraction)
 
-    async def _extract_chain(self, subject: str) -> ConsequenceChainExtraction:
+    async def _extract_chain(
+        self, subject: str, locale: str | None = None
+    ) -> ConsequenceChainExtraction:
+        # `locale` is optional so the chat tool and REST endpoint keep calling
+        # `execute(subject)` unchanged; the scenario graph's causal-chain node passes it
+        # (issue #65) so node labels and mechanisms come back in the user's locale.
+        system_prompt = _EXTRACTION_SYSTEM_PROMPT
+        if locale:
+            system_prompt += build_locale_instruction(locale)
         try:
             raw = await self._llm_provider.complete_structured(
                 messages=[
-                    Message(role=MessageRole.SYSTEM, content=_EXTRACTION_SYSTEM_PROMPT),
+                    Message(role=MessageRole.SYSTEM, content=system_prompt),
                     Message(role=MessageRole.USER, content=f"Subject: {subject}"),
                 ],
                 schema=ConsequenceChainExtraction.model_json_schema(),

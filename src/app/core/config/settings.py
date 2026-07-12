@@ -291,6 +291,13 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.0-flash"
 
+    # --- Scenario synthesis resilience (issue #64) ---
+    # Bounded retry around the Synthesis step's structured-output call. A transient
+    # structured-output failure is retried up to this many attempts before the pipeline
+    # surfaces an honest "analysis unavailable" error state, instead of degrading to a
+    # zero-confidence pseudo-result with internal fallback markers.
+    scenario_synthesis_max_attempts: int = 2
+
     # --- Scenario Monitors (arm a saved ScenarioResult as a Watchdog rule, issue #18) ---
     # How long an armed monitor stays active before auto-expiring with no match. Product
     # guidance: keep within a 7-30 day window; 14 days is the chosen middle default.

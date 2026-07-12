@@ -1,5 +1,6 @@
 from typing import Any
 
+from app.application.common import build_locale_instruction
 from app.application.scenario.build_scenario_spec_from_preset import (
     build_scenario_spec_from_preset,
 )
@@ -69,12 +70,16 @@ class NormalizeScenarioIntake:
         self._preset_rows = preset_rows
 
     async def execute(
-        self, *, preset_id: str | None = None, free_text: str | None = None
+        self,
+        *,
+        preset_id: str | None = None,
+        free_text: str | None = None,
+        locale: str | None = None,
     ) -> ScenarioSpec:
         if preset_id:
             return self._from_preset(preset_id)
         if free_text and free_text.strip():
-            return await self._from_free_text(free_text.strip())
+            return await self._from_free_text(free_text.strip(), locale)
         raise InvalidScenarioIntakeError
 
     def _from_preset(self, preset_id: str) -> ScenarioSpec:
@@ -83,15 +88,21 @@ class NormalizeScenarioIntake:
                 return build_scenario_spec_from_preset(row, self._instrument_universe)
         raise UnknownPresetError(preset_id)
 
-    async def _from_free_text(self, free_text: str) -> ScenarioSpec:
+    async def _from_free_text(self, free_text: str, locale: str | None) -> ScenarioSpec:
+        # Thread the caller's locale (issue #65) so the model's title/description come back
+        # localized, matching the rest of the scenario pipeline. Preset intake needs no
+        # locale — its title/description come from already-localized seed rows.
+        system_prompt = _INTAKE_SYSTEM_PROMPT_TEMPLATE.format(
+            universe_listing=self._format_universe_listing()
+        )
+        if locale:
+            system_prompt += build_locale_instruction(locale)
         try:
             raw = await self._llm_provider.complete_structured(
                 messages=[
                     Message(
                         role=MessageRole.SYSTEM,
-                        content=_INTAKE_SYSTEM_PROMPT_TEMPLATE.format(
-                            universe_listing=self._format_universe_listing()
-                        ),
+                        content=system_prompt,
                     ),
                     Message(role=MessageRole.USER, content=free_text),
                 ],
