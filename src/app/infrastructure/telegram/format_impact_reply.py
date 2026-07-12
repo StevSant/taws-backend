@@ -5,7 +5,7 @@ from app.infrastructure.telegram.truncate_telegram_text import truncate_telegram
 
 def format_impact_reply(sector: str, analysis: str) -> str:
     text = (
-        f"🏛️ <b>Impact on {html.escape(sector)}</b>"
+        f"🏛️ <b>Impacto en {html.escape(sector)}</b>"
         f"\n\n━━━━━━━━━━━━━━━━━━"
         f"\n\n{html.escape(analysis)}"
     )

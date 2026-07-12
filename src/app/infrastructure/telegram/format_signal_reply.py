@@ -10,9 +10,12 @@ def format_signal_reply(signal: Signal) -> str:
     impact_emoji = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}.get(
         signal.impact_class.value, "⚪"
     )
+    impact_label = {"bullish": "Alcista", "bearish": "Bajista", "neutral": "Neutral"}.get(
+        signal.impact_class.value, signal.impact_class.value.capitalize()
+    )
     header = (
         f"<b>{html.escape(signal.instrument_symbol)}</b>"
-        f" — {impact_emoji} {signal.impact_class.value.capitalize()}"
+        f" — {impact_emoji} {impact_label}"
     )
     evidence_lines = "\n".join(
         f"• {html.escape(item.source)} ({item.published_at.date().isoformat()})"
@@ -21,8 +24,8 @@ def format_signal_reply(signal: Signal) -> str:
     disclaimer = html.escape(signal.disclaimer)
 
     body_parts = [header]
-    body_parts.append(f"🎯 <b>Confidence</b>\n{signal.confidence:.0%}")
+    body_parts.append(f"🎯 <b>Confianza</b>\n{signal.confidence:.0%}")
     if evidence_lines:
-        body_parts.append(f"📊 <b>Evidence</b>\n{evidence_lines}")
+        body_parts.append(f"📊 <b>Evidencia</b>\n{evidence_lines}")
     body_parts.append(f"\n━━━━━━━━━━━━━━━━━━\n{disclaimer}")
     return truncate_telegram_text("\n\n".join(body_parts))

@@ -13,10 +13,10 @@ def format_briefing_reply(briefing: Briefing, watchlist: Watchlist, frontend_bas
     body = (
         f"{header}"
         f"\n\n━━━━━━━━━━━━━━━━━━"
-        f"\n\n<b>📌 Summary</b>"
+        f"\n\n<b>📌 Resumen</b>"
         f"\n{summary}"
         f"\n\n━━━━━━━━━━━━━━━━━━"
-        f"\n\n🔗 <a href='{link}'>View full briefing</a>"
+        f"\n\n🔗 <a href='{link}'>Ver briefing completo</a>"
         f"\n\n{disclaimer}"
     )
     return truncate_telegram_text(body)
