@@ -531,6 +531,7 @@ class Container:
                 coingecko_provider=CoinGeckoMarketDataProvider(
                     base_url=self._settings.coingecko_base_url,
                     coingecko_id_overrides=coingecko_overrides,
+                    cache_ttl_seconds=self._settings.coingecko_cache_ttl_seconds,
                 ),
                 fixture_provider=fixture_provider,
             )

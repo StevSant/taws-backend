@@ -76,6 +76,11 @@ class Settings(BaseSettings):
 
     # --- CoinGecko (crypto prices, behind the MarketDataProvider port); no key required ---
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"
+    # Short-TTL in-process cache in front of get_price_series/get_last_price (issue #8) —
+    # CoinGecko's free tier rate-limits (429) hard when the same handful of crypto
+    # instruments are polled every ~60s; a cache this short still keeps prices fresh
+    # enough for the product's polling cadence while cutting redundant calls.
+    coingecko_cache_ttl_seconds: float = 60.0
 
     # --- FRED (macro: rates, CPI; behind the MacroDataProvider port) ---
     # Free key at https://fred.stlouisfed.org/docs/api/api_key.html. Leave empty to serve
