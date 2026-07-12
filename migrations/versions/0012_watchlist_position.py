@@ -14,7 +14,7 @@ column in this schema it is not a buy/sell/order/quantity/price_target field, an
 never become one — see the product's compliance stance.
 
 Revision ID: 0012
-Revises: 0011
+Revises: 0011b
 Create Date: 2026-07-12
 
 """
@@ -24,7 +24,14 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "0012"
-down_revision: str | None = "0011"
+# Re-chained onto 0011b (issue #21): 0011b and 0012 both originally declared
+# down_revision "0011", branching the tree into two heads and breaking
+# `alembic upgrade head`. 0011b was the branch that actually shipped (the live
+# DB is stamped at 0011b with `user_notes` present but `watchlists.position`
+# absent), so slotting 0012 after 0011b linearizes the chain AND makes the one
+# pending migration on existing environments the column this file adds — no
+# `alembic stamp` needed. Matches the 0009 -> 0009b -> 0010 convention.
+down_revision: str | None = "0011b"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
