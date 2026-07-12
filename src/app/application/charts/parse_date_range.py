@@ -1,9 +1,7 @@
 from datetime import date
 
 
-def parse_date_range(
-    from_date: str | None, to_date: str | None
-) -> tuple[date, date] | None:
+def parse_date_range(from_date: str | None, to_date: str | None) -> tuple[date, date] | None:
     """Parse an optional ISO `YYYY-MM-DD` range, returning `(from, to)` only when valid.
 
     Returns `None` when either bound is missing, unparseable, or out of order (`from > to`),

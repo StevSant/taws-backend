@@ -10,5 +10,4 @@ class BotRegistrationPort(ABC):
     """
 
     @abstractmethod
-    async def register(self, user_id: str, botfather_text: str) -> UserBot:
-        ...
+    async def register(self, user_id: str, botfather_text: str) -> UserBot: ...

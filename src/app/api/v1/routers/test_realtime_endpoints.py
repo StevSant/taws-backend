@@ -217,9 +217,7 @@ def test_tool_get_watchlist_scopes_to_jwt_user_id() -> None:
     )
     container = _fake_container(get_watchlist_repository=repo)
 
-    response = _post_tool(
-        container, {"call_id": "c4", "name": "get_watchlist", "arguments": {}}
-    )
+    response = _post_tool(container, {"call_id": "c4", "name": "get_watchlist", "arguments": {}})
 
     assert response.status_code == 200
     body = response.json()

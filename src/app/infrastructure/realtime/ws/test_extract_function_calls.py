@@ -29,9 +29,7 @@ def test_extracts_function_call_with_parsed_arguments() -> None:
         },
     }
     calls = extract_function_calls(event)
-    assert calls == [
-        {"name": "get_market_data", "call_id": "c1", "arguments": {"symbol": "AAPL"}}
-    ]
+    assert calls == [{"name": "get_market_data", "call_id": "c1", "arguments": {"symbol": "AAPL"}}]
 
 
 def test_malformed_argument_json_degrades_to_empty_dict() -> None:

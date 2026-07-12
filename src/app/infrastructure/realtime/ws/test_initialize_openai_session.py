@@ -34,9 +34,7 @@ class FakeOpenAISocket:
 
 @pytest.mark.asyncio
 async def test_sends_session_update_after_session_created() -> None:
-    socket = FakeOpenAISocket(
-        events=[{"type": "session.created"}]
-    )
+    socket = FakeOpenAISocket(events=[{"type": "session.created"}])
 
     await initialize_openai_session(socket, Settings(openai_realtime_voice="alloy"))
 
@@ -47,9 +45,7 @@ async def test_sends_session_update_after_session_created() -> None:
 
 @pytest.mark.asyncio
 async def test_skips_leading_events_until_session_created() -> None:
-    socket = FakeOpenAISocket(
-        events=[{"type": "response.created"}, {"type": "session.created"}]
-    )
+    socket = FakeOpenAISocket(events=[{"type": "response.created"}, {"type": "session.created"}])
 
     await initialize_openai_session(socket, Settings())
 

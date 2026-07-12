@@ -47,9 +47,7 @@ class _FakeJWKSClient:
 
 
 def _patch_jwks(monkeypatch: Any, public_key: Any) -> None:
-    monkeypatch.setattr(
-        _module, "get_jwks_client", lambda _url: _FakeJWKSClient(public_key)
-    )
+    monkeypatch.setattr(_module, "get_jwks_client", lambda _url: _FakeJWKSClient(public_key))
 
 
 def _settings() -> Settings:
@@ -74,9 +72,7 @@ def test_valid_token_returns_user(monkeypatch: Any) -> None:
 def test_expired_token_returns_none(monkeypatch: Any) -> None:
     private_key, public_key = _make_es256_keypair()
     _patch_jwks(monkeypatch, public_key)
-    token = _encode(
-        private_key, {"sub": "user-123", "exp": int(time.time()) - 10}
-    )
+    token = _encode(private_key, {"sub": "user-123", "exp": int(time.time()) - 10})
 
     assert verify_realtime_ws_token(token, _settings()) is None
 
@@ -86,9 +82,7 @@ def test_token_signed_by_wrong_key_returns_none(monkeypatch: Any) -> None:
     _, other_public_key = _make_es256_keypair()
     # JWKS serves an unrelated public key -> signature verification fails.
     _patch_jwks(monkeypatch, other_public_key)
-    token = _encode(
-        signing_key, {"sub": "user-123", "exp": int(time.time()) + 600}
-    )
+    token = _encode(signing_key, {"sub": "user-123", "exp": int(time.time()) + 600})
 
     assert verify_realtime_ws_token(token, _settings()) is None
 

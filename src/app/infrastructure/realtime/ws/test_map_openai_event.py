@@ -9,16 +9,12 @@ from app.infrastructure.realtime.ws.map_openai_event import map_openai_event
 
 
 def test_audio_delta_maps_to_audio_message() -> None:
-    out = map_openai_event(
-        {"type": "response.output_audio.delta", "delta": "QUJD"}
-    )
+    out = map_openai_event({"type": "response.output_audio.delta", "delta": "QUJD"})
     assert out == {"type": "audio", "data": "QUJD"}
 
 
 def test_transcript_delta_maps_to_transcript_delta() -> None:
-    out = map_openai_event(
-        {"type": "response.output_audio_transcript.delta", "delta": "Apple "}
-    )
+    out = map_openai_event({"type": "response.output_audio_transcript.delta", "delta": "Apple "})
     assert out == {"type": "transcript-delta", "delta": "Apple "}
 
 
@@ -38,9 +34,7 @@ def test_response_done_maps_to_speaking_false() -> None:
 
 
 def test_error_event_maps_to_error_message() -> None:
-    out = map_openai_event(
-        {"type": "error", "error": {"message": "bad audio format"}}
-    )
+    out = map_openai_event({"type": "error", "error": {"message": "bad audio format"}})
     assert out == {"type": "error", "message": "bad audio format"}
 
 

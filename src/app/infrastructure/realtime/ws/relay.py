@@ -63,9 +63,7 @@ async def run_realtime_relay(
     """
     max_seconds = min(settings.openai_realtime_ttl_seconds, _MAX_SESSION_SECONDS_CAP)
     try:
-        await asyncio.wait_for(
-            _run_pumps(browser, openai, container, user), timeout=max_seconds
-        )
+        await asyncio.wait_for(_run_pumps(browser, openai, container, user), timeout=max_seconds)
     except TimeoutError:
         logger.info("Realtime relay hit the %ss duration cap; closing.", max_seconds)
     finally:
@@ -84,9 +82,7 @@ async def _run_pumps(
     instead of leaking (which would keep the OpenAI socket alive past the cap).
     """
     to_openai = asyncio.ensure_future(_pump_browser_to_openai(browser, openai))
-    to_browser = asyncio.ensure_future(
-        _pump_openai_to_browser(browser, openai, container, user)
-    )
+    to_browser = asyncio.ensure_future(_pump_openai_to_browser(browser, openai, container, user))
     tasks = (to_openai, to_browser)
     try:
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -120,9 +116,7 @@ async def _pump_browser_to_openai(browser: BrowserSocket, openai: OpenAISocket) 
             continue
         if message.get("type") == _BROWSER_AUDIO_TYPE:
             await openai.send(
-                json.dumps(
-                    {"type": CLIENT_INPUT_AUDIO_APPEND, "audio": message.get("data", "")}
-                )
+                json.dumps({"type": CLIENT_INPUT_AUDIO_APPEND, "audio": message.get("data", "")})
             )
         else:
             # Forward other client control events verbatim (e.g. response.create,

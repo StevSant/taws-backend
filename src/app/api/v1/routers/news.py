@@ -127,9 +127,7 @@ async def get_news_item(
     """
     item = await news_item_repository.get_by_id(news_id)
     if item is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="News item not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News item not found")
     return NewsItemResponse.model_validate(item)
 
 

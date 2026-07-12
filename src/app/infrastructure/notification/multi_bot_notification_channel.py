@@ -1,7 +1,5 @@
 import logging
 
-import logging
-
 from app.domain.compliance import NOT_PERSONALIZED_ADVICE_DISCLAIMER
 from app.domain.notification.entities import (
     Alert,

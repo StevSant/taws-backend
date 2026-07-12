@@ -9,7 +9,6 @@ from app.infrastructure.telegram.botfather_parser import parse_botfather_text
 logger = logging.getLogger(__name__)
 
 
-
 class TelegramBotRegistration(BotRegistrationPort):
     """`BotRegistrationPort` adapter: parses BotFather text, calls `getUpdates` to
     obtain the user's `chat_id`, sets the webhook, and persists via `UserBotRepository`.
@@ -87,9 +86,7 @@ class TelegramBotRegistration(BotRegistrationPort):
 
         for update in data["result"]:
             message = (
-                update.get("message")
-                or update.get("edited_message")
-                or update.get("channel_post")
+                update.get("message") or update.get("edited_message") or update.get("channel_post")
             )
             if message and "chat" in message:
                 chat_id = message["chat"].get("id")

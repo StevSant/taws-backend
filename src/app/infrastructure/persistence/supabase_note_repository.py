@@ -86,6 +86,4 @@ class SupabaseNoteRepository(NoteRepository):
 
     async def delete(self, note_id: str) -> None:
         client = await self._clients.get()
-        await self._retry(
-            lambda: client.table(_NOTES_TABLE).delete().eq("id", note_id).execute()
-        )
+        await self._retry(lambda: client.table(_NOTES_TABLE).delete().eq("id", note_id).execute())

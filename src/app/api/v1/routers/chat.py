@@ -59,6 +59,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 _DEFAULT_THREAD_ID = "default"
 
+
 def _to_sse_frame(event: AgentStreamEvent) -> str:
     """Serialize one `AgentStreamEvent` to a single SSE v2 `data:` frame.
 

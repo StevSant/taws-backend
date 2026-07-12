@@ -124,7 +124,6 @@ from app.infrastructure.news import (
 )
 from app.infrastructure.notification import (
     LoggingEmailSender,
-    LoggingNotificationChannel,
     MultiBotNotificationChannel,
     TelegramNotificationChannel,
 )
@@ -253,11 +252,7 @@ class Container:
         without a TTS key. Uses its own `tts_api_key` (not `openai_api_key`) so TTS is
         enabled/billed independently of the chat/embedding pipelines.
         """
-        if (
-            self._tts_provider is None
-            and self._settings.tts_enabled
-            and self._settings.tts_api_key
-        ):
+        if self._tts_provider is None and self._settings.tts_enabled and self._settings.tts_api_key:
             self._tts_provider = OpenAITTSProvider(
                 api_key=self._settings.tts_api_key, model=self._settings.tts_model
             )
@@ -273,11 +268,7 @@ class Container:
         working without an STT key. Uses its own `stt_api_key` (not `openai_api_key`) so
         STT is enabled/billed independently of the chat/embedding pipelines.
         """
-        if (
-            self._stt_provider is None
-            and self._settings.stt_enabled
-            and self._settings.stt_api_key
-        ):
+        if self._stt_provider is None and self._settings.stt_enabled and self._settings.stt_api_key:
             self._stt_provider = OpenAISTTProvider(
                 api_key=self._settings.stt_api_key, model=self._settings.stt_model
             )
@@ -1158,13 +1149,15 @@ class Container:
             # per-user data either (see `ScenarioRepository`'s docstring) — so it's kept
             # in its own builder (`build_scenario_tools`, not "grounding") and
             # concatenated here rather than folded into `build_advisor_grounding_tools`.
-            advisor_tools = build_advisor_grounding_tools(
-                signal_repository=self.get_signal_repository()
-            ) + build_scenario_tools(
-                scenario_simulation_runner=self.get_scenario_simulation_runner(),
-                default_locale=self._settings.default_locale,
-            ) + build_event_intelligence_tools(
-                event_repository=self.get_event_repository(),
+            advisor_tools = (
+                build_advisor_grounding_tools(signal_repository=self.get_signal_repository())
+                + build_scenario_tools(
+                    scenario_simulation_runner=self.get_scenario_simulation_runner(),
+                    default_locale=self._settings.default_locale,
+                )
+                + build_event_intelligence_tools(
+                    event_repository=self.get_event_repository(),
+                )
             )
             consequence_tools = build_consequence_tools(
                 use_case=self.get_generate_consequence_chain_use_case()

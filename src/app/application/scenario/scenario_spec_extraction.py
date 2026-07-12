@@ -55,8 +55,7 @@ class ScenarioSpecExtraction(BaseModel):
     direction: ScenarioDirection | None = Field(
         default=None,
         description=(
-            "Direction of the primary numeric shock. Use null when no directional move "
-            "was stated."
+            "Direction of the primary numeric shock. Use null when no directional move was stated."
         ),
     )
     timeframe_days: int | None = Field(

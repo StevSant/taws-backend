@@ -20,7 +20,6 @@ from app.api.v1.dependencies import (
     get_user_bot_repository,
     require_current_user,
 )
-from app.core.di import Container, get_container
 from app.api.v1.schemas import (
     CurrentUser,
     RegisterBotRequest,
@@ -30,6 +29,7 @@ from app.api.v1.schemas import (
 )
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.core.config import Settings, get_settings
+from app.core.di import Container, get_container
 from app.domain.telegram.entities import TelegramLinkToken
 from app.domain.telegram.ports import (
     BotRegistrationPort,
@@ -158,12 +158,8 @@ async def telegram_webhook(
     simulate_handler: Annotated[
         SimulateCommandHandler | None, Depends(get_simulate_command_handler)
     ],
-    impact_handler: Annotated[
-        ImpactCommandHandler | None, Depends(get_impact_command_handler)
-    ],
-    chat_handler: Annotated[
-        ChatMessageHandler | None, Depends(get_chat_message_handler)
-    ],
+    impact_handler: Annotated[ImpactCommandHandler | None, Depends(get_impact_command_handler)],
+    chat_handler: Annotated[ChatMessageHandler | None, Depends(get_chat_message_handler)],
     messenger: Annotated[TelegramMessenger | None, Depends(get_telegram_messenger)],
 ) -> dict[str, bool]:
     """Telegram webhook endpoint: Telegram POSTs every `Update` here once `setWebhook` is
@@ -259,12 +255,8 @@ async def telegram_webhook_for_bot(
     simulate_handler: Annotated[
         SimulateCommandHandler | None, Depends(get_simulate_command_handler)
     ],
-    impact_handler: Annotated[
-        ImpactCommandHandler | None, Depends(get_impact_command_handler)
-    ],
-    chat_handler: Annotated[
-        ChatMessageHandler | None, Depends(get_chat_message_handler)
-    ],
+    impact_handler: Annotated[ImpactCommandHandler | None, Depends(get_impact_command_handler)],
+    chat_handler: Annotated[ChatMessageHandler | None, Depends(get_chat_message_handler)],
 ) -> dict[str, bool]:
     """Webhook endpoint for a user-registered Telegram bot.
 

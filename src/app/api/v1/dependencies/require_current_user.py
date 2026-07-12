@@ -55,9 +55,7 @@ def require_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header"
         )
 
-    user = decode_bearer_token(
-        authorization, supabase_jwks_url(settings.supabase_url), settings
-    )
+    user = decode_bearer_token(authorization, supabase_jwks_url(settings.supabase_url), settings)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token"

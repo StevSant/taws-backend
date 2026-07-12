@@ -78,12 +78,32 @@ _MACRO_CPI_LABEL: dict[str, str] = {
 
 _MONTHS: dict[str, list[str]] = {
     "es": [
-        "ene", "feb", "mar", "abr", "may", "jun",
-        "jul", "ago", "sep", "oct", "nov", "dic",
+        "ene",
+        "feb",
+        "mar",
+        "abr",
+        "may",
+        "jun",
+        "jul",
+        "ago",
+        "sep",
+        "oct",
+        "nov",
+        "dic",
     ],
     "en": [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
     ],
 }
 _DEFAULT_LANG = "en"
@@ -309,9 +329,7 @@ class SynthesizeScenarioResult:
             )
         if context.volatility_regime is not None:
             regime = context.volatility_regime
-            vix_label = (
-                "Índice de volatilidad VIX" if lang == "es" else "VIX volatility index"
-            )
+            vix_label = "Índice de volatilidad VIX" if lang == "es" else "VIX volatility index"
             regime_word = "régimen" if lang == "es" else "regime"
             items.append(
                 _actual_data_evidence(
@@ -512,7 +530,9 @@ def _target_price_evidence(
     distance_pct = ((spec.target_price / stats.last_price) - 1) * 100
     if spec.timeframe_days is not None:
         timeframe = (
-            f"en {spec.timeframe_days} día(s)" if lang == "es" else f"within {spec.timeframe_days} day(s)"
+            f"en {spec.timeframe_days} día(s)"
+            if lang == "es"
+            else f"within {spec.timeframe_days} day(s)"
         )
     else:
         timeframe = (

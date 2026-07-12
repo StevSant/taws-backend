@@ -1,4 +1,3 @@
-
 from app.domain.telegram.entities import UserBot
 from app.domain.telegram.ports import UserBotRepository
 from app.infrastructure.persistence.supabase_client_cache import SupabaseClientCache

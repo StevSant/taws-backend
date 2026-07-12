@@ -5,9 +5,7 @@ import re
 # request URL — query string included — into `HTTPStatusError`'s message, so logging a bare
 # `str(exc)` from a provider that keys off a `?api_token=...` query param leaks the key.
 _SECRET_QUERY_PARAMS = ("api_token", "api_key", "apikey", "token", "key", "secret", "password")
-_SECRET_QUERY_PATTERN = re.compile(
-    rf"(?i)([?&](?:{'|'.join(_SECRET_QUERY_PARAMS)})=)[^&\s]+"
-)
+_SECRET_QUERY_PATTERN = re.compile(rf"(?i)([?&](?:{'|'.join(_SECRET_QUERY_PARAMS)})=)[^&\s]+")
 
 
 def redact_url_secrets(text: str) -> str:

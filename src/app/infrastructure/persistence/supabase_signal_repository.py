@@ -65,9 +65,7 @@ class SupabaseSignalRepository(SignalRepository):
         client = await self._clients.get()
         row = _signal_to_row(signal)
         try:
-            response = await self._retry(
-                lambda: client.table(_SIGNALS_TABLE).insert(row).execute()
-            )
+            response = await self._retry(lambda: client.table(_SIGNALS_TABLE).insert(row).execute())
         except PostgrestAPIError as exc:
             if not _is_missing_optional_analysis_column(exc):
                 raise
@@ -78,9 +76,7 @@ class SupabaseSignalRepository(SignalRepository):
             legacy_row = {
                 key: value for key, value in row.items() if key not in _OPTIONAL_ANALYSIS_COLUMNS
             }
-            await self._retry(
-                lambda: client.table(_SIGNALS_TABLE).insert(legacy_row).execute()
-            )
+            await self._retry(lambda: client.table(_SIGNALS_TABLE).insert(legacy_row).execute())
             return signal
         return signal_from_row(response.data[0])
 

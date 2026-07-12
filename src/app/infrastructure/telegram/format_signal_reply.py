@@ -13,10 +13,7 @@ def format_signal_reply(signal: Signal) -> str:
     impact_label = {"bullish": "Alcista", "bearish": "Bajista", "neutral": "Neutral"}.get(
         signal.impact_class.value, signal.impact_class.value.capitalize()
     )
-    header = (
-        f"<b>{html.escape(signal.instrument_symbol)}</b>"
-        f" — {impact_emoji} {impact_label}"
-    )
+    header = f"<b>{html.escape(signal.instrument_symbol)}</b> — {impact_emoji} {impact_label}"
     evidence_lines = "\n".join(
         f"• {html.escape(item.source)} ({item.published_at.date().isoformat()})"
         for item in signal.evidence[:_MAX_EVIDENCE_ITEMS]

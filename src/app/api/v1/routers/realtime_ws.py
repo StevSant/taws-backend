@@ -71,9 +71,7 @@ async def realtime_ws(
 
     try:
         await initialize_openai_session(openai_socket, settings)
-        await run_realtime_relay(
-            websocket, openai_socket, get_container(), user, settings
-        )
+        await run_realtime_relay(websocket, openai_socket, get_container(), user, settings)
     except WebSocketDisconnect:
         # Browser hung up during handshake/relay; `run_realtime_relay` (or its absence
         # here) still owns socket cleanup below.

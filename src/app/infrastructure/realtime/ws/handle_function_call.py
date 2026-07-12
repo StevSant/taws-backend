@@ -37,9 +37,7 @@ async def handle_realtime_function_call(
     try:
         output = await dispatch_realtime_tool(container, name, arguments, user_id)
     except Exception as exc:  # noqa: BLE001 — recoverable tool error, not a server fault
-        logger.warning(
-            "Realtime WS tool %r failed for call %r", name, call_id, exc_info=True
-        )
+        logger.warning("Realtime WS tool %r failed for call %r", name, call_id, exc_info=True)
         output = {"error": str(exc)}
 
     return [

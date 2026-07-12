@@ -118,9 +118,7 @@ async def test_browser_audio_forwarded_as_input_audio_buffer_append() -> None:
 @pytest.mark.asyncio
 async def test_openai_audio_delta_mapped_to_browser() -> None:
     browser = FakeBrowserSocket(incoming=[])
-    openai = FakeOpenAISocket(
-        events=[{"type": "response.output_audio.delta", "delta": "QUJD"}]
-    )
+    openai = FakeOpenAISocket(events=[{"type": "response.output_audio.delta", "delta": "QUJD"}])
 
     await run_realtime_relay(browser, openai, _container(), _user(), _settings())
 
