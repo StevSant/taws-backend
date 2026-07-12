@@ -59,7 +59,6 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 _DEFAULT_THREAD_ID = "default"
 
-
 def _to_sse_frame(event: AgentStreamEvent) -> str:
     """Serialize one `AgentStreamEvent` to a single SSE v2 `data:` frame.
 
@@ -152,9 +151,7 @@ async def generate_title(
     short slice of the first user message when the LLM is unavailable (e.g. no API key),
     so it never fails the caller.
     """
-    messages = [
-        Message(role=item.role, content=item.content) for item in payload.messages
-    ]
+    messages = [Message(role=item.role, content=item.content) for item in payload.messages]
     title = await use_case.execute(messages)
     return ConversationTitleResponse(title=title)
 
@@ -162,9 +159,7 @@ async def generate_title(
 @router.post("/realtime/session", response_model=RealtimeSessionResponse)
 async def create_realtime_session(
     user: Annotated[CurrentUser, Depends(require_current_user)],
-    provider: Annotated[
-        RealtimeSessionProvider | None, Depends(get_realtime_session_provider)
-    ],
+    provider: Annotated[RealtimeSessionProvider | None, Depends(get_realtime_session_provider)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> RealtimeSessionResponse:
     """Mint a short-lived OpenAI Realtime session for the browser's WebRTC connection.
@@ -182,7 +177,7 @@ async def create_realtime_session(
             detail="Realtime voice is not enabled",
         )
 
-    tools = build_realtime_tool_schemas()
+    tools = build_realtime_tool_schemas(charts_enabled=settings.charts_enabled)
     session = await provider.mint_ephemeral_session(
         user_id=user.id,
         model=settings.openai_realtime_model,
@@ -221,25 +216,29 @@ async def execute_realtime_tool(
     try:
         validate_tool_args(payload.name, payload.arguments)
     except ToolNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors()
         ) from exc
 
     try:
-        output = await dispatch_realtime_tool(
-            container, payload.name, payload.arguments, user.id
-        )
+        output = await dispatch_realtime_tool(container, payload.name, payload.arguments, user.id)
     except Exception as exc:  # noqa: BLE001 — recoverable tool error, not a server fault
         logger.warning(
-            "Realtime tool %r failed for call %r", payload.name, payload.call_id,
+            "Realtime tool %r failed for call %r",
+            payload.name,
+            payload.call_id,
             exc_info=True,
         )
         output = {"error": str(exc)}
 
+    logger.info(
+        "Realtime tool %r completed for call %r (chart=%s)",
+        payload.name,
+        payload.call_id,
+        "chart" in output,
+    )
     return RealtimeToolResponse(call_id=payload.call_id, output=output)
 
 
