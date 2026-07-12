@@ -4,7 +4,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 
+from app.api.middleware.cors_headers import build_cors_headers_for_origin
 from app.api.v1.dependencies import (
     dev_fallback_allowed,
     get_bot_registration,
@@ -65,27 +67,26 @@ _telegram_secret_warned = False
 router = APIRouter(prefix="/telegram", tags=["telegram"])
 
 
-@router.post("/register-bot", status_code=status.HTTP_201_CREATED)
+@router.post("/register-bot", status_code=status.HTTP_201_CREATED, response_model=None)
 async def register_bot(
+    request: Request,
     user: Annotated[CurrentUser, Depends(require_current_user)],
     body: RegisterBotRequest,
     registration: Annotated[BotRegistrationPort, Depends(get_bot_registration)],
-) -> RegisterBotResponse:
-    """Register a user-owned Telegram bot from BotFather's welcome message.
-
-    The user pastes the full message they received from BotFather after creating
-    their bot. The system:
-    1. Extracts the bot token and username from the text
-    2. Calls `getUpdates` to find the user's chat_id
-    3. Sets up the webhook for this bot
-    4. Persists the bot registration
-
-    The user must send at least one message to their bot before calling this endpoint.
-    """
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> RegisterBotResponse | JSONResponse:
     try:
         bot = await registration.register(user_id=user.id, botfather_text=body.botfather_text)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+    except Exception as e:
+        logger.exception("Unexpected error registering bot for user %s", user.id)
+        cors_headers = build_cors_headers_for_origin(request.headers.get("origin"), settings)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": f"Error interno al registrar el bot: {e}"},
+            headers=cors_headers,
+        )
     return RegisterBotResponse(
         bot_id=bot.id,
         bot_username=bot.bot_username,
