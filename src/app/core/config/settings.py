@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     supabase_url: str | None = None
     supabase_key: str | None = None
     supabase_jwt_secret: str | None = None
+    # Retry-with-backoff applied around every Supabase*Repository client call (issue #7):
+    # only transient network failures (DNS blips, dropped connections) are retried, never
+    # application-level Postgrest errors. See `with_supabase_retry`.
+    supabase_retry_max_attempts: int = 2
+    supabase_retry_backoff_base_seconds: float = 0.2
 
     database_url: str | None = None
 

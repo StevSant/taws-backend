@@ -1,3 +1,5 @@
+from functools import partial
+
 from supabase import PostgrestAPIError
 
 from app.domain.briefing.entities import Briefing
@@ -16,6 +18,7 @@ from app.infrastructure.persistence.review_state_row_mapper import (
     review_state_to_row,
 )
 from app.infrastructure.persistence.supabase_client_cache import SupabaseClientCache
+from app.infrastructure.persistence.with_supabase_retry import with_supabase_retry
 
 _BRIEFINGS_TABLE = "briefings"
 _REVIEW_STATES_TABLE = "review_states"
@@ -27,59 +30,81 @@ class SupabaseBriefingRepository(BriefingRepository):
     Written by the Advisor agent (issue #3). See
     `backend/migrations/0001_watchlists_signals_briefings.sql` for the `briefings` and
     `review_states` schema and RLS policies.
+
+    Every `.execute()` call is wrapped in `with_supabase_retry` (issue #7) — see
+    `SupabaseSignalRepository`'s docstring for the shared rationale.
     """
 
-    def __init__(self, supabase_url: str | None, supabase_key: str | None) -> None:
+    def __init__(
+        self,
+        supabase_url: str | None,
+        supabase_key: str | None,
+        retry_max_attempts: int = 2,
+        retry_backoff_base_seconds: float = 0.2,
+    ) -> None:
         self._clients = SupabaseClientCache(supabase_url, supabase_key)
+        self._retry = partial(
+            with_supabase_retry,
+            max_attempts=retry_max_attempts,
+            backoff_base_seconds=retry_backoff_base_seconds,
+        )
 
     async def create(self, briefing: Briefing) -> Briefing:
         client = await self._clients.get()
-        response = (
-            await client.table(_BRIEFINGS_TABLE)
-            .insert(
-                {
-                    "id": briefing.id,
-                    "watchlist_id": briefing.watchlist_id,
-                    "summary": briefing.summary,
-                    "disclaimer": briefing.disclaimer,
-                    "linked_signal_ids": briefing.linked_signal_ids,
-                    "instrument_breakdown": briefing_to_instrument_breakdown_column(
-                        briefing.instrument_breakdown
-                    ),
-                    "open_review_items": briefing_to_open_review_items_column(
-                        briefing.open_review_items
-                    ),
-                    "created_at": briefing.created_at.isoformat(),
-                }
+        response = await self._retry(
+            lambda: (
+                client.table(_BRIEFINGS_TABLE)
+                .insert(
+                    {
+                        "id": briefing.id,
+                        "watchlist_id": briefing.watchlist_id,
+                        "summary": briefing.summary,
+                        "disclaimer": briefing.disclaimer,
+                        "linked_signal_ids": briefing.linked_signal_ids,
+                        "instrument_breakdown": briefing_to_instrument_breakdown_column(
+                            briefing.instrument_breakdown
+                        ),
+                        "open_review_items": briefing_to_open_review_items_column(
+                            briefing.open_review_items
+                        ),
+                        "created_at": briefing.created_at.isoformat(),
+                    }
+                )
+                .execute()
             )
-            .execute()
         )
         return briefing_from_row(response.data[0])
 
     async def get(self, briefing_id: str) -> Briefing | None:
         client = await self._clients.get()
-        response = await client.table(_BRIEFINGS_TABLE).select("*").eq("id", briefing_id).execute()
+        response = await self._retry(
+            lambda: client.table(_BRIEFINGS_TABLE).select("*").eq("id", briefing_id).execute()
+        )
         return briefing_from_row(response.data[0]) if response.data else None
 
     async def list_for_watchlist(self, watchlist_id: str) -> list[Briefing]:
         client = await self._clients.get()
-        response = (
-            await client.table(_BRIEFINGS_TABLE)
-            .select("*")
-            .eq("watchlist_id", watchlist_id)
-            .execute()
+        response = await self._retry(
+            lambda: (
+                client.table(_BRIEFINGS_TABLE)
+                .select("*")
+                .eq("watchlist_id", watchlist_id)
+                .execute()
+            )
         )
         return [briefing_from_row(row) for row in response.data]
 
     async def get_latest_for_watchlist(self, watchlist_id: str) -> Briefing | None:
         client = await self._clients.get()
-        response = (
-            await client.table(_BRIEFINGS_TABLE)
-            .select("*")
-            .eq("watchlist_id", watchlist_id)
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
+        response = await self._retry(
+            lambda: (
+                client.table(_BRIEFINGS_TABLE)
+                .select("*")
+                .eq("watchlist_id", watchlist_id)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
         )
         return briefing_from_row(response.data[0]) if response.data else None
 
@@ -93,10 +118,12 @@ class SupabaseBriefingRepository(BriefingRepository):
         """
         client = await self._clients.get()
         try:
-            response = (
-                await client.table(_REVIEW_STATES_TABLE)
-                .insert(review_state_to_row(review_state))
-                .execute()
+            response = await self._retry(
+                lambda: (
+                    client.table(_REVIEW_STATES_TABLE)
+                    .insert(review_state_to_row(review_state))
+                    .execute()
+                )
             )
         except PostgrestAPIError as exc:
             translated = build_illegal_review_transition_error(exc, review_state.decision)
@@ -107,12 +134,14 @@ class SupabaseBriefingRepository(BriefingRepository):
 
     async def list_review_states(self, briefing_id: str) -> list[ReviewState]:
         client = await self._clients.get()
-        response = (
-            await client.table(_REVIEW_STATES_TABLE)
-            .select("*")
-            .eq("entity_type", ReviewedEntityType.BRIEFING.value)
-            .eq("entity_id", briefing_id)
-            .order("created_at")
-            .execute()
+        response = await self._retry(
+            lambda: (
+                client.table(_REVIEW_STATES_TABLE)
+                .select("*")
+                .eq("entity_type", ReviewedEntityType.BRIEFING.value)
+                .eq("entity_id", briefing_id)
+                .order("created_at")
+                .execute()
+            )
         )
         return [review_state_from_row(row) for row in response.data]

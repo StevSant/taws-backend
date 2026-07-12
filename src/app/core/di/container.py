@@ -242,6 +242,8 @@ class Container:
             self._watchlist_repository = SupabaseWatchlistRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._watchlist_repository
 
@@ -250,6 +252,8 @@ class Container:
             self._signal_repository = SupabaseSignalRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._signal_repository
 
@@ -258,6 +262,8 @@ class Container:
             self._briefing_repository = SupabaseBriefingRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._briefing_repository
 
@@ -322,6 +328,8 @@ class Container:
             self._telegram_link_repository = SupabaseTelegramLinkRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._telegram_link_repository
 
@@ -330,6 +338,8 @@ class Container:
             self._telegram_link_token_repository = SupabaseTelegramLinkTokenRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._telegram_link_token_repository
 
@@ -747,6 +757,8 @@ class Container:
             self._scenario_repository = SupabaseScenarioRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._scenario_repository
 
