@@ -5,7 +5,14 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 
 from app.application.analogs.use_cases import FindHistoricalAnalogs
-from app.application.charts.use_cases import BuildPriceChart
+from app.application.charts.use_cases import (
+    BuildComparisonChart,
+    BuildDistributionChart,
+    BuildDrawdownChart,
+    BuildMacroChart,
+    BuildPriceChart,
+    BuildSentimentGauge,
+)
 from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.macro.use_cases import InterpretMacroEvent
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
@@ -53,6 +60,9 @@ from app.infrastructure.agents.tools import (
     build_consequence_tools,
     build_macro_tools,
     build_quant_grounding_tools,
+    build_render_comparison_chart_tool,
+    build_render_distribution_chart_tool,
+    build_render_drawdown_chart_tool,
     build_render_price_chart_tool,
     build_scenario_tools,
     build_sentiment_tools,
@@ -167,6 +177,11 @@ class Container:
         self._interpret_macro_event_use_case: InterpretMacroEvent | None = None
         self._chart_config: ChartConfig | None = None
         self._build_price_chart_use_case: BuildPriceChart | None = None
+        self._build_comparison_chart_use_case: BuildComparisonChart | None = None
+        self._build_drawdown_chart_use_case: BuildDrawdownChart | None = None
+        self._build_distribution_chart_use_case: BuildDistributionChart | None = None
+        self._build_macro_chart_use_case: BuildMacroChart | None = None
+        self._build_sentiment_gauge_use_case: BuildSentimentGauge | None = None
 
     def get_llm_provider(self) -> LLMProvider:
         if self._llm_provider is None:
@@ -515,6 +530,54 @@ class Container:
             )
         return self._build_price_chart_use_case
 
+    def get_build_comparison_chart_use_case(self) -> BuildComparisonChart:
+        """Return the cached BuildComparisonChart use case."""
+        if self._build_comparison_chart_use_case is None:
+            self._build_comparison_chart_use_case = BuildComparisonChart(
+                market_data_provider=self.get_market_data_provider(),
+                instrument_universe=self.get_instrument_universe(),
+                chart_config=self.get_chart_config(),
+            )
+        return self._build_comparison_chart_use_case
+
+    def get_build_drawdown_chart_use_case(self) -> BuildDrawdownChart:
+        """Return the cached BuildDrawdownChart use case."""
+        if self._build_drawdown_chart_use_case is None:
+            self._build_drawdown_chart_use_case = BuildDrawdownChart(
+                market_data_provider=self.get_market_data_provider(),
+                instrument_universe=self.get_instrument_universe(),
+                chart_config=self.get_chart_config(),
+            )
+        return self._build_drawdown_chart_use_case
+
+    def get_build_distribution_chart_use_case(self) -> BuildDistributionChart:
+        """Return the cached BuildDistributionChart use case."""
+        if self._build_distribution_chart_use_case is None:
+            self._build_distribution_chart_use_case = BuildDistributionChart(
+                market_data_provider=self.get_market_data_provider(),
+                instrument_universe=self.get_instrument_universe(),
+                chart_config=self.get_chart_config(),
+            )
+        return self._build_distribution_chart_use_case
+
+    def get_build_macro_chart_use_case(self) -> BuildMacroChart:
+        """Return the cached BuildMacroChart use case."""
+        if self._build_macro_chart_use_case is None:
+            self._build_macro_chart_use_case = BuildMacroChart(
+                macro_data_provider=self.get_macro_data_provider(),
+                chart_config=self.get_chart_config(),
+            )
+        return self._build_macro_chart_use_case
+
+    def get_build_sentiment_gauge_use_case(self) -> BuildSentimentGauge:
+        """Return the cached BuildSentimentGauge use case."""
+        if self._build_sentiment_gauge_use_case is None:
+            self._build_sentiment_gauge_use_case = BuildSentimentGauge(
+                fear_greed_provider=self.get_fear_greed_provider(),
+                chart_config=self.get_chart_config(),
+            )
+        return self._build_sentiment_gauge_use_case
+
     def get_generate_consequence_chain_use_case(self) -> GenerateConsequenceChain:
         """Return the cached Consequence Chain Analyst use case (issue #8).
 
@@ -765,7 +828,19 @@ class Container:
                     build_render_price_chart_tool(
                         build_price_chart=self.get_build_price_chart_use_case(),
                         chart_config=self.get_chart_config(),
-                    )
+                    ),
+                    build_render_comparison_chart_tool(
+                        build_comparison_chart=self.get_build_comparison_chart_use_case(),
+                        chart_config=self.get_chart_config(),
+                    ),
+                    build_render_drawdown_chart_tool(
+                        build_drawdown_chart=self.get_build_drawdown_chart_use_case(),
+                        chart_config=self.get_chart_config(),
+                    ),
+                    build_render_distribution_chart_tool(
+                        build_distribution_chart=self.get_build_distribution_chart_use_case(),
+                        chart_config=self.get_chart_config(),
+                    ),
                 ]
             # `macro`/`sentiment` tools (issue #21): both public, non-per-user data — same
             # "safe for the unauthenticated chat route" rationale as `quant_tools` above.
