@@ -4,12 +4,16 @@ from app.infrastructure.realtime.tools.args import (
     GenerateSignalArgs,
     GetMarketDataArgs,
     GetNewsArgs,
+    GetNotesArgs,
+    GetWatchlistArgs,
     ListSignalsArgs,
 )
 from app.infrastructure.realtime.tools.handlers import (
     handle_generate_signal,
     handle_get_market_data,
     handle_get_news,
+    handle_get_notes,
+    handle_get_watchlist,
     handle_list_signals,
 )
 from app.infrastructure.realtime.tools.realtime_tool import RealtimeTool
@@ -55,6 +59,26 @@ _REALTIME_TOOLS: dict[str, RealtimeTool] = {
         ),
         args_model=GenerateSignalArgs,
         handler=handle_generate_signal,
+    ),
+    "get_watchlist": RealtimeTool(
+        name="get_watchlist",
+        description=(
+            "Get the current user's own watchlists and the instruments tracked in each. "
+            "Takes no arguments — always scoped to the authenticated user. Use when they "
+            "ask about 'my watchlist' or what they are tracking."
+        ),
+        args_model=GetWatchlistArgs,
+        handler=handle_get_watchlist,
+    ),
+    "get_notes": RealtimeTool(
+        name="get_notes",
+        description=(
+            "Get the current user's own saved notes, most-recent first. Takes no arguments "
+            "— always scoped to the authenticated user. Use when they ask about 'my notes' "
+            "or what they wrote down."
+        ),
+        args_model=GetNotesArgs,
+        handler=handle_get_notes,
     ),
 }
 

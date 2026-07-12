@@ -64,7 +64,10 @@ _REALTIME_INSTRUCTIONS = (
     "data — call get_market_data for prices, get_news for headlines, list_signals for "
     "existing Analyst signals, and generate_signal to produce a fresh one (acknowledge "
     "verbally before that slower call). For broad news-impact questions, generate fresh "
-    "signals for up to three related symbols returned by get_news. Omit unsupported impact "
+    "signals for up to three related symbols returned by get_news. When the user asks about "
+    "their own data — 'my watchlist', 'my notes', or 'my scenarios' — call get_watchlist for "
+    "the instruments they track and get_notes for their saved notes; these are always scoped "
+    "to the signed-in user. Omit unsupported impact "
     "or confidence fields instead of saying they are unspecified. Never give personalized "
     "financial advice; this is research and information only."
 )
