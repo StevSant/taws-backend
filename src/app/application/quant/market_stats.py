@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from app.application.quant.unusual_move import UnusualMove
 from app.application.quant.volatility_regime import VolatilityRegime
+from app.domain.market.entities import PriceCandle
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +14,10 @@ class MarketStats:
     `application.signals.SignalClassification` for the Analyst pipeline. Every derived
     field is `None`/empty (never a crash) when the underlying price series is too short
     to compute from — see `ComputeMarketStats`'s docstring.
+
+    `candles` carries the same OHLC series the derived metrics were computed from
+    (oldest -> newest, empty when no series is available), so callers can render a
+    candlestick chart without a second `MarketDataProvider.get_price_series` fetch.
     """
 
     instrument_symbol: str
@@ -22,4 +27,5 @@ class MarketStats:
     volatility_pct: float | None
     volatility_regime: VolatilityRegime | None
     unusual_moves: list[UnusualMove]
+    candles: list[PriceCandle]
     as_of: datetime = field(default_factory=lambda: datetime.now(UTC))
