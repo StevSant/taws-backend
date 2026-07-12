@@ -3,6 +3,7 @@ from functools import lru_cache
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import BaseTool
 
 from app.application.analogs.use_cases import FindHistoricalAnalogs
 from app.application.charts.use_cases import (
@@ -63,7 +64,9 @@ from app.infrastructure.agents.tools import (
     build_render_comparison_chart_tool,
     build_render_distribution_chart_tool,
     build_render_drawdown_chart_tool,
+    build_render_macro_chart_tool,
     build_render_price_chart_tool,
+    build_render_sentiment_gauge_tool,
     build_scenario_tools,
     build_sentiment_tools,
 )
@@ -823,33 +826,69 @@ class Container:
                     instrument_universe=self.get_instrument_universe(),
                 ),
             )
-            if self._settings.charts_enabled:
-                quant_tools = quant_tools + [
-                    build_render_price_chart_tool(
-                        build_price_chart=self.get_build_price_chart_use_case(),
-                        chart_config=self.get_chart_config(),
-                    ),
-                    build_render_comparison_chart_tool(
-                        build_comparison_chart=self.get_build_comparison_chart_use_case(),
-                        chart_config=self.get_chart_config(),
-                    ),
-                    build_render_drawdown_chart_tool(
-                        build_drawdown_chart=self.get_build_drawdown_chart_use_case(),
-                        chart_config=self.get_chart_config(),
-                    ),
-                    build_render_distribution_chart_tool(
-                        build_distribution_chart=self.get_build_distribution_chart_use_case(),
-                        chart_config=self.get_chart_config(),
-                    ),
-                ]
             # `macro`/`sentiment` tools (issue #21): both public, non-per-user data — same
             # "safe for the unauthenticated chat route" rationale as `quant_tools` above.
             macro_tools = build_macro_tools(use_case=self.get_interpret_macro_event_use_case())
             sentiment_tools = build_sentiment_tools(use_case=self.get_analyze_sentiment_use_case())
+            analyst_chart_tools: list[BaseTool] | None = None
+            if self._settings.charts_enabled:
+                config = self.get_chart_config()
+                quant_tools = quant_tools + [
+                    build_render_price_chart_tool(
+                        build_price_chart=self.get_build_price_chart_use_case(),
+                        chart_config=config,
+                    ),
+                    build_render_comparison_chart_tool(
+                        build_comparison_chart=self.get_build_comparison_chart_use_case(),
+                        chart_config=config,
+                    ),
+                    build_render_drawdown_chart_tool(
+                        build_drawdown_chart=self.get_build_drawdown_chart_use_case(),
+                        chart_config=config,
+                    ),
+                    build_render_distribution_chart_tool(
+                        build_distribution_chart=self.get_build_distribution_chart_use_case(),
+                        chart_config=config,
+                    ),
+                ]
+                analyst_chart_tools = [
+                    build_render_price_chart_tool(
+                        build_price_chart=self.get_build_price_chart_use_case(),
+                        chart_config=config,
+                    )
+                ]
+                advisor_tools = advisor_tools + [
+                    build_render_comparison_chart_tool(
+                        build_comparison_chart=self.get_build_comparison_chart_use_case(),
+                        chart_config=config,
+                    )
+                ]
+                consequence_tools = consequence_tools + [
+                    build_render_price_chart_tool(
+                        build_price_chart=self.get_build_price_chart_use_case(),
+                        chart_config=config,
+                    )
+                ]
+                macro_tools = macro_tools + [
+                    build_render_macro_chart_tool(
+                        build_macro_chart=self.get_build_macro_chart_use_case(),
+                        chart_config=config,
+                    )
+                ]
+                sentiment_tools = sentiment_tools + [
+                    build_render_sentiment_gauge_tool(
+                        build_sentiment_gauge=self.get_build_sentiment_gauge_use_case(),
+                    ),
+                    build_render_distribution_chart_tool(
+                        build_distribution_chart=self.get_build_distribution_chart_use_case(),
+                        chart_config=config,
+                    ),
+                ]
             self._chat_graph = build_supervisor_graph(
                 self._get_chat_model(),
                 checkpointer,
                 advisor_tools=advisor_tools,
+                analyst_tools=analyst_chart_tools,
                 consequence_tools=consequence_tools,
                 macro_tools=macro_tools,
                 quant_tools=quant_tools,
