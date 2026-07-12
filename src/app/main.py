@@ -19,6 +19,7 @@ from app.api.v1.routers import (
     instruments_router,
     macro_router,
     news_router,
+    notes_router,
     quant_router,
     reviews_router,
     scenarios_router,
@@ -125,6 +126,7 @@ def create_app() -> FastAPI:
     app.include_router(reviews_router, prefix="/api/v1")
     app.include_router(signals_router, prefix="/api/v1")
     app.include_router(watchlists_router, prefix="/api/v1")
+    app.include_router(notes_router, prefix="/api/v1")
     app.include_router(briefings_router, prefix="/api/v1")
     app.include_router(briefing_export_router, prefix="/api/v1")
     app.include_router(consequence_chains_router, prefix="/api/v1")

@@ -16,7 +16,12 @@ from app.api.v1.schemas import (
     ScenarioResultResponse,
 )
 from app.application.compliance import ComplianceViolationError
-from app.application.scenario import InvalidScenarioIntakeError, UnknownPresetError
+from app.application.scenario import (
+    InvalidScenarioIntakeError,
+    ScenarioSynthesisUnavailableError,
+    UnknownPresetError,
+    scenario_unavailable_message,
+)
 from app.application.scenario.use_cases import ArmScenarioMonitor
 from app.core.config import Settings, get_settings
 from app.domain.scenario.ports import ScenarioRepository
@@ -66,6 +71,14 @@ async def generate_scenario(
         ) from exc
     except UnknownPresetError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ScenarioSynthesisUnavailableError as exc:
+        # Synthesis couldn't produce a real analysis after retries (issue #64): surface an
+        # honest, localized "unavailable" state instead of a fabricated zero-confidence
+        # result. The real cause is already logged server-side by the use case.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=scenario_unavailable_message(locale),
+        ) from exc
     except ComplianceViolationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)

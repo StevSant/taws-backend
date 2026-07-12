@@ -35,6 +35,7 @@ from app.api.v1.dependencies.get_market_data_provider import get_market_data_pro
 from app.api.v1.dependencies.get_market_pulse_use_case import get_market_pulse_use_case
 from app.api.v1.dependencies.get_news_item_repository import get_news_item_repository
 from app.api.v1.dependencies.get_news_provider import get_news_provider
+from app.api.v1.dependencies.get_note_repository import get_note_repository
 from app.api.v1.dependencies.get_notification_channel import get_notification_channel
 from app.api.v1.dependencies.get_preset_scenario_rows import get_preset_scenario_rows
 from app.api.v1.dependencies.get_process_incoming_event_use_case import (
@@ -113,6 +114,7 @@ __all__ = [
     "get_telegram_messenger",
     "get_tts_provider",
     "get_vector_store",
+    "get_note_repository",
     "get_watchlist_repository",
     "require_compliance",
     "require_current_user",
