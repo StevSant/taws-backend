@@ -512,6 +512,7 @@ class Container:
             self._bot_registration = TelegramBotRegistration(
                 repository=self.get_user_bot_repository(),
                 webhook_base_url=self._settings.telegram_webhook_url or "",
+                webhook_secret=self._settings.telegram_webhook_secret,
             )
         return self._bot_registration
 

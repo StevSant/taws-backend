@@ -25,9 +25,11 @@ class TelegramBotRegistration(BotRegistrationPort):
         self,
         repository: UserBotRepository,
         webhook_base_url: str,
+        webhook_secret: str | None = None,
     ) -> None:
         self._repository = repository
         self._webhook_base_url = webhook_base_url
+        self._webhook_secret = webhook_secret
 
     async def register(self, user_id: str, botfather_text: str) -> UserBot:
 
@@ -121,8 +123,11 @@ class TelegramBotRegistration(BotRegistrationPort):
                 "y que el servidor se haya reiniciado tras el cambio."
             )
         url = f"https://api.telegram.org/bot{bot_token}/setWebhook"
+        body = {"url": webhook_url}
+        if self._webhook_secret:
+            body["secret_token"] = self._webhook_secret
         async with httpx.AsyncClient() as client:
-            response = await client.post(url, json={"url": webhook_url}, timeout=10)
+            response = await client.post(url, json=body, timeout=10)
             response.raise_for_status()
             data = response.json()
             if not data.get("ok"):
