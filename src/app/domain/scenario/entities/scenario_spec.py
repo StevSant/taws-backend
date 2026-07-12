@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 
 from app.domain.market.entities import AssetClass
+from app.domain.scenario.entities.scenario_direction import ScenarioDirection
 from app.domain.scenario.entities.scenario_horizon import ScenarioHorizon
 from app.domain.scenario.entities.scenario_magnitude import ScenarioMagnitude
 
@@ -36,6 +37,13 @@ class ScenarioSpec:
     horizon: ScenarioHorizon
     title: str
     description: str
+    target_price: float | None = None
+    direction: ScenarioDirection | None = None
+    timeframe_days: int | None = None
+    likelihood_pct: float | None = None
+    likelihood_sample_size: int = 0
+    likelihood_occurrences: int = 0
+    likelihood_method: str | None = None
     affected_symbols: list[str] = field(default_factory=list)
     affected_asset_classes: list[AssetClass] = field(default_factory=list)
     preset_id: str | None = None

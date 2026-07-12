@@ -137,7 +137,8 @@ def _fallback_extraction() -> ConsequenceChainExtraction:
     return ConsequenceChainExtraction(
         nodes=[
             ConsequenceNodeDraft(label="Subject"),
-            ConsequenceNodeDraft(label="Effect unknown"),
+            ConsequenceNodeDraft(label="Immediate effect unavailable"),
+            ConsequenceNodeDraft(label="Downstream effect unavailable"),
         ],
         edges=[
             ConsequenceEdgeDraft(
@@ -145,6 +146,12 @@ def _fallback_extraction() -> ConsequenceChainExtraction:
                 target_index=1,
                 mechanism=_FALLBACK_MECHANISM,
                 confidence=0.0,
-            )
+            ),
+            ConsequenceEdgeDraft(
+                source_index=1,
+                target_index=2,
+                mechanism=_FALLBACK_MECHANISM,
+                confidence=0.0,
+            ),
         ],
     )

@@ -9,12 +9,14 @@ from app.domain.agents.entities import (
     ErrorEvent,
     Message,
     TokenEvent,
+    ToolCallEvent,
     TraceEvent,
 )
 from app.domain.agents.ports import AgentRunner
 from app.infrastructure.agents.build_agent_trace_from_payload import (
     build_agent_trace_from_payload,
 )
+from app.infrastructure.agents.build_tool_call_from_payload import build_tool_call_from_payload
 from app.infrastructure.agents.extract_ai_message_token import extract_ai_message_token
 from app.infrastructure.agents.supervisor_routing_tag import SUPERVISOR_ROUTING_TAG
 
@@ -62,8 +64,11 @@ class LangGraphAgentRunner(AgentRunner):
                     if token:
                         yield TokenEvent(token=token)
                 elif mode == "custom":
-                    if payload.get("kind") == "chart":
+                    kind = payload.get("kind")
+                    if kind == "chart":
                         yield ChartEvent(chart=payload["chart"])
+                    elif kind == "tool":
+                        yield ToolCallEvent(tool=build_tool_call_from_payload(payload))
                     else:
                         yield TraceEvent(trace=build_agent_trace_from_payload(payload))
         except Exception as exc:  # last-resort guard, see class docstring

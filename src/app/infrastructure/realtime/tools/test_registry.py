@@ -15,7 +15,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.domain.market.entities import AssetClass, Instrument, PriceCandle, PriceSeries
+from app.domain.notes.entities import Note
 from app.domain.signals.entities import ImpactClass, Signal
+from app.domain.watchlist.entities import Watchlist, WatchlistItem
 from app.infrastructure.realtime.tools import (
     ToolNotFoundError,
     build_realtime_tool_schemas,
@@ -44,7 +46,14 @@ def test_schemas_use_flat_function_shape() -> None:
     schemas = build_realtime_tool_schemas()
 
     names = {s["name"] for s in schemas}
-    assert names == {"get_market_data", "get_news", "list_signals", "generate_signal"}
+    assert names == {
+        "get_market_data",
+        "get_news",
+        "list_signals",
+        "generate_signal",
+        "get_watchlist",
+        "get_notes",
+    }
     for schema in schemas:
         # Flat shape the Realtime session mint expects — NOT nested under "function".
         assert schema["type"] == "function"
@@ -193,3 +202,49 @@ async def test_generate_signal_valid_dispatch() -> None:
     use_case.execute.assert_awaited_once_with("AAPL", "en")
     assert output["id"] == "sig-3"
     assert output["impact_class"] == "neutral"
+
+
+# --- user-scoped tools: scope by JWT user_id, never a model-supplied id -------------
+
+
+async def test_get_watchlist_dispatches_with_jwt_user_id() -> None:
+    watchlist = Watchlist(id="wl-1", user_id="jwt-user-7", name="Tech")
+    repo = Mock()
+    repo.list_for_user = AsyncMock(return_value=[watchlist])
+    repo.list_items = AsyncMock(
+        return_value=[WatchlistItem(id="it-1", watchlist_id="wl-1", symbol="AAPL")]
+    )
+    container = _fake_container(get_watchlist_repository=repo)
+
+    output = await dispatch_realtime_tool(container, "get_watchlist", {}, "jwt-user-7")
+
+    repo.list_for_user.assert_awaited_once_with("jwt-user-7")
+    repo.list_items.assert_awaited_once_with("wl-1")
+    assert output["count"] == 1
+    assert output["watchlists"][0]["name"] == "Tech"
+    assert output["watchlists"][0]["symbols"] == ["AAPL"]
+
+
+async def test_get_watchlist_ignores_user_id_in_arguments() -> None:
+    """A `user_id` smuggled into arguments must be rejected (extra=forbid), never used."""
+    with pytest.raises(ValidationError):
+        validate_tool_args("get_watchlist", {"user_id": "attacker"})
+
+
+async def test_get_notes_dispatches_with_jwt_user_id() -> None:
+    note = Note(id="n-1", user_id="jwt-user-8", body="Watch the Fed.")
+    repo = Mock()
+    repo.list_for_user = AsyncMock(return_value=[note])
+    container = _fake_container(get_note_repository=repo)
+
+    output = await dispatch_realtime_tool(container, "get_notes", {}, "jwt-user-8")
+
+    repo.list_for_user.assert_awaited_once_with("jwt-user-8")
+    assert output["count"] == 1
+    assert output["notes"][0]["body"] == "Watch the Fed."
+    assert output["notes"][0]["id"] == "n-1"
+
+
+async def test_get_notes_ignores_user_id_in_arguments() -> None:
+    with pytest.raises(ValidationError):
+        validate_tool_args("get_notes", {"user_id": "attacker"})

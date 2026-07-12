@@ -79,9 +79,16 @@ def _format_event_study_stats(stats: EventStudyStats) -> str:
         f"- sample size: {stats.sample_size}",
         f"- median move: {stats.median_return_pct:+.2f}%",
         f"- range: {stats.min_return_pct:+.2f}% to {stats.max_return_pct:+.2f}%",
+        f"- median after 1 day: {_format_optional_pct(stats.forward_1d_median_pct)}",
+        f"- median after 7 days: {_format_optional_pct(stats.forward_7d_median_pct)}",
+        f"- median after 30 days: {_format_optional_pct(stats.forward_30d_median_pct)}",
         "- most recent matched events:",
     ]
     lines.extend(
         f"  - [{event.date.date().isoformat()}] {event.return_pct:+.2f}%" for event in stats.events
     )
     return "\n".join(lines)
+
+
+def _format_optional_pct(value: float | None) -> str:
+    return f"{value:+.2f}%" if value is not None else "insufficient history"

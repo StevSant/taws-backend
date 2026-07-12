@@ -55,7 +55,7 @@ def build_specialist_node(
             *state["messages"],
         ]
         response = (
-            await invoke_with_bound_tools(model, messages, tools)
+            await invoke_with_bound_tools(model, messages, tools, agent_name=agent_name)
             if tools
             else await model.ainvoke(messages)
         )

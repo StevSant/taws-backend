@@ -36,6 +36,7 @@ from app.domain.agents.entities import (
     Message,
     MessageRole,
     TokenEvent,
+    ToolCallEvent,
     TraceEvent,
 )
 from app.domain.agents.ports import (
@@ -63,7 +64,10 @@ _REALTIME_INSTRUCTIONS = (
     "data — call get_market_data for prices, get_news for headlines, list_signals for "
     "existing Analyst signals, and generate_signal to produce a fresh one (acknowledge "
     "verbally before that slower call). For broad news-impact questions, generate fresh "
-    "signals for up to three related symbols returned by get_news. Omit unsupported impact "
+    "signals for up to three related symbols returned by get_news. When the user asks about "
+    "their own data — 'my watchlist', 'my notes', or 'my scenarios' — call get_watchlist for "
+    "the instruments they track and get_notes for their saved notes; these are always scoped "
+    "to the signed-in user. Omit unsupported impact "
     "or confidence fields instead of saying they are unspecified. Never give personalized "
     "financial advice; this is research and information only."
 )
@@ -78,6 +82,7 @@ def _to_sse_frame(event: AgentStreamEvent) -> str:
       "detail": "<optional text>"}}` (`detail` omitted when `None`)
     - `ErrorEvent` -> `{"error": "<message>"}`
     - `ChartEvent` -> `{"chart": {...}}` (a serialized ChartSpec wire dict)
+    - `ToolCallEvent` -> `{"tool": {"agent": "<name>", "name": "<tool>", "event": "start"|"done"}}`
     """
     payload: dict[str, Any]
     if isinstance(event, TokenEvent):
@@ -94,6 +99,14 @@ def _to_sse_frame(event: AgentStreamEvent) -> str:
         payload = {"error": event.message}
     elif isinstance(event, ChartEvent):
         payload = {"chart": event.chart}
+    elif isinstance(event, ToolCallEvent):
+        payload = {
+            "tool": {
+                "agent": event.tool.agent,
+                "name": event.tool.name,
+                "event": event.tool.event.value,
+            }
+        }
     else:
         raise TypeError(f"Unhandled AgentStreamEvent variant: {event!r}")
     return f"data: {json.dumps(payload)}\n\n"

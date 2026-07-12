@@ -1,5 +1,6 @@
 import logging
 import uuid
+from dataclasses import replace
 from datetime import datetime
 
 from pydantic import ValidationError
@@ -133,6 +134,7 @@ class SynthesizeScenarioResult:
         quant_results: dict[str, EventStudyStats],
         locale: str,
     ) -> ScenarioResult:
+        spec = _attach_empirical_likelihood(spec, quant_results)
         evidence_pool = self._build_evidence_pool(spec, context, quant_results, locale)
         extraction = await self._synthesize(spec, consequence_chain, evidence_pool, locale)
 
@@ -233,6 +235,10 @@ class SynthesizeScenarioResult:
             evidence_list.extend(macro_evidence)
 
         for symbol, stats in context.market_stats.items():
+            if spec.affected_symbols and symbol == spec.affected_symbols[0]:
+                target_evidence = _target_price_evidence(spec, stats, locale)
+                if target_evidence is not None:
+                    self._append_if_tracked(pool, symbol, target_evidence)
             self._append_if_tracked(pool, symbol, _market_stats_evidence(stats, locale))
 
         for symbol, event_study in quant_results.items():
@@ -410,21 +416,31 @@ def _event_study_evidence(stats: EventStudyStats, locale: str) -> ScenarioEviden
                 f"{stats.instrument_symbol}: no historical moves "
                 f">= {stats.move_threshold_pct:.2f}% found in the last {stats.lookback_days}d"
             )
+        if stats.scenario_probability_pct is not None:
+            text += _probability_evidence_suffix(stats, lang)
         return _actual_data_evidence(text)
     if lang == "es":
         text = (
             f"{stats.instrument_symbol}: últimos {stats.sample_size} movimientos similares "
             f"(>= {stats.move_threshold_pct:.2f}%, ventana {stats.lookback_days}d): "
             f"mediana {stats.median_return_pct:+.2f}%, "
-            f"rango {stats.min_return_pct:+.2f}% a {stats.max_return_pct:+.2f}%"
+            f"rango {stats.min_return_pct:+.2f}% a {stats.max_return_pct:+.2f}%; "
+            f"retornos posteriores medios T+1 {_format_optional_pct(stats.forward_1d_median_pct)}, "
+            f"T+7 {_format_optional_pct(stats.forward_7d_median_pct)}, "
+            f"T+30 {_format_optional_pct(stats.forward_30d_median_pct)}"
         )
     else:
         text = (
             f"{stats.instrument_symbol} last {stats.sample_size} similar moves "
             f"(>= {stats.move_threshold_pct:.2f}%, {stats.lookback_days}d lookback): "
             f"median {stats.median_return_pct:+.2f}%, "
-            f"range {stats.min_return_pct:+.2f}% to {stats.max_return_pct:+.2f}%"
+            f"range {stats.min_return_pct:+.2f}% to {stats.max_return_pct:+.2f}%; "
+            f"median forward returns T+1 {_format_optional_pct(stats.forward_1d_median_pct)}, "
+            f"T+7 {_format_optional_pct(stats.forward_7d_median_pct)}, "
+            f"T+30 {_format_optional_pct(stats.forward_30d_median_pct)}"
         )
+    if stats.scenario_probability_pct is not None:
+        text += _probability_evidence_suffix(stats, lang)
     return _actual_data_evidence(text)
 
 
@@ -439,6 +455,10 @@ def _build_synthesis_prompt(
         f"Event type: {spec.event_type}",
         f"Magnitude: {spec.magnitude.value}",
         f"Horizon: {spec.horizon.value}",
+        f"Target price: {spec.target_price if spec.target_price is not None else 'not specified'}",
+        f"Direction: {spec.direction.value if spec.direction is not None else 'not specified'}",
+        f"Exact timeframe days: "
+        f"{spec.timeframe_days if spec.timeframe_days is not None else 'not specified'}",
         f"Description: {spec.description}",
         "",
         "Causal chain:",
@@ -456,6 +476,80 @@ def _build_synthesis_prompt(
         else:
             lines.append("  - (no gathered evidence for this asset class)")
     return "\n".join(lines)
+
+
+def _format_optional_pct(value: float | None) -> str:
+    return f"{value:+.2f}%" if value is not None else "unavailable"
+
+
+def _probability_evidence_suffix(stats: EventStudyStats, lang: str) -> str:
+    probability = stats.scenario_probability_pct
+    if probability is None:
+        return ""
+    if lang == "es":
+        return (
+            f"; frecuencia empírica del escenario {probability:.2f}% "
+            f"({stats.scenario_probability_occurrences}/"
+            f"{stats.scenario_probability_sample_size} ventanas históricas "
+            f"de {stats.scenario_probability_horizon_days}d)"
+        )
+    return (
+        f"; empirical scenario frequency {probability:.2f}% "
+        f"({stats.scenario_probability_occurrences}/"
+        f"{stats.scenario_probability_sample_size} historical "
+        f"{stats.scenario_probability_horizon_days}d windows)"
+    )
+
+
+def _target_price_evidence(
+    spec: ScenarioSpec,
+    stats: MarketStats,
+    locale: str,
+) -> ScenarioEvidence | None:
+    if spec.target_price is None or stats.last_price is None or stats.last_price <= 0:
+        return None
+    lang = _lang(locale)
+    distance_pct = ((spec.target_price / stats.last_price) - 1) * 100
+    if spec.timeframe_days is not None:
+        timeframe = (
+            f"en {spec.timeframe_days} día(s)" if lang == "es" else f"within {spec.timeframe_days} day(s)"
+        )
+    else:
+        timeframe = (
+            f"en el horizonte {spec.horizon.value}"
+            if lang == "es"
+            else f"over the {spec.horizon.value} horizon"
+        )
+    if lang == "es":
+        text = (
+            f"{stats.instrument_symbol} debería moverse {distance_pct:+.2f}% "
+            f"desde el precio actual {stats.last_price:,.2f} "
+            f"hacia el objetivo {spec.target_price:,.2f} {timeframe}"
+        )
+    else:
+        text = (
+            f"{stats.instrument_symbol} would move {distance_pct:+.2f}% from current price "
+            f"{stats.last_price:,.2f} to the stated target {spec.target_price:,.2f} {timeframe}"
+        )
+    return _actual_data_evidence(text)
+
+
+def _attach_empirical_likelihood(
+    spec: ScenarioSpec,
+    quant_results: dict[str, EventStudyStats],
+) -> ScenarioSpec:
+    if not spec.affected_symbols:
+        return spec
+    stats = quant_results.get(spec.affected_symbols[0])
+    if stats is None or stats.scenario_probability_pct is None:
+        return spec
+    return replace(
+        spec,
+        likelihood_pct=stats.scenario_probability_pct,
+        likelihood_sample_size=stats.scenario_probability_sample_size,
+        likelihood_occurrences=stats.scenario_probability_occurrences,
+        likelihood_method="historical_close_to_close_windows",
+    )
 
 
 def _format_consequence_chain(chain: ConsequenceChain) -> list[str]:

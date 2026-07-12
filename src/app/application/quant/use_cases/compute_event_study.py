@@ -1,9 +1,11 @@
 import statistics
+from typing import Literal
 
 from app.application.quant.compute_daily_returns import compute_daily_returns
 from app.application.quant.event_study_event import EventStudyEvent
 from app.application.quant.event_study_stats import EventStudyStats
 from app.application.quant.unknown_instrument_error import UnknownInstrumentError
+from app.domain.market.entities import PriceCandle
 from app.domain.market.ports import InstrumentUniverse, MarketDataProvider
 
 _DEFAULT_LOOKBACK_DAYS = 365
@@ -59,6 +61,9 @@ class ComputeEventStudy:
         instrument_symbol: str,
         lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
         move_threshold_pct: float = _DEFAULT_MOVE_THRESHOLD_PCT,
+        move_direction: Literal["up", "down"] | None = None,
+        probability_threshold_pct: float | None = None,
+        probability_horizon_days: int = 1,
     ) -> EventStudyStats:
         instrument = self._instrument_universe.by_symbol(instrument_symbol)
         if instrument is None:
@@ -67,12 +72,25 @@ class ComputeEventStudy:
         series = await self._market_data_provider.get_price_series(instrument, lookback_days)
         return_pairs = compute_daily_returns(series.candles)
 
-        matched = [
-            EventStudyEvent(date=candle.timestamp, return_pct=round(daily_return, 4))
-            for candle, daily_return in return_pairs
-            if abs(daily_return) >= move_threshold_pct
+        matched_with_indices = [
+            (
+                candle_index,
+                EventStudyEvent(date=candle.timestamp, return_pct=round(daily_return, 4)),
+            )
+            for candle_index, (candle, daily_return) in enumerate(return_pairs, start=1)
+            if _matches_move(daily_return, move_threshold_pct, move_direction)
         ]
+        matched = [event for _, event in matched_with_indices]
+        matched_indices = [index for index, _ in matched_with_indices]
         magnitudes = [event.return_pct for event in matched]
+        probability, probability_sample_size, probability_occurrences = (
+            _estimate_scenario_probability(
+                series.candles,
+                probability_threshold_pct,
+                probability_horizon_days,
+                move_direction,
+            )
+        )
 
         return EventStudyStats(
             instrument_symbol=instrument.symbol,
@@ -82,5 +100,74 @@ class ComputeEventStudy:
             median_return_pct=statistics.median(magnitudes) if magnitudes else None,
             min_return_pct=min(magnitudes) if magnitudes else None,
             max_return_pct=max(magnitudes) if magnitudes else None,
+            forward_1d_median_pct=_median_forward_return(
+                series.candles, matched_indices, horizon_days=1
+            ),
+            forward_7d_median_pct=_median_forward_return(
+                series.candles, matched_indices, horizon_days=7
+            ),
+            forward_30d_median_pct=_median_forward_return(
+                series.candles, matched_indices, horizon_days=30
+            ),
+            scenario_probability_pct=probability,
+            scenario_probability_sample_size=probability_sample_size,
+            scenario_probability_occurrences=probability_occurrences,
+            scenario_probability_horizon_days=(
+                probability_horizon_days if probability_threshold_pct is not None else None
+            ),
+            scenario_probability_threshold_pct=probability_threshold_pct,
             events=matched[-_MAX_EVENTS_RETURNED:],
         )
+
+
+def _matches_move(
+    daily_return: float,
+    threshold_pct: float,
+    direction: Literal["up", "down"] | None,
+) -> bool:
+    if direction == "up":
+        return daily_return >= threshold_pct
+    if direction == "down":
+        return daily_return <= -threshold_pct
+    return abs(daily_return) >= threshold_pct
+
+
+def _median_forward_return(
+    candles: list[PriceCandle],
+    event_indices: list[int],
+    horizon_days: int,
+) -> float | None:
+    outcomes = []
+    for event_index in event_indices:
+        future_index = event_index + horizon_days
+        if future_index >= len(candles):
+            continue
+        event_close = candles[event_index].close
+        if event_close == 0:
+            continue
+        future_close = candles[future_index].close
+        outcomes.append(((future_close / event_close) - 1) * 100)
+    return round(statistics.median(outcomes), 4) if outcomes else None
+
+
+def _estimate_scenario_probability(
+    candles: list[PriceCandle],
+    threshold_pct: float | None,
+    horizon_days: int,
+    direction: Literal["up", "down"] | None,
+) -> tuple[float | None, int, int]:
+    if threshold_pct is None or threshold_pct <= 0 or horizon_days < 1:
+        return None, 0, 0
+    sample_size = max(len(candles) - horizon_days, 0)
+    if sample_size == 0:
+        return None, 0, 0
+    occurrences = 0
+    for start_index in range(sample_size):
+        start_close = candles[start_index].close
+        if start_close == 0:
+            continue
+        end_close = candles[start_index + horizon_days].close
+        move_pct = ((end_close / start_close) - 1) * 100
+        if _matches_move(move_pct, threshold_pct, direction):
+            occurrences += 1
+    return round((occurrences / sample_size) * 100, 4), sample_size, occurrences

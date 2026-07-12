@@ -4,6 +4,9 @@ from app.application.common import build_locale_instruction
 from app.application.scenario.build_scenario_spec_from_preset import (
     build_scenario_spec_from_preset,
 )
+from app.application.scenario.extract_scenario_numeric_intent import (
+    extract_scenario_numeric_intent,
+)
 from app.application.scenario.invalid_scenario_intake_error import InvalidScenarioIntakeError
 from app.application.scenario.resolve_affected_symbols import resolve_affected_symbols
 from app.application.scenario.scenario_spec_extraction import ScenarioSpecExtraction
@@ -22,7 +25,9 @@ structured `ScenarioSpec`.
 Given a user's free-form scenario description, normalize it: identify the core entity/sector/ \
 theme, classify the kind of event, estimate its magnitude and time horizon, write a short title \
 and a one-paragraph grounded restatement, and list which tracked instruments it would plausibly \
-affect.
+affect. Preserve explicit numeric intent: when the user names a target instrument price, extract \
+`target_price`; infer `direction`; and convert exact timing to `timeframe_days` (`tomorrow` = 1). \
+Do not convert unrelated values such as rates, percentages, or market caps into target prices.
 
 Ground everything strictly in what the user actually described — never invent extra facts, \
 numbers, or events they didn't mention.
@@ -121,6 +126,9 @@ class NormalizeScenarioIntake:
         affected_symbols, affected_asset_classes = resolve_affected_symbols(
             extraction.affected_symbols, self._instrument_universe
         )
+        parsed_target, parsed_direction, parsed_timeframe = extract_scenario_numeric_intent(
+            free_text
+        )
         return ScenarioSpec(
             entity=extraction.entity,
             event_type=extraction.event_type,
@@ -128,6 +136,9 @@ class NormalizeScenarioIntake:
             horizon=extraction.horizon,
             title=extraction.title,
             description=extraction.description,
+            target_price=parsed_target or extraction.target_price,
+            direction=parsed_direction or extraction.direction,
+            timeframe_days=parsed_timeframe or extraction.timeframe_days,
             affected_symbols=affected_symbols,
             affected_asset_classes=affected_asset_classes,
             preset_id=None,
@@ -146,6 +157,7 @@ def _fallback_spec(free_text: str) -> ScenarioSpec:
         if len(free_text) <= _FALLBACK_TITLE_MAX_LENGTH
         else (free_text[: _FALLBACK_TITLE_MAX_LENGTH - 1] + "…")
     )
+    target_price, direction, timeframe_days = extract_scenario_numeric_intent(free_text)
     return ScenarioSpec(
         entity=free_text,
         event_type=_FALLBACK_EVENT_TYPE,
@@ -153,6 +165,9 @@ def _fallback_spec(free_text: str) -> ScenarioSpec:
         horizon=ScenarioHorizon.MEDIUM_TERM,
         title=title,
         description=free_text,
+        target_price=target_price,
+        direction=direction,
+        timeframe_days=timeframe_days,
         affected_symbols=[],
         affected_asset_classes=[],
         preset_id=None,
