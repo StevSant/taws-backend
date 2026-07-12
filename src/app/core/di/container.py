@@ -245,6 +245,8 @@ class Container:
             self._watchlist_repository = SupabaseWatchlistRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._watchlist_repository
 
@@ -253,6 +255,8 @@ class Container:
             self._signal_repository = SupabaseSignalRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._signal_repository
 
@@ -270,6 +274,8 @@ class Container:
             self._briefing_repository = SupabaseBriefingRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._briefing_repository
 
@@ -334,6 +340,8 @@ class Container:
             self._telegram_link_repository = SupabaseTelegramLinkRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._telegram_link_repository
 
@@ -342,6 +350,8 @@ class Container:
             self._telegram_link_token_repository = SupabaseTelegramLinkTokenRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._telegram_link_token_repository
 
@@ -445,6 +455,10 @@ class Container:
                         languages=self._settings.marketaux_languages,
                         timeout_seconds=self._settings.marketaux_timeout_seconds,
                         max_pages=self._settings.marketaux_max_pages,
+                        cooldown_seconds=self._settings.marketaux_cooldown_minutes * 60,
+                        rate_limit_cooldown_seconds=(
+                            self._settings.marketaux_rate_limit_cooldown_minutes * 60
+                        ),
                     )
                 )
             if self._settings.newsapi_api_key:
@@ -533,6 +547,7 @@ class Container:
                 coingecko_provider=CoinGeckoMarketDataProvider(
                     base_url=self._settings.coingecko_base_url,
                     coingecko_id_overrides=coingecko_overrides,
+                    cache_ttl_seconds=self._settings.coingecko_cache_ttl_seconds,
                 ),
                 fixture_provider=fixture_provider,
             )
@@ -759,6 +774,8 @@ class Container:
             self._scenario_repository = SupabaseScenarioRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._scenario_repository
 
