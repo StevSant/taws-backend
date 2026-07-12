@@ -1,4 +1,8 @@
+from datetime import UTC, date, datetime
+
 from app.application.charts.downsample_candles import downsample_candles
+from app.application.charts.parse_date_range import parse_date_range
+from app.application.charts.slice_candles_by_date_range import slice_candles_by_date_range
 from app.application.quant.unknown_instrument_error import UnknownInstrumentError
 from app.domain.charts.entities import (
     ChartAxis,
@@ -39,16 +43,36 @@ class BuildPriceChart:
         self._chart_config = chart_config
 
     async def execute(
-        self, instrument_symbol: str, timeframe: str, chart_type: ChartType = ChartType.CANDLESTICK
+        self,
+        instrument_symbol: str,
+        timeframe: str,
+        chart_type: ChartType = ChartType.CANDLESTICK,
+        from_date: str | None = None,
+        to_date: str | None = None,
     ) -> ChartSpec:
         instrument = self._instrument_universe.by_symbol(instrument_symbol)
         if instrument is None:
             raise UnknownInstrumentError(instrument_symbol)
 
-        days = self._chart_config.days_for(timeframe)
-        series = await self._market_data_provider.get_price_series(instrument, days)
-        candles = downsample_candles(series.candles, self._chart_config.max_points)
+        # A valid custom range wins over the preset: fetch a window wide enough to reach
+        # `from_date` (the port fetches by trailing day count only), then slice inclusively.
+        # An invalid/partial range degrades to the timeframe preset.
+        date_range = parse_date_range(from_date, to_date)
+        if date_range is not None:
+            start, end = date_range
+            days = self._chart_config.fetch_days_for_range(start, datetime.now(UTC).date())
+        else:
+            days = self._chart_config.days_for(timeframe)
 
+        series = await self._market_data_provider.get_price_series(instrument, days)
+        raw_candles = (
+            slice_candles_by_date_range(series.candles, date_range[0], date_range[1])
+            if date_range is not None
+            else series.candles
+        )
+        candles = downsample_candles(raw_candles, self._chart_config.max_points)
+
+        applied_from, applied_to = _applied_range(date_range)
         is_candlestick = chart_type is ChartType.CANDLESTICK
         chart_series = (
             ChartSeries(name=instrument.symbol, bars=[_to_bar(candle) for candle in candles])
@@ -69,7 +93,7 @@ class BuildPriceChart:
                 label=f"Price ({instrument.currency})", type="value", format="currency"
             ),
             meta=ChartMeta(
-                title=f"{instrument.symbol} — {timeframe.upper()}",
+                title=_chart_title(instrument.symbol, timeframe, applied_from, applied_to),
                 source="market data",
                 symbol=instrument.symbol,
                 timeframe=timeframe,
@@ -78,9 +102,26 @@ class BuildPriceChart:
                     kind=_CANDLESTICK_KIND if is_candlestick else _LINE_KIND,
                     symbols=[instrument.symbol],
                     timeframe=timeframe,
+                    from_date=applied_from,
+                    to_date=applied_to,
                 ),
             ),
         )
+
+
+def _applied_range(date_range: tuple[date, date] | None) -> tuple[str | None, str | None]:
+    """Echo the applied custom range as ISO strings, or `(None, None)` for a preset render."""
+    if date_range is None:
+        return None, None
+    start, end = date_range
+    return start.isoformat(), end.isoformat()
+
+
+def _chart_title(symbol: str, timeframe: str, from_date: str | None, to_date: str | None) -> str:
+    """Title reflects a custom range when applied, otherwise the timeframe preset label."""
+    if from_date and to_date:
+        return f"{symbol} — {from_date} → {to_date}"
+    return f"{symbol} — {timeframe.upper()}"
 
 
 def _to_bar(candle: PriceCandle) -> OhlcBar:

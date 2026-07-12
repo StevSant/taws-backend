@@ -24,7 +24,11 @@ async def render_chart(
     no ownership check needed)."""
     try:
         spec = await render_chart_use_case.execute(
-            payload.kind, [symbol.upper() for symbol in payload.symbols], payload.timeframe
+            payload.kind,
+            [symbol.upper() for symbol in payload.symbols],
+            payload.timeframe,
+            payload.from_date,
+            payload.to_date,
         )
     except UnknownInstrumentError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
