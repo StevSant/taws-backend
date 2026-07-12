@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.middleware import RequestIDMiddleware, unhandled_exception_handler
+from app.api.v1.dependencies import dev_fallback_allowed
 from app.api.v1.routers import (
     briefing_export_router,
     briefings_router,
@@ -26,7 +27,7 @@ from app.api.v1.routers import (
     watchdog_router,
     watchlists_router,
 )
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.di import get_container
 from app.core.logging import configure_logging
 from app.infrastructure.scheduling import build_watchdog_scheduler
@@ -35,10 +36,36 @@ from app.infrastructure.telegram import register_telegram_webhook
 logger = logging.getLogger(__name__)
 
 
+def _warn_on_misconfigured_auth(settings: Settings) -> None:
+    """Loudly flag, at startup, an auth misconfiguration in a non-dev environment.
+
+    In production/staging a missing `SUPABASE_JWT_SECRET` means `require_current_user`
+    fails closed and every protected request is rejected with 401. We log `critical`
+    rather than crashing the boot: App Runner injects the secret out-of-band, so a hard
+    crash here could crash-loop the service instead of surfacing the problem.
+    """
+    if dev_fallback_allowed(settings):
+        return
+    if not settings.supabase_jwt_secret:
+        logger.critical(
+            "SUPABASE_JWT_SECRET is not set in a non-development environment "
+            "(app_env=%s). Authentication is misconfigured: all protected requests "
+            "will be rejected with 401.",
+            settings.app_env,
+        )
+    if not settings.telegram_webhook_secret:
+        logger.warning(
+            "TELEGRAM_WEBHOOK_SECRET is not set in a non-development environment "
+            "(app_env=%s). The Telegram webhook will reject all inbound updates with 403.",
+            settings.app_env,
+        )
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
     settings = get_settings()
+    _warn_on_misconfigured_auth(settings)
     container = get_container()
 
     # Preload radar reads so the first browser visit does not pay cold-start DI +
