@@ -13,8 +13,17 @@ from app.api.v1.dependencies import (
     get_vector_store,
 )
 from app.api.v1.schemas import AnalyzePendingNewsResponse, NewsItemResponse, NewsListResponse
+from app.api.v1.schemas.localize_news_blurbs import (
+    LocalizeNewsBlurbsRequest,
+    LocalizeNewsBlurbsResponse,
+    NewsBlurbResponse,
+)
 from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
 from app.application.market.use_cases import IngestNews
+from app.application.market.use_cases.localize_news_blurbs import (
+    LocalizeNewsBlurbs,
+    NewsBlurbSource,
+)
 from app.application.signals.use_cases import AnalyzePendingNews
 from app.core.config import Settings, get_settings
 from app.domain.agents.ports import EmbeddingProvider, LLMProvider, VectorStore
@@ -78,6 +87,29 @@ async def list_news(
     return NewsListResponse(
         items=[NewsItemResponse.model_validate(item) for item in page],
         has_more=has_more,
+    )
+
+
+@router.post("/blurbs")
+async def localize_news_blurbs(
+    body: LocalizeNewsBlurbsRequest,
+    llm_provider: Annotated[LLMProvider, Depends(get_llm_provider)],
+) -> LocalizeNewsBlurbsResponse:
+    """Return short locale-aware blurbs for timeline cards (title stays original).
+
+    Used by the Radar news timeline when the UI locale is Spanish and upstream
+    headlines/summaries arrive in English. Cached in-process per news id.
+    """
+    use_case = LocalizeNewsBlurbs(llm_provider)
+    blurbs = await use_case.execute(
+        [
+            NewsBlurbSource(id=item.id, title=item.title, summary=item.summary)
+            for item in body.items
+        ],
+        locale=body.locale,
+    )
+    return LocalizeNewsBlurbsResponse(
+        items=[NewsBlurbResponse(id=row.id, blurb=row.blurb) for row in blurbs]
     )
 
 

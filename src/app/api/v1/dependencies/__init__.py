@@ -5,6 +5,7 @@ from app.api.v1.dependencies.dev_fallback_user import DEV_FALLBACK_USER
 from app.api.v1.dependencies.get_agent_runner import get_agent_runner
 from app.api.v1.dependencies.get_alerted_signal_tracker import get_alerted_signal_tracker
 from app.api.v1.dependencies.get_analyze_sentiment_use_case import get_analyze_sentiment_use_case
+from app.api.v1.dependencies.get_fear_greed_provider import get_fear_greed_provider
 from app.api.v1.dependencies.get_bot_registration import get_bot_registration
 from app.api.v1.dependencies.get_briefing_command_handler import get_briefing_command_handler
 from app.api.v1.dependencies.get_briefing_document_renderer import get_briefing_document_renderer
@@ -27,6 +28,7 @@ from app.api.v1.dependencies.get_link_telegram_account_use_case import (
 )
 from app.api.v1.dependencies.get_llm_provider import get_llm_provider
 from app.api.v1.dependencies.get_macro_data_provider import get_macro_data_provider
+from app.api.v1.dependencies.get_market_pulse_use_case import get_market_pulse_use_case
 from app.api.v1.dependencies.get_market_data_provider import get_market_data_provider
 from app.api.v1.dependencies.get_news_item_repository import get_news_item_repository
 from app.api.v1.dependencies.get_news_provider import get_news_provider
@@ -68,6 +70,7 @@ __all__ = [
     "get_agent_runner",
     "get_alerted_signal_tracker",
     "get_analyze_sentiment_use_case",
+    "get_fear_greed_provider",
     "get_briefing_command_handler",
     "get_briefing_document_renderer",
     "get_chat_message_handler",
@@ -84,6 +87,7 @@ __all__ = [
     "get_link_telegram_account_use_case",
     "get_llm_provider",
     "get_macro_data_provider",
+    "get_market_pulse_use_case",
     "get_market_data_provider",
     "get_news_item_repository",
     "get_news_provider",

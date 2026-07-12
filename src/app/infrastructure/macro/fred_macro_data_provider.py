@@ -17,11 +17,13 @@ class FredMacroDataProvider(MacroDataProvider):
     ticker (volatility regime).
 
     `get_rates`/`get_cpi` require `FRED_API_KEY` — without one, both raise immediately instead
-    of calling FRED (same no-key guard shape as `OpenAIProvider`). `get_volatility_regime` needs
-    no key: it fetches `^VIX` the same way `YFinanceMarketDataProvider` fetches regular
-    instruments (`yfinance`, off-loaded to a worker thread). Callers should wrap this adapter in
-    `RoutingMacroDataProvider` rather than using it directly, so any failure — including the
-    "no key" case — falls back to `FixtureMacroDataProvider` per method.
+    of calling FRED (same no-key guard shape as `OpenAIProvider`). `get_cpi` returns the
+    year-over-year % change of the CPI index series (not the raw index level).
+    `get_volatility_regime` needs no key: it fetches `^VIX` the same way
+    `YFinanceMarketDataProvider` fetches regular instruments (`yfinance`, off-loaded to a
+    worker thread). Callers should wrap this adapter in `RoutingMacroDataProvider` rather
+    than using it directly, so any failure — including the "no key" case — falls back to
+    `FixtureMacroDataProvider` per method.
     """
 
     def __init__(
@@ -50,7 +52,8 @@ class FredMacroDataProvider(MacroDataProvider):
         return await self._fetch_latest_observation(self._rates_series_id)
 
     async def get_cpi(self) -> MacroObservation:
-        return await self._fetch_latest_observation(self._cpi_series_id)
+        """Return headline CPI as year-over-year % change (not the raw index level)."""
+        return await self._fetch_cpi_yoy(self._cpi_series_id)
 
     async def get_volatility_regime(self) -> VolatilityRegime:
         vix_level = await asyncio.to_thread(self._fetch_vix_level)
@@ -81,6 +84,29 @@ class FredMacroDataProvider(MacroDataProvider):
 
         return _to_observation(series_id, payload)
 
+    async def _fetch_cpi_yoy(self, series_id: str) -> MacroObservation:
+        if not self._api_key:
+            raise RuntimeError(_NO_KEY_ERROR)
+
+        async with httpx.AsyncClient(
+            base_url=self._base_url, timeout=self._timeout_seconds
+        ) as client:
+            response = await client.get(
+                "/series/observations",
+                params={
+                    "series_id": series_id,
+                    "api_key": self._api_key,
+                    "file_type": "json",
+                    "sort_order": "desc",
+                    # Need ~13 months to compute YoY; fetch extra for missing values ('.').
+                    "limit": 18,
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+
+        return _to_cpi_yoy_observation(series_id, payload)
+
     def _fetch_vix_level(self) -> float:
         ticker = yf.Ticker(self._vix_symbol)
         history = ticker.history(period="5d")
@@ -89,15 +115,49 @@ class FredMacroDataProvider(MacroDataProvider):
         return float(history["Close"].iloc[-1])
 
 
+def _parse_fred_observations(payload: dict[str, Any]) -> list[tuple[datetime, float]]:
+    rows: list[tuple[datetime, float]] = []
+    for entry in payload.get("observations") or []:
+        raw = entry.get("value")
+        if raw is None or raw == ".":
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        rows.append(
+            (
+                datetime.strptime(entry["date"], "%Y-%m-%d").replace(tzinfo=UTC),
+                value,
+            )
+        )
+    return rows
+
+
 def _to_observation(series_id: str, payload: dict[str, Any]) -> MacroObservation:
-    observations = payload.get("observations") or []
+    observations = _parse_fred_observations(payload)
     if not observations:
         raise RuntimeError(
             f"[FredMacroDataProvider] No observations returned by FRED for {series_id!r}."
         )
-    latest = observations[0]
+    as_of, value = observations[0]
+    return MacroObservation(series_id=series_id, value=value, as_of=as_of)
+
+
+def _to_cpi_yoy_observation(series_id: str, payload: dict[str, Any]) -> MacroObservation:
+    observations = _parse_fred_observations(payload)
+    if len(observations) < 13:
+        raise RuntimeError(
+            f"[FredMacroDataProvider] Need >=13 CPI observations for YoY; got {len(observations)}."
+        )
+    as_of, current = observations[0]
+    # Observations are newest-first; index 12 is ~12 months earlier for monthly CPI.
+    _, year_ago = observations[12]
+    if year_ago == 0:
+        raise RuntimeError("[FredMacroDataProvider] CPI YoY denominator is zero.")
+    yoy_pct = ((current / year_ago) - 1.0) * 100.0
     return MacroObservation(
-        series_id=series_id,
-        value=float(latest["value"]),
-        as_of=datetime.strptime(latest["date"], "%Y-%m-%d").replace(tzinfo=UTC),
+        series_id=f"{series_id}_YOY",
+        value=round(yoy_pct, 2),
+        as_of=as_of,
     )

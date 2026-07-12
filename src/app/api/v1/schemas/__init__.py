@@ -21,6 +21,7 @@ from app.api.v1.schemas.event_intelligence_demo_request import EventIntelligence
 from app.api.v1.schemas.event_study_event_response import EventStudyEventResponse
 from app.api.v1.schemas.event_study_response import EventStudyResponse
 from app.api.v1.schemas.fear_greed_reading_response import FearGreedReadingResponse
+from app.api.v1.schemas.market_pulse_response import MarketPulseResponse
 from app.api.v1.schemas.fundamentals_response import FundamentalsResponse
 from app.api.v1.schemas.generate_briefing_request import GenerateBriefingRequest
 from app.api.v1.schemas.generate_consequence_chain_request import GenerateConsequenceChainRequest
@@ -95,6 +96,7 @@ __all__ = [
     "EventStudyEventResponse",
     "EventStudyResponse",
     "FearGreedReadingResponse",
+    "MarketPulseResponse",
     "FundamentalsResponse",
     "GenerateBriefingRequest",
     "GenerateConsequenceChainRequest",
