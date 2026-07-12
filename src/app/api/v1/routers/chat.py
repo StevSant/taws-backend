@@ -10,6 +10,7 @@ from app.api.v1.schemas import ChatRequest, CurrentUser
 from app.application.chat.use_cases import StreamReply
 from app.domain.agents.entities import (
     AgentStreamEvent,
+    ChartEvent,
     ErrorEvent,
     Message,
     MessageRole,
@@ -31,6 +32,7 @@ def _to_sse_frame(event: AgentStreamEvent) -> str:
     - `TraceEvent` -> `{"trace": {"agent": "<name>", "event": "routing"|"start"|"done",
       "detail": "<optional text>"}}` (`detail` omitted when `None`)
     - `ErrorEvent` -> `{"error": "<message>"}`
+    - `ChartEvent` -> `{"chart": {...}}` (a serialized ChartSpec wire dict)
     """
     payload: dict[str, Any]
     if isinstance(event, TokenEvent):
@@ -45,6 +47,8 @@ def _to_sse_frame(event: AgentStreamEvent) -> str:
         payload = {"trace": trace_payload}
     elif isinstance(event, ErrorEvent):
         payload = {"error": event.message}
+    elif isinstance(event, ChartEvent):
+        payload = {"chart": event.chart}
     else:
         raise TypeError(f"Unhandled AgentStreamEvent variant: {event!r}")
     return f"data: {json.dumps(payload)}\n\n"
