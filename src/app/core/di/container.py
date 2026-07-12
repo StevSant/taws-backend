@@ -56,6 +56,7 @@ from app.domain.market.ports import (
     NewsItemRepository,
     NewsProvider,
 )
+from app.domain.notes.ports import NoteRepository
 from app.domain.notification.ports import EmailSender, NotificationChannel
 from app.domain.scenario.ports import ScenarioRepository
 from app.domain.sentiment.ports import FearGreedProvider
@@ -126,6 +127,7 @@ from app.infrastructure.persistence import (
     SupabaseBriefingRepository,
     SupabaseConversationRepository,
     SupabaseNewsItemRepository,
+    SupabaseNoteRepository,
     SupabaseScenarioRepository,
     SupabaseSignalRepository,
     SupabaseTelegramLinkRepository,
@@ -179,6 +181,7 @@ class Container:
         self._agent_memory: AgentMemory | None = None
         self._conversation_repository: ConversationRepository | None = None
         self._watchlist_repository: WatchlistRepository | None = None
+        self._note_repository: NoteRepository | None = None
         self._signal_repository: SignalRepository | None = None
         self._briefing_repository: BriefingRepository | None = None
         self._news_provider: NewsProvider | None = None
@@ -324,6 +327,18 @@ class Container:
                 retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
         return self._watchlist_repository
+
+    def get_note_repository(self) -> NoteRepository:
+        """Return the cached per-user NoteRepository (issue #62), Supabase-backed with the
+        same retry/config wiring as the other per-user repositories."""
+        if self._note_repository is None:
+            self._note_repository = SupabaseNoteRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
+            )
+        return self._note_repository
 
     def get_signal_repository(self) -> SignalRepository:
         if self._signal_repository is None:
@@ -985,6 +1000,7 @@ class Container:
             synthesize_result = SynthesizeScenarioResult(
                 llm_provider=self.get_llm_provider(),
                 instrument_universe=self.get_instrument_universe(),
+                max_synthesis_attempts=self._settings.scenario_synthesis_max_attempts,
             )
             graph = build_scenario_graph(
                 normalize_scenario_intake=normalize_intake,

@@ -21,7 +21,6 @@ from app.api.v1.schemas.event_intelligence_demo_request import EventIntelligence
 from app.api.v1.schemas.event_study_event_response import EventStudyEventResponse
 from app.api.v1.schemas.event_study_response import EventStudyResponse
 from app.api.v1.schemas.fear_greed_reading_response import FearGreedReadingResponse
-from app.api.v1.schemas.market_pulse_response import MarketPulseResponse
 from app.api.v1.schemas.fundamentals_response import FundamentalsResponse
 from app.api.v1.schemas.generate_briefing_request import GenerateBriefingRequest
 from app.api.v1.schemas.generate_consequence_chain_request import GenerateConsequenceChainRequest
@@ -36,11 +35,14 @@ from app.api.v1.schemas.macro_event_interpretation_response import (
 )
 from app.api.v1.schemas.macro_observation_response import MacroObservationResponse
 from app.api.v1.schemas.macro_state_response import MacroStateResponse
+from app.api.v1.schemas.market_pulse_response import MarketPulseResponse
 from app.api.v1.schemas.market_stats_response import MarketStatsResponse
 from app.api.v1.schemas.news_entity_response import NewsEntityResponse
 from app.api.v1.schemas.news_event_response import NewsEventResponse
 from app.api.v1.schemas.news_item_response import NewsItemResponse
 from app.api.v1.schemas.news_list_response import NewsListResponse
+from app.api.v1.schemas.note_body_request import NoteBodyRequest
+from app.api.v1.schemas.note_response import NoteResponse
 from app.api.v1.schemas.open_review_item_response import OpenReviewItemResponse
 from app.api.v1.schemas.realtime_session_response import RealtimeSessionResponse
 from app.api.v1.schemas.realtime_tool_request import RealtimeToolRequest
@@ -135,6 +137,8 @@ __all__ = [
     "TranscriptionResponse",
     "UnusualMoveResponse",
     "VolatilityRegimeResponse",
+    "NoteBodyRequest",
+    "NoteResponse",
     "WatchlistCreateRequest",
     "WatchlistItemAddRequest",
     "WatchlistItemResponse",
