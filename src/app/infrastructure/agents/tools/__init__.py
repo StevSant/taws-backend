@@ -25,6 +25,7 @@ from app.infrastructure.agents.tools.get_signals_for_instrument_tool import (
 from app.infrastructure.agents.tools.interpret_macro_event_tool import (
     build_interpret_macro_event_tool,
 )
+from app.infrastructure.agents.tools.render_price_chart_tool import build_render_price_chart_tool
 from app.infrastructure.agents.tools.run_scenario_simulation_tool import (
     build_run_scenario_simulation_tool,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "build_interpret_macro_event_tool",
     "build_macro_tools",
     "build_quant_grounding_tools",
+    "build_render_price_chart_tool",
     "build_run_scenario_simulation_tool",
     "build_scenario_tools",
     "build_sentiment_tools",

@@ -3,7 +3,14 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
-from app.domain.agents.entities import AgentStreamEvent, ErrorEvent, Message, TokenEvent, TraceEvent
+from app.domain.agents.entities import (
+    AgentStreamEvent,
+    ChartEvent,
+    ErrorEvent,
+    Message,
+    TokenEvent,
+    TraceEvent,
+)
 from app.domain.agents.ports import AgentRunner
 from app.infrastructure.agents.build_agent_trace_from_payload import (
     build_agent_trace_from_payload,
@@ -55,6 +62,9 @@ class LangGraphAgentRunner(AgentRunner):
                     if token:
                         yield TokenEvent(token=token)
                 elif mode == "custom":
-                    yield TraceEvent(trace=build_agent_trace_from_payload(payload))
+                    if payload.get("kind") == "chart":
+                        yield ChartEvent(chart=payload["chart"])
+                    else:
+                        yield TraceEvent(trace=build_agent_trace_from_payload(payload))
         except Exception as exc:  # last-resort guard, see class docstring
             yield ErrorEvent(message=str(exc))
