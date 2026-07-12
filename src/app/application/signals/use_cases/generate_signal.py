@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import uuid
 
 from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
@@ -7,6 +9,7 @@ from app.application.compliance.use_cases import ReviewCompliance
 from app.application.signals.insufficient_evidence_error import InsufficientEvidenceError
 from app.application.signals.signal_classification import SignalClassification
 from app.application.signals.unknown_instrument_error import UnknownInstrumentError
+from app.domain.agents import LLMProviderUnavailableError
 from app.domain.agents.entities import Message, MessageRole
 from app.domain.agents.ports import LLMProvider
 from app.domain.compliance import NOT_PERSONALIZED_ADVICE_DISCLAIMER
@@ -14,6 +17,8 @@ from app.domain.market.entities import Instrument, NewsItem
 from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, NewsProvider
 from app.domain.signals.entities import ImpactClass, Signal, SignalEvidence
 from app.domain.signals.ports import SignalRepository
+
+logger = logging.getLogger(__name__)
 
 _CLASSIFICATION_SCHEMA_NAME = "signal_classification"
 
@@ -103,6 +108,8 @@ class GenerateSignal:
         find_historical_analogs: FindHistoricalAnalogs,
         index_signal_analog: IndexSignalAnalog,
         min_distinct_sources: int,
+        retry_max_attempts: int = 2,
+        retry_backoff_base_seconds: float = 0.5,
     ) -> None:
         self._news_provider = news_provider
         self._market_data_provider = market_data_provider
@@ -112,6 +119,12 @@ class GenerateSignal:
         self._find_historical_analogs = find_historical_analogs
         self._index_signal_analog = index_signal_analog
         self._min_distinct_sources = min_distinct_sources
+        # Bounded retry around the transient-failure path of `_classify_impact` before it
+        # degrades to the honest fallback (issue #55). Defaults mirror `Settings`' own
+        # defaults so a caller that doesn't wire them (e.g. the batch pipeline) still
+        # retries — same constructor-default pattern as `SupabaseSignalRepository`.
+        self._retry_max_attempts = retry_max_attempts
+        self._retry_backoff_base_seconds = retry_backoff_base_seconds
         # No ports/I-O behind `ReviewCompliance` (pure rule-based checks), so it's a plain
         # private collaborator rather than a constructor-injected dependency — nothing to
         # swap, and routers don't need to resolve/pass it via `Depends`.
@@ -214,42 +227,74 @@ class GenerateSignal:
     ) -> tuple[SignalClassification, bool]:
         """Classify impact, returning `(classification, analysis_available)`.
 
-        `analysis_available` is `False` only on the fallback path below (no LLM key /
-        unparseable response), so the caller can persist a marker distinguishing a real
-        analysis from a degraded, empty one.
+        `analysis_available` is `False` only on the fallback path below (no LLM backend /
+        exhausted retries on a transient failure), so the caller can persist a marker
+        distinguishing a real analysis from a degraded, empty one. The fallback always
+        returns `impact_class=UNCERTAIN, confidence=0.0`, so a degraded signal can never
+        show a confident directional badge alongside an unavailable analysis (issue #55).
+
+        The blanket `except Exception` this replaced (issue #55) swallowed the root cause
+        without a trace: a missing `OPENAI_API_KEY`, a rate-limit, a timeout, and an
+        unparseable structured response all collapsed into the same silent "uncertain"
+        result. Now every failure is logged with its provider error class + message, and
+        transient failures are retried with exponential backoff before degrading. A
+        permanently-unavailable backend (`LLMProviderUnavailableError`, e.g. no API key)
+        is logged once and degraded immediately — retrying it can't help.
         """
-        try:
-            raw = await self._llm_provider.complete_structured(
-                messages=[
-                    Message(
-                        role=MessageRole.SYSTEM,
-                        content=_CLASSIFICATION_SYSTEM_PROMPT + build_locale_instruction(locale),
-                    ),
-                    Message(
-                        role=MessageRole.USER,
-                        content=_format_news_context(instrument, news_items, price_delta, analogs),
-                    ),
-                ],
-                schema=SignalClassification.model_json_schema(),
-                schema_name=_CLASSIFICATION_SCHEMA_NAME,
-            )
-            return SignalClassification.model_validate(raw), True
-        except Exception:
-            # `OpenAIProvider.complete_structured` raises when no OPENAI_API_KEY is
-            # configured (see its docstring); a malformed/unparseable response raises
-            # via `.model_validate(raw)` above. Either way, caught here and downgraded
-            # to an explicit "uncertain, zero confidence" call instead of crashing the
-            # pipeline — same broad-catch shape as `supervisor_router_node.py`'s guard.
-            # `analysis_available=False` marks this so the frontend can label it.
-            return (
-                SignalClassification(
-                    impact_class=ImpactClass.UNCERTAIN,
-                    confidence=0.0,
-                    reasoning=_FALLBACK_REASONING,
-                    thesis=_FALLBACK_THESIS,
-                ),
-                False,
-            )
+        messages = [
+            Message(
+                role=MessageRole.SYSTEM,
+                content=_CLASSIFICATION_SYSTEM_PROMPT + build_locale_instruction(locale),
+            ),
+            Message(
+                role=MessageRole.USER,
+                content=_format_news_context(instrument, news_items, price_delta, analogs),
+            ),
+        ]
+        attempt = 0
+        while True:
+            try:
+                raw = await self._llm_provider.complete_structured(
+                    messages=messages,
+                    schema=SignalClassification.model_json_schema(),
+                    schema_name=_CLASSIFICATION_SCHEMA_NAME,
+                )
+                return SignalClassification.model_validate(raw), True
+            except LLMProviderUnavailableError as exc:
+                logger.warning(
+                    "Signal classification for %s degraded to fallback: LLM provider "
+                    "unavailable (%s: %s). Not retrying — this needs configuration, not a retry.",
+                    instrument.symbol,
+                    type(exc).__name__,
+                    exc,
+                )
+                return _build_fallback_classification(), False
+            except Exception as exc:
+                # Transient: rate limit / timeout / malformed or unparseable structured
+                # output (`json.loads` in the adapter, or `.model_validate(raw)` above).
+                attempt += 1
+                if attempt > self._retry_max_attempts:
+                    logger.error(
+                        "Signal classification for %s exhausted %d retr(y/ies); degrading "
+                        "to fallback. Last error (%s: %s)",
+                        instrument.symbol,
+                        self._retry_max_attempts,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    return _build_fallback_classification(), False
+                delay = self._retry_backoff_base_seconds * (2 ** (attempt - 1))
+                logger.warning(
+                    "Signal classification for %s failed (attempt %d/%d, %s: %s); "
+                    "retrying in %.2fs",
+                    instrument.symbol,
+                    attempt,
+                    self._retry_max_attempts,
+                    type(exc).__name__,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
 
     async def _compute_price_delta(self, instrument: Instrument) -> float | None:
         """Percentage price change over the provider's default lookback window, or `None`."""
@@ -261,6 +306,21 @@ class GenerateSignal:
             return None
         first, last = series.candles[0], series.candles[-1]
         return round((last.close - first.close) / first.close * 100, 4)
+
+
+def _build_fallback_classification() -> SignalClassification:
+    """The honest degraded classification used when the Analyst can't classify (issue #55).
+
+    Always `UNCERTAIN` with `confidence=0.0` and an empty thesis, so a signal persisted
+    from this path (`analysis_available=False`) can never contradict itself by showing a
+    confident directional badge next to an "análisis no disponible" message.
+    """
+    return SignalClassification(
+        impact_class=ImpactClass.UNCERTAIN,
+        confidence=0.0,
+        reasoning=_FALLBACK_REASONING,
+        thesis=_FALLBACK_THESIS,
+    )
 
 
 def _to_evidence(item: NewsItem) -> SignalEvidence:

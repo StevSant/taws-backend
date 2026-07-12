@@ -210,6 +210,16 @@ class Settings(BaseSettings):
     # `application/signals/use_cases/generate_signal.py` ---
     min_distinct_news_sources: int = 2
 
+    # Bounded retry around the Analyst's structured-output classification call
+    # (`GenerateSignal._classify_impact`) before it degrades to an honest "uncertain,
+    # analysis unavailable" fallback (issue #55). Covers transient failures only (rate
+    # limit / timeout / malformed or unparseable structured output); a permanently
+    # unavailable provider (no API key -> `LLMProviderUnavailableError`) is not retried.
+    # `max_attempts` counts retries AFTER the first try (so 2 => up to 3 total calls);
+    # backoff is exponential (`base * 2**(attempt-1)`), mirroring `with_supabase_retry`.
+    signal_classification_retry_max_attempts: int = 2
+    signal_classification_retry_backoff_base_seconds: float = 0.5
+
     # --- Pending news pre-filter (issue #3): cheap-relevance floor (see
     # `compute_news_relevance_score`) below which a pending news item is skipped
     # (analysis_status -> skipped) without an LLM call. ---
