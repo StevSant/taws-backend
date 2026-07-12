@@ -44,11 +44,13 @@ from app.api.v1.dependencies.get_scenario_simulation_runner import get_scenario_
 from app.api.v1.dependencies.get_signal_command_handler import get_signal_command_handler
 from app.api.v1.dependencies.get_signal_repository import get_signal_repository
 from app.api.v1.dependencies.get_simulate_command_handler import get_simulate_command_handler
+from app.api.v1.dependencies.get_stt_provider import get_stt_provider
 from app.api.v1.dependencies.get_telegram_link_repository import get_telegram_link_repository
 from app.api.v1.dependencies.get_telegram_link_token_repository import (
     get_telegram_link_token_repository,
 )
 from app.api.v1.dependencies.get_telegram_messenger import get_telegram_messenger
+from app.api.v1.dependencies.get_tts_provider import get_tts_provider
 from app.api.v1.dependencies.get_user_bot_repository import get_user_bot_repository
 from app.api.v1.dependencies.get_vector_store import get_vector_store
 from app.api.v1.dependencies.get_watchlist_repository import get_watchlist_repository
@@ -95,11 +97,13 @@ __all__ = [
     "get_signal_command_handler",
     "get_signal_repository",
     "get_simulate_command_handler",
+    "get_stt_provider",
     "get_bot_registration",
     "get_telegram_link_repository",
     "get_telegram_link_token_repository",
     "get_user_bot_repository",
     "get_telegram_messenger",
+    "get_tts_provider",
     "get_vector_store",
     "get_watchlist_repository",
     "require_compliance",

@@ -53,6 +53,36 @@ class Settings(BaseSettings):
     # short-lived token the browser holds; the real key never leaves the backend.
     openai_realtime_ttl_seconds: int = 600
 
+    # --- Text-to-Speech (voice playback of assistant replies, behind the TTSProvider
+    # port). Leaving TTS_API_KEY unset disables server-side TTS: chat still works,
+    # POST /api/v1/chat/speak returns 503, and the frontend falls back to the browser's
+    # built-in speech synthesis. Kept as its own key (not reusing OPENAI_API_KEY) so TTS
+    # can be enabled/keyed/billed independently of the chat/embedding pipelines. ---
+    tts_enabled: bool = False
+    tts_provider: str = "openai"
+    tts_api_key: str | None = None
+    tts_model: str = "tts-1"
+    tts_voice: str = "nova"
+    tts_response_format: str = "mp3"
+    # Max characters accepted per /speak request. Caps per-request TTS cost and stays
+    # under OpenAI's ~4096-char synthesis limit. Tune down to tighten the cost blast radius.
+    tts_max_input_chars: int = 4096
+
+    # --- Speech-to-Text (dictate a chat message by voice, behind the STTProvider port).
+    # The mirror image of TTS: an uploaded audio clip -> transcribed text. Leaving
+    # STT_API_KEY unset disables server-side STT: chat still works, POST
+    # /api/v1/chat/transcribe returns 503, and the frontend falls back to the browser's
+    # built-in speech recognition. Kept as its own key (not reusing OPENAI_API_KEY) so
+    # STT can be enabled/keyed/billed independently of the chat/embedding pipelines. ---
+    stt_enabled: bool = False
+    stt_provider: str = "openai"
+    stt_api_key: str | None = None
+    stt_model: str = "whisper-1"
+    # Max audio bytes accepted per /transcribe request. 25 MiB matches Whisper's
+    # per-file cap and caps per-request cost / DoS blast radius. Reject before hitting
+    # the billed transcription API.
+    stt_max_audio_bytes: int = 26214400
+
     supabase_url: str | None = None
     supabase_key: str | None = None
     supabase_jwt_secret: str | None = None

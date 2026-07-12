@@ -21,6 +21,7 @@ dependencies = [
     "pydantic>=2",
     "pydantic-settings>=2.14.2",
     "pyjwt>=2.13.0",
+    "python-multipart>=0.0.32",
     "python-telegram-bot>=22.8",
     "reportlab>=5.0.0",
     "supabase>=2.31.0",

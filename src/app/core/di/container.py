@@ -36,6 +36,8 @@ from app.domain.agents.ports import (
     EmbeddingProvider,
     LLMProvider,
     RealtimeSessionProvider,
+    STTProvider,
+    TTSProvider,
     VectorStore,
 )
 from app.domain.briefing.ports import BriefingDocumentRenderer, BriefingRepository
@@ -138,6 +140,7 @@ from app.infrastructure.sentiment import (
     FixtureFearGreedProvider,
     RoutingFearGreedProvider,
 )
+from app.infrastructure.stt import OpenAISTTProvider
 from app.infrastructure.telegram import (
     BriefingCommandHandler,
     ChatMessageHandler,
@@ -147,6 +150,7 @@ from app.infrastructure.telegram import (
     TelegramBotClient,
     TelegramBotRegistration,
 )
+from app.infrastructure.tts import OpenAITTSProvider
 from app.infrastructure.universe import JsonInstrumentUniverse
 from app.infrastructure.vectorstore import PgvectorStore
 
@@ -168,6 +172,8 @@ class Container:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._llm_provider: LLMProvider | None = None
+        self._tts_provider: TTSProvider | None = None
+        self._stt_provider: STTProvider | None = None
         self._embedding_provider: EmbeddingProvider | None = None
         self._vector_store: VectorStore | None = None
         self._agent_memory: AgentMemory | None = None
@@ -225,6 +231,47 @@ class Container:
                 api_key=self._settings.openai_api_key, model=self._settings.openai_model
             )
         return self._llm_provider
+
+    def get_tts_provider(self) -> TTSProvider | None:
+        """Return the cached `TTSProvider`, or `None` when TTS isn't both enabled AND
+        keyed.
+
+        `None` (not an exception) is the contract here — same graceful-degradation
+        pattern as `get_notification_channel`/`get_telegram_messenger`: the
+        `POST /api/v1/chat/speak` endpoint turns `None` into a 503 and the frontend
+        falls back to the browser's built-in speech synthesis, so chat keeps working
+        without a TTS key. Uses its own `tts_api_key` (not `openai_api_key`) so TTS is
+        enabled/billed independently of the chat/embedding pipelines.
+        """
+        if (
+            self._tts_provider is None
+            and self._settings.tts_enabled
+            and self._settings.tts_api_key
+        ):
+            self._tts_provider = OpenAITTSProvider(
+                api_key=self._settings.tts_api_key, model=self._settings.tts_model
+            )
+        return self._tts_provider
+
+    def get_stt_provider(self) -> STTProvider | None:
+        """Return the cached `STTProvider`, or `None` when STT isn't both enabled AND
+        keyed.
+
+        Mirror image of `get_tts_provider`: `None` (not an exception) is the contract —
+        the `POST /api/v1/chat/transcribe` endpoint turns `None` into a 503 and the
+        frontend falls back to the browser's built-in speech recognition, so chat keeps
+        working without an STT key. Uses its own `stt_api_key` (not `openai_api_key`) so
+        STT is enabled/billed independently of the chat/embedding pipelines.
+        """
+        if (
+            self._stt_provider is None
+            and self._settings.stt_enabled
+            and self._settings.stt_api_key
+        ):
+            self._stt_provider = OpenAISTTProvider(
+                api_key=self._settings.stt_api_key, model=self._settings.stt_model
+            )
+        return self._stt_provider
 
     def get_embedding_provider(self) -> EmbeddingProvider:
         if self._embedding_provider is None:

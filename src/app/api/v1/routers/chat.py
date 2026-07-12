@@ -3,13 +3,15 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from app.api.v1.dependencies import (
     get_agent_runner,
     get_realtime_session_provider,
+    get_stt_provider,
+    get_tts_provider,
     require_current_user,
 )
 from app.api.v1.schemas import (
@@ -18,6 +20,8 @@ from app.api.v1.schemas import (
     RealtimeSessionResponse,
     RealtimeToolRequest,
     RealtimeToolResponse,
+    SpeakRequest,
+    TranscriptionResponse,
 )
 from app.application.chat.use_cases import StreamReply
 from app.core.config import Settings, get_settings
@@ -31,7 +35,12 @@ from app.domain.agents.entities import (
     TokenEvent,
     TraceEvent,
 )
-from app.domain.agents.ports import AgentRunner, RealtimeSessionProvider
+from app.domain.agents.ports import (
+    AgentRunner,
+    RealtimeSessionProvider,
+    STTProvider,
+    TTSProvider,
+)
 from app.infrastructure.realtime.tools import (
     ToolNotFoundError,
     build_realtime_tool_schemas,
@@ -204,3 +213,87 @@ async def execute_realtime_tool(
         output = {"error": str(exc)}
 
     return RealtimeToolResponse(call_id=payload.call_id, output=output)
+
+
+@router.post("/speak")
+async def speak(
+    payload: SpeakRequest,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    tts_provider: Annotated[TTSProvider | None, Depends(get_tts_provider)],
+) -> Response:
+    """Synthesize `payload.text` into spoken audio and return it as a single buffer.
+
+    Auth-gated via `require_current_user`, same as `/stream`. When TTS isn't configured
+    the DI-resolved `tts_provider` is `None` (see `Container.get_tts_provider`) — this
+    endpoint returns 503 in that case, the signal for the frontend to fall back to the
+    browser's built-in speech synthesis. The voice defaults to the server-configured
+    `tts_voice` when the request omits one; the audio format is always the configured
+    `tts_response_format` (mp3 -> `audio/mpeg`). Buffered, not streamed — see the
+    `TTSProvider` port's docstring for why (OpenAI TTS has no stream-to-service).
+    """
+    if len(payload.text) > settings.tts_max_input_chars:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Text exceeds the maximum of {settings.tts_max_input_chars} "
+                "characters for speech synthesis."
+            ),
+        )
+    if tts_provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Text-to-speech is not configured on this server.",
+        )
+    audio = await tts_provider.synthesize(
+        payload.text,
+        payload.voice or settings.tts_voice,
+        settings.tts_response_format,
+    )
+    return Response(content=audio, media_type="audio/mpeg")
+
+
+@router.post("/transcribe", response_model=TranscriptionResponse)
+async def transcribe(
+    file: Annotated[UploadFile, File(...)],
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    stt_provider: Annotated[STTProvider | None, Depends(get_stt_provider)],
+) -> TranscriptionResponse:
+    """Transcribe an uploaded audio clip into text (the mirror image of `/speak`).
+
+    Lets a user dictate a chat message by voice. Auth-gated via `require_current_user`,
+    same as `/stream` and `/speak`. When STT isn't configured the DI-resolved
+    `stt_provider` is `None` (see `Container.get_stt_provider`) — this endpoint returns
+    503 in that case, the signal for the frontend to fall back to the browser's built-in
+    speech recognition. Audio over the configured `stt_max_audio_bytes` cap (or empty) is
+    rejected with 422 BEFORE the billed transcription API is hit, capping per-request
+    cost / DoS blast radius.
+    """
+    audio = await file.read()
+
+    if stt_provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Speech-to-text is not configured on this server.",
+        )
+    if len(audio) > settings.stt_max_audio_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Audio exceeds the maximum of {settings.stt_max_audio_bytes} "
+                "bytes for transcription."
+            ),
+        )
+    if not audio:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Audio file is empty.",
+        )
+
+    text = await stt_provider.transcribe(
+        audio,
+        file.filename or "audio",
+        file.content_type or "application/octet-stream",
+    )
+    return TranscriptionResponse(text=text)

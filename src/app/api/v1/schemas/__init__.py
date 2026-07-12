@@ -59,8 +59,10 @@ from app.api.v1.schemas.scenario_spec_response import ScenarioSpecResponse
 from app.api.v1.schemas.sentiment_reading_response import SentimentReadingResponse
 from app.api.v1.schemas.signal_evidence_response import SignalEvidenceResponse
 from app.api.v1.schemas.signal_response import SignalResponse
+from app.api.v1.schemas.speak_request import SpeakRequest
 from app.api.v1.schemas.telegram_link_status_response import TelegramLinkStatusResponse
 from app.api.v1.schemas.telegram_link_token_response import TelegramLinkTokenResponse
+from app.api.v1.schemas.transcription_response import TranscriptionResponse
 from app.api.v1.schemas.unusual_move_response import UnusualMoveResponse
 from app.api.v1.schemas.volatility_regime_response import VolatilityRegimeResponse
 from app.api.v1.schemas.watchlist_create_request import WatchlistCreateRequest
@@ -125,8 +127,10 @@ __all__ = [
     "SentimentReadingResponse",
     "SignalEvidenceResponse",
     "SignalResponse",
+    "SpeakRequest",
     "TelegramLinkStatusResponse",
     "TelegramLinkTokenResponse",
+    "TranscriptionResponse",
     "UnusualMoveResponse",
     "VolatilityRegimeResponse",
     "WatchlistCreateRequest",
