@@ -8,6 +8,7 @@ from app.api.middleware import RequestIDMiddleware, unhandled_exception_handler
 from app.api.v1.routers import (
     briefing_export_router,
     briefings_router,
+    charts_router,
     chat_router,
     consequence_chains_router,
     fundamentals_router,
@@ -76,6 +77,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
     app.include_router(health_router)
+    app.include_router(charts_router, prefix="/api/v1")
     app.include_router(chat_router, prefix="/api/v1")
     app.include_router(instruments_router, prefix="/api/v1")
     app.include_router(news_router, prefix="/api/v1")

@@ -5,6 +5,7 @@ from app.api.v1.schemas.briefing_instrument_section_response import (
     BriefingInstrumentSectionResponse,
 )
 from app.api.v1.schemas.briefing_response import BriefingResponse
+from app.api.v1.schemas.chart_render_request import ChartRenderRequest
 from app.api.v1.schemas.chat_request import ChatRequest
 from app.api.v1.schemas.chat_response import ChatResponse
 from app.api.v1.schemas.chat_token import ChatToken
@@ -62,6 +63,7 @@ __all__ = [
     "BriefingExportEmailResponse",
     "BriefingInstrumentSectionResponse",
     "BriefingResponse",
+    "ChartRenderRequest",
     "ChatRequest",
     "ChatResponse",
     "ChatToken",

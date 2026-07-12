@@ -26,6 +26,7 @@ from app.api.v1.dependencies.get_market_data_provider import get_market_data_pro
 from app.api.v1.dependencies.get_news_provider import get_news_provider
 from app.api.v1.dependencies.get_notification_channel import get_notification_channel
 from app.api.v1.dependencies.get_preset_scenario_rows import get_preset_scenario_rows
+from app.api.v1.dependencies.get_render_chart_use_case import get_render_chart_use_case
 from app.api.v1.dependencies.get_scenario_repository import get_scenario_repository
 from app.api.v1.dependencies.get_scenario_simulation_runner import get_scenario_simulation_runner
 from app.api.v1.dependencies.get_signal_command_handler import get_signal_command_handler
@@ -63,6 +64,7 @@ __all__ = [
     "get_news_provider",
     "get_notification_channel",
     "get_preset_scenario_rows",
+    "get_render_chart_use_case",
     "get_scenario_repository",
     "get_scenario_simulation_runner",
     "get_signal_command_handler",

@@ -13,6 +13,7 @@ from app.application.charts.use_cases import (
     BuildMacroChart,
     BuildPriceChart,
     BuildSentimentGauge,
+    RenderChart,
 )
 from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.macro.use_cases import InterpretMacroEvent
@@ -185,6 +186,7 @@ class Container:
         self._build_distribution_chart_use_case: BuildDistributionChart | None = None
         self._build_macro_chart_use_case: BuildMacroChart | None = None
         self._build_sentiment_gauge_use_case: BuildSentimentGauge | None = None
+        self._render_chart_use_case: RenderChart | None = None
 
     def get_llm_provider(self) -> LLMProvider:
         if self._llm_provider is None:
@@ -580,6 +582,19 @@ class Container:
                 chart_config=self.get_chart_config(),
             )
         return self._build_sentiment_gauge_use_case
+
+    def get_render_chart_use_case(self) -> RenderChart:
+        """Return the cached RenderChart dispatcher (timeframe-toggle endpoint)."""
+        if self._render_chart_use_case is None:
+            self._render_chart_use_case = RenderChart(
+                build_price_chart=self.get_build_price_chart_use_case(),
+                build_comparison_chart=self.get_build_comparison_chart_use_case(),
+                build_drawdown_chart=self.get_build_drawdown_chart_use_case(),
+                build_distribution_chart=self.get_build_distribution_chart_use_case(),
+                build_macro_chart=self.get_build_macro_chart_use_case(),
+                build_sentiment_gauge=self.get_build_sentiment_gauge_use_case(),
+            )
+        return self._render_chart_use_case
 
     def get_generate_consequence_chain_use_case(self) -> GenerateConsequenceChain:
         """Return the cached Consequence Chain Analyst use case (issue #8).
