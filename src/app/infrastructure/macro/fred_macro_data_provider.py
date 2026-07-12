@@ -5,7 +5,12 @@ from typing import Any
 import httpx
 import yfinance as yf
 
-from app.domain.market.entities import MacroObservation, VolatilityRegime
+from app.domain.market.entities import (
+    MacroIndicator,
+    MacroObservation,
+    MacroSeries,
+    VolatilityRegime,
+)
 from app.domain.market.ports import MacroDataProvider
 from app.infrastructure.macro.bucket_volatility_regime import bucket_volatility_regime
 
@@ -36,6 +41,7 @@ class FredMacroDataProvider(MacroDataProvider):
         low_threshold: float,
         elevated_threshold: float,
         high_threshold: float,
+        indicator_series_ids: dict[MacroIndicator, str],
         timeout_seconds: float = 10.0,
     ) -> None:
         self._api_key = api_key
@@ -43,6 +49,7 @@ class FredMacroDataProvider(MacroDataProvider):
         self._rates_series_id = rates_series_id
         self._cpi_series_id = cpi_series_id
         self._vix_symbol = vix_symbol
+        self._indicator_series_ids = indicator_series_ids
         self._low_threshold = low_threshold
         self._elevated_threshold = elevated_threshold
         self._high_threshold = high_threshold
@@ -61,6 +68,43 @@ class FredMacroDataProvider(MacroDataProvider):
             vix_level, self._low_threshold, self._elevated_threshold, self._high_threshold
         )
         return VolatilityRegime(vix_level=vix_level, regime=regime, as_of=datetime.now(UTC))
+
+    async def get_indicator_history(self, indicator: MacroIndicator, days: int) -> MacroSeries:
+        series_id = self._indicator_series_ids.get(indicator)
+        if series_id is None:
+            raise RuntimeError(
+                f"[FredMacroDataProvider] No FRED series id configured for {indicator!r}."
+            )
+        if not self._api_key:
+            raise RuntimeError(_NO_KEY_ERROR)
+
+        async with httpx.AsyncClient(
+            base_url=self._base_url, timeout=self._timeout_seconds
+        ) as client:
+            response = await client.get(
+                "/series/observations",
+                params={
+                    "series_id": series_id,
+                    "api_key": self._api_key,
+                    "file_type": "json",
+                    "sort_order": "desc",
+                    "limit": days,
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+
+        parsed = _parse_fred_observations(payload)
+        if not parsed:
+            raise RuntimeError(
+                f"[FredMacroDataProvider] No observations returned by FRED for {series_id!r}."
+            )
+        # FRED returns newest-first; the series contract is oldest-first.
+        observations = [
+            MacroObservation(series_id=series_id, value=value, as_of=as_of)
+            for as_of, value in reversed(parsed)
+        ]
+        return MacroSeries(indicator=indicator, series_id=series_id, observations=observations)
 
     async def _fetch_latest_observation(self, series_id: str) -> MacroObservation:
         if not self._api_key:

@@ -1,6 +1,11 @@
 from abc import ABC, abstractmethod
 
-from app.domain.market.entities import MacroObservation, VolatilityRegime
+from app.domain.market.entities import (
+    MacroIndicator,
+    MacroObservation,
+    MacroSeries,
+    VolatilityRegime,
+)
 
 
 class MacroDataProvider(ABC):
@@ -27,4 +32,14 @@ class MacroDataProvider(ABC):
     @abstractmethod
     async def get_volatility_regime(self) -> VolatilityRegime:
         """Return the current VIX level and its derived `VolatilityLevel` regime bucket."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_indicator_history(self, indicator: MacroIndicator, days: int) -> MacroSeries:
+        """Return the recent history (oldest -> newest) for a named macro indicator.
+
+        Covers rates/CPI plus the additional indicators (gold, oil, 10Y Treasury) surfaced by
+        the "Contexto de mercado" panel (issue #58). `days` bounds how many recent observations
+        to return; the concrete series id backing each indicator is adapter/`Settings` config.
+        """
         raise NotImplementedError

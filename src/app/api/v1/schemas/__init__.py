@@ -38,6 +38,7 @@ from app.api.v1.schemas.macro_event_interpretation_response import (
     MacroEventInterpretationResponse,
 )
 from app.api.v1.schemas.macro_observation_response import MacroObservationResponse
+from app.api.v1.schemas.macro_series_response import MacroSeriesResponse
 from app.api.v1.schemas.macro_state_response import MacroStateResponse
 from app.api.v1.schemas.market_stats_response import MarketStatsResponse
 from app.api.v1.schemas.news_entity_response import NewsEntityResponse
@@ -114,6 +115,7 @@ __all__ = [
     "MacroAssetClassImpactResponse",
     "MacroEventInterpretationResponse",
     "MacroObservationResponse",
+    "MacroSeriesResponse",
     "MacroStateResponse",
     "MarketStatsResponse",
     "NewsEntityResponse",

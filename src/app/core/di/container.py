@@ -48,6 +48,7 @@ from app.domain.event_intelligence.ports import (
     EventRepositoryPort,
     NewsProviderPort,
 )
+from app.domain.market.entities import MacroIndicator
 from app.domain.market.ports import (
     FundamentalsProvider,
     InstrumentUniverse,
@@ -784,6 +785,20 @@ class Container:
         `infrastructure/macro/routing_macro_data_provider.py`.
         """
         if self._macro_data_provider is None:
+            indicator_series_ids = {
+                MacroIndicator.RATES: self._settings.fred_rates_series_id,
+                MacroIndicator.CPI: self._settings.fred_cpi_series_id,
+                MacroIndicator.GOLD: self._settings.fred_gold_series_id,
+                MacroIndicator.OIL: self._settings.fred_oil_series_id,
+                MacroIndicator.TREASURY_10Y: self._settings.fred_treasury_10y_series_id,
+            }
+            indicator_fixture_values = {
+                MacroIndicator.RATES: self._settings.fixture_macro_rate,
+                MacroIndicator.CPI: self._settings.fixture_macro_cpi,
+                MacroIndicator.GOLD: self._settings.fixture_macro_gold,
+                MacroIndicator.OIL: self._settings.fixture_macro_oil,
+                MacroIndicator.TREASURY_10Y: self._settings.fixture_macro_treasury_10y,
+            }
             live_provider = FredMacroDataProvider(
                 api_key=self._settings.fred_api_key,
                 base_url=self._settings.fred_base_url,
@@ -793,6 +808,7 @@ class Container:
                 low_threshold=self._settings.vix_low_threshold,
                 elevated_threshold=self._settings.vix_elevated_threshold,
                 high_threshold=self._settings.vix_high_threshold,
+                indicator_series_ids=indicator_series_ids,
                 timeout_seconds=self._settings.fred_timeout_seconds,
             )
             fixture_provider = FixtureMacroDataProvider(
@@ -804,6 +820,8 @@ class Container:
                 low_threshold=self._settings.vix_low_threshold,
                 elevated_threshold=self._settings.vix_elevated_threshold,
                 high_threshold=self._settings.vix_high_threshold,
+                indicator_series_ids=indicator_series_ids,
+                indicator_fixture_values=indicator_fixture_values,
             )
             self._macro_data_provider = RoutingMacroDataProvider(
                 live_provider=live_provider, fixture_provider=fixture_provider

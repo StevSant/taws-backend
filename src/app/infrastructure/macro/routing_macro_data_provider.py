@@ -1,6 +1,11 @@
 import logging
 
-from app.domain.market.entities import MacroObservation, VolatilityRegime
+from app.domain.market.entities import (
+    MacroIndicator,
+    MacroObservation,
+    MacroSeries,
+    VolatilityRegime,
+)
 from app.domain.market.ports import MacroDataProvider
 
 logger = logging.getLogger(__name__)
@@ -42,3 +47,12 @@ class RoutingMacroDataProvider(MacroDataProvider):
         except Exception:
             logger.warning("Live VIX lookup failed; using fixture.", exc_info=True)
             return await self._fixture_provider.get_volatility_regime()
+
+    async def get_indicator_history(self, indicator: MacroIndicator, days: int) -> MacroSeries:
+        try:
+            return await self._live_provider.get_indicator_history(indicator, days)
+        except Exception:
+            logger.warning(
+                "Live FRED history for %s failed; using fixture.", indicator, exc_info=True
+            )
+            return await self._fixture_provider.get_indicator_history(indicator, days)
