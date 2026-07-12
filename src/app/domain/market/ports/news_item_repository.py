@@ -21,6 +21,14 @@ class NewsItemRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_by_id(self, news_id: str) -> NewsItem | None:
+        """Return the persisted item with this id, or `None` if no such item exists.
+
+        Backs `GET /api/v1/news/{id}` (issue #38) — single-item read by the persisted
+        `news_items.id` (not the article `url`)."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def list_pending(self, limit: int) -> list[NewsItem]:
         """Return up to `limit` persisted items with `analysis_status = pending`,
         most-recent first."""

@@ -45,6 +45,13 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         by_url = {news_item.url: news_item for news_item in persisted}
         return [by_url[item.url] for item in items if item.url in by_url]
 
+    async def get_by_id(self, news_id: str) -> NewsItem | None:
+        client = await self._clients.get()
+        response = (
+            await client.table(_NEWS_ITEMS_TABLE).select("*").eq("id", news_id).execute()
+        )
+        return news_item_from_row(response.data[0]) if response.data else None
+
     async def list_pending(self, limit: int) -> list[NewsItem]:
         client = await self._clients.get()
         response = (
