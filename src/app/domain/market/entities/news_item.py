@@ -40,3 +40,4 @@ class NewsItem:
     sentiment_score: float | None = None
     analysis_status: AnalysisStatus = AnalysisStatus.PENDING
     signal_id: str | None = None
+    image_url: str | None = None

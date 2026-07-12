@@ -15,4 +15,12 @@ class EventStudyResponse(BaseModel):
     median_return_pct: float | None
     min_return_pct: float | None
     max_return_pct: float | None
+    forward_1d_median_pct: float | None
+    forward_7d_median_pct: float | None
+    forward_30d_median_pct: float | None
+    scenario_probability_pct: float | None
+    scenario_probability_sample_size: int
+    scenario_probability_occurrences: int
+    scenario_probability_horizon_days: int | None
+    scenario_probability_threshold_pct: float | None
     events: list[EventStudyEventResponse]

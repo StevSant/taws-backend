@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-from app.domain.scenario.entities import ScenarioHorizon, ScenarioMagnitude
+from app.domain.scenario.entities import ScenarioDirection, ScenarioHorizon, ScenarioMagnitude
 
 
 class ScenarioSpecExtraction(BaseModel):
@@ -43,6 +43,30 @@ class ScenarioSpecExtraction(BaseModel):
             "A one-paragraph normalized restatement of the scenario, grounded strictly in "
             "what the user described — never invent extra facts."
         )
+    )
+    target_price: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Explicit target price stated by the user, without a currency symbol. Use null "
+            "when the scenario is not about an instrument reaching a price level."
+        ),
+    )
+    direction: ScenarioDirection | None = Field(
+        default=None,
+        description=(
+            "Direction of the primary numeric shock. Use null when no directional move "
+            "was stated."
+        ),
+    )
+    timeframe_days: int | None = Field(
+        default=None,
+        ge=1,
+        le=3650,
+        description=(
+            "Exact timeframe in calendar days when stated or clearly implied; 'tomorrow' "
+            "means 1. Use null when only a broad horizon is available."
+        ),
     )
     affected_symbols: list[str] = Field(
         default_factory=list,

@@ -74,6 +74,7 @@ class NewsApiNewsProvider(NewsProvider):
                 provider="newsapi",
                 published_at=datetime.fromisoformat(published_raw.replace("Z", "+00:00")),
                 related_symbols=[],
+                image_url=article.get("urlToImage") or None,
             )
         except (KeyError, ValueError, TypeError):
             return None

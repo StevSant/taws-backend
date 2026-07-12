@@ -36,6 +36,7 @@ from app.domain.agents.entities import (
     Message,
     MessageRole,
     TokenEvent,
+    ToolCallEvent,
     TraceEvent,
 )
 from app.domain.agents.ports import (
@@ -78,6 +79,7 @@ def _to_sse_frame(event: AgentStreamEvent) -> str:
       "detail": "<optional text>"}}` (`detail` omitted when `None`)
     - `ErrorEvent` -> `{"error": "<message>"}`
     - `ChartEvent` -> `{"chart": {...}}` (a serialized ChartSpec wire dict)
+    - `ToolCallEvent` -> `{"tool": {"agent": "<name>", "name": "<tool>", "event": "start"|"done"}}`
     """
     payload: dict[str, Any]
     if isinstance(event, TokenEvent):
@@ -94,6 +96,14 @@ def _to_sse_frame(event: AgentStreamEvent) -> str:
         payload = {"error": event.message}
     elif isinstance(event, ChartEvent):
         payload = {"chart": event.chart}
+    elif isinstance(event, ToolCallEvent):
+        payload = {
+            "tool": {
+                "agent": event.tool.agent,
+                "name": event.tool.name,
+                "event": event.tool.event.value,
+            }
+        }
     else:
         raise TypeError(f"Unhandled AgentStreamEvent variant: {event!r}")
     return f"data: {json.dumps(payload)}\n\n"

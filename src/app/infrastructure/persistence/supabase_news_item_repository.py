@@ -39,6 +39,16 @@ class SupabaseNewsItemRepository(NewsItemRepository):
             .execute()
         )
 
+        for item in items:
+            if item.image_url:
+                await (
+                    client.table(_NEWS_ITEMS_TABLE)
+                    .update({"image_url": item.image_url})
+                    .eq("url", item.url)
+                    .is_("image_url", "null")
+                    .execute()
+                )
+
         urls = [item.url for item in items]
         response = await client.table(_NEWS_ITEMS_TABLE).select("*").in_("url", urls).execute()
         persisted = [news_item_from_row(row) for row in response.data]
