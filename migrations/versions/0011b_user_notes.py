@@ -8,8 +8,8 @@ Compliance note (HU3): like every other table in this schema, `user_notes` is a 
 free-text/task-shaped record. There is no buy/sell/order/quantity/price_target column, and
 there must never be one — see the product's compliance stance.
 
-Revision ID: 0011
-Revises: 0010
+Revision ID: 0011b
+Revises: 0011
 Create Date: 2026-07-12
 
 """
@@ -18,8 +18,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0011"
-down_revision: str | None = "0010"
+revision: str = "0011b"
+down_revision: str | None = "0011"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

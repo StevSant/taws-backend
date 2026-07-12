@@ -15,7 +15,7 @@ one-line reasoning:
 Same ownership/RLS model as the base `signals` table — no policy change needed here.
 
 Revision ID: 0010
-Revises: 0009
+Revises: 0009b
 Create Date: 2026-07-12
 
 """
@@ -25,7 +25,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "0010"
-down_revision: str | None = "0009"
+down_revision: str | None = "0009b"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
