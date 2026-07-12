@@ -23,6 +23,7 @@ from app.api.v1.dependencies.get_link_telegram_account_use_case import (
 from app.api.v1.dependencies.get_llm_provider import get_llm_provider
 from app.api.v1.dependencies.get_macro_data_provider import get_macro_data_provider
 from app.api.v1.dependencies.get_market_data_provider import get_market_data_provider
+from app.api.v1.dependencies.get_news_item_repository import get_news_item_repository
 from app.api.v1.dependencies.get_news_provider import get_news_provider
 from app.api.v1.dependencies.get_notification_channel import get_notification_channel
 from app.api.v1.dependencies.get_preset_scenario_rows import get_preset_scenario_rows
@@ -61,6 +62,7 @@ __all__ = [
     "get_llm_provider",
     "get_macro_data_provider",
     "get_market_data_provider",
+    "get_news_item_repository",
     "get_news_provider",
     "get_notification_channel",
     "get_preset_scenario_rows",

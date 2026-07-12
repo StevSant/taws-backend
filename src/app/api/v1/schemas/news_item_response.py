@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.api.v1.schemas.news_entity_response import NewsEntityResponse
+from app.domain.market.entities import AnalysisStatus
 
 
 class NewsItemResponse(BaseModel):
@@ -10,6 +11,7 @@ class NewsItemResponse(BaseModel):
 
     Always carries `source`, `provider`, and `published_at` (HU1 criteria), plus
     `related_symbols` linking the article to instruments in the curated universe.
+
     `provider` is the fetching adapter's own identity (e.g. `"finnhub"`,
     `"marketaux"`), distinct from `source`, which is the article's publisher.
 
@@ -17,6 +19,10 @@ class NewsItemResponse(BaseModel):
     sources that identify instruments in the text (currently Marketaux); both
     are `None` for every other source, never defaulted to a misleading value
     like `0`.
+
+    `analysis_status`/`signal_id` (issue #1) are read from the persisted `news_items`
+    store, so they reflect whatever a prior `AnalyzePendingNews` run decided — not a
+    per-request client-side guess.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -31,6 +37,8 @@ class NewsItemResponse(BaseModel):
     related_symbols: list[str]
     entities: list[NewsEntityResponse] | None = None
     sentiment_score: float | None = None
+    analysis_status: AnalysisStatus
+    signal_id: str | None = None
 
     @field_validator("entities", mode="before")
     @classmethod
