@@ -28,7 +28,8 @@ def test_includes_server_authored_instructions() -> None:
 def test_includes_all_registered_tools() -> None:
     session = build_realtime_session_update(_settings())["session"]
     tool_names = {t["name"] for t in session["tools"]}
-    assert {"get_market_data", "get_news", "get_watchlist", "get_notes"} <= tool_names
+    assert {"render_price_chart", "get_news", "get_watchlist", "get_notes"} <= tool_names
+    assert "get_market_data" not in tool_names
     # Flat function-tool shape (name at top level), not Chat-Completions nesting.
     assert all(t["type"] == "function" for t in session["tools"])
 

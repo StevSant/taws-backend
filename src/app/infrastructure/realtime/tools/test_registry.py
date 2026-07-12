@@ -284,6 +284,8 @@ def _chart_spec(
         kind=SimpleNamespace(value="price_line"),
         symbols=[symbol],
         timeframe=timeframe,
+        from_date=None,
+        to_date=None,
     )
     meta = SimpleNamespace(
         title=f"{symbol} chart",
