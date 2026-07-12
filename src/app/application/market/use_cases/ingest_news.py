@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from dataclasses import replace
 
@@ -77,15 +78,21 @@ class IngestNews:
         that already exist in the store (`upsert_many` never overwrites an existing row's
         `analysis_status`/`signal_id`).
         """
-        symbols = {symbol for item in items for symbol in item.related_symbols}
+        symbols = sorted({symbol for item in items for symbol in item.related_symbols})
         if not symbols:
             return items
 
-        latest_signal_id_by_symbol: dict[str, str] = {}
-        for symbol in symbols:
-            signal_id = await self._latest_signal_id(symbol)
-            if signal_id is not None:
-                latest_signal_id_by_symbol[symbol] = signal_id
+        # One signal-store round-trip per distinct symbol, fanned out concurrently: awaited
+        # in sequence this was the single biggest cost on the `GET /api/v1/news` request
+        # path — a 50-item page can reference dozens of instruments, and each lookup paid a
+        # full Supabase round-trip (taws#71). The lookups are independent, so gathering them
+        # collapses N round-trips into one wall-clock round-trip.
+        signal_ids = await asyncio.gather(*(self._latest_signal_id(symbol) for symbol in symbols))
+        latest_signal_id_by_symbol = {
+            symbol: signal_id
+            for symbol, signal_id in zip(symbols, signal_ids, strict=True)
+            if signal_id is not None
+        }
 
         if not latest_signal_id_by_symbol:
             return items

@@ -29,6 +29,20 @@ class NewsItemRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def list_recent(
+        self, symbols: list[str] | None, since_hours: int, limit: int
+    ) -> list[NewsItem]:
+        """Return up to `limit` persisted items published within the last `since_hours`,
+        newest first, optionally restricted to items linked to any of `symbols`.
+
+        The DB-first read behind `GET /api/v1/news` (taws#71): serving the feed from what
+        was already persisted keeps the endpoint off the synchronous upstream fan-out, so
+        a cold provider cache can no longer blow past the client's request timeout. The
+        upstream refresh that keeps this store warm runs out-of-band (`NewsFeedRefresher`).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def list_pending(self, limit: int) -> list[NewsItem]:
         """Return up to `limit` persisted items with `analysis_status = pending`,
         most-recent first."""

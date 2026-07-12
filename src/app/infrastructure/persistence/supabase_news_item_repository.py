@@ -1,3 +1,7 @@
+import asyncio
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 from app.domain.market.entities import AnalysisStatus, NewsItem
 from app.domain.market.ports import NewsItemRepository
 from app.infrastructure.persistence.news_item_row_mapper import (
@@ -39,21 +43,44 @@ class SupabaseNewsItemRepository(NewsItemRepository):
             .execute()
         )
 
-        for item in items:
-            if item.image_url:
-                await (
-                    client.table(_NEWS_ITEMS_TABLE)
-                    .update({"image_url": item.image_url})
-                    .eq("url", item.url)
-                    .is_("image_url", "null")
-                    .execute()
-                )
+        # One backfill round-trip per image-bearing item, fanned out concurrently: run
+        # sequentially this was an N-round-trip await chain on the `GET /api/v1/news`
+        # request path, and with a 50-item page it dominated the endpoint's latency
+        # (taws#71). Order between them is irrelevant — each targets a distinct url.
+        await asyncio.gather(
+            *(self._backfill_image_url(client, item) for item in items if item.image_url)
+        )
 
         urls = [item.url for item in items]
         response = await client.table(_NEWS_ITEMS_TABLE).select("*").in_("url", urls).execute()
         persisted = [news_item_from_row(row) for row in response.data]
         by_url = {news_item.url: news_item for news_item in persisted}
         return [by_url[item.url] for item in items if item.url in by_url]
+
+    async def _backfill_image_url(self, client: Any, item: NewsItem) -> None:
+        """Fill in `image_url` on an already-persisted row that has none — a later fetch of
+        the same article (via a provider that does carry images) enriches the stored row,
+        while never overwriting an image already on it (`.is_("image_url", "null")`)."""
+        await (
+            client.table(_NEWS_ITEMS_TABLE)
+            .update({"image_url": item.image_url})
+            .eq("url", item.url)
+            .is_("image_url", "null")
+            .execute()
+        )
+
+    async def list_recent(
+        self, symbols: list[str] | None, since_hours: int, limit: int
+    ) -> list[NewsItem]:
+        client = await self._clients.get()
+        cutoff = datetime.now(UTC) - timedelta(hours=since_hours)
+        query = client.table(_NEWS_ITEMS_TABLE).select("*").gte("published_at", cutoff.isoformat())
+        if symbols:
+            # `related_symbols` is a `text[]` (migration 0009) — `overlaps` is the array
+            # `&&` operator, i.e. "linked to at least one of these instruments".
+            query = query.overlaps("related_symbols", symbols)
+        response = await query.order("published_at", desc=True).limit(limit).execute()
+        return [news_item_from_row(row) for row in response.data]
 
     async def get_by_id(self, news_id: str) -> NewsItem | None:
         client = await self._clients.get()
