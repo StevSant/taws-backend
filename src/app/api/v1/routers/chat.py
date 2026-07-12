@@ -45,6 +45,7 @@ from app.domain.agents.ports import (
     STTProvider,
     TTSProvider,
 )
+from app.infrastructure.realtime import REALTIME_INSTRUCTIONS
 from app.infrastructure.realtime.tools import (
     ToolNotFoundError,
     build_realtime_tool_schemas,
@@ -57,20 +58,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 _DEFAULT_THREAD_ID = "default"
-
-_REALTIME_INSTRUCTIONS = (
-    "You are TAWS Voice, a spoken market-intelligence assistant. Answer briefly and "
-    "conversationally. Use the provided tools to ground every market claim in real "
-    "data — call get_market_data for prices, get_news for headlines, list_signals for "
-    "existing Analyst signals, and generate_signal to produce a fresh one (acknowledge "
-    "verbally before that slower call). For broad news-impact questions, generate fresh "
-    "signals for up to three related symbols returned by get_news. When the user asks about "
-    "their own data — 'my watchlist', 'my notes', or 'my scenarios' — call get_watchlist for "
-    "the instruments they track and get_notes for their saved notes; these are always scoped "
-    "to the signed-in user. Omit unsupported impact "
-    "or confidence fields instead of saying they are unspecified. Never give personalized "
-    "financial advice; this is research and information only."
-)
 
 
 def _to_sse_frame(event: AgentStreamEvent) -> str:
@@ -200,7 +187,7 @@ async def create_realtime_session(
         user_id=user.id,
         model=settings.openai_realtime_model,
         voice=settings.openai_realtime_voice,
-        instructions=_REALTIME_INSTRUCTIONS,
+        instructions=REALTIME_INSTRUCTIONS,
         tools=tools,
         expires_in_seconds=settings.openai_realtime_ttl_seconds,
     )

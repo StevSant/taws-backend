@@ -68,6 +68,7 @@ from app.api.v1.dependencies.require_current_user import require_current_user
 from app.api.v1.dependencies.require_role import require_compliance, require_role
 from app.api.v1.dependencies.resolve_user_role import resolve_user_role
 from app.api.v1.dependencies.supabase_jwks_url import supabase_jwks_url
+from app.api.v1.dependencies.verify_realtime_ws_token import verify_realtime_ws_token
 
 __all__ = [
     "DEV_FALLBACK_USER",
@@ -125,4 +126,5 @@ __all__ = [
     "require_role",
     "resolve_user_role",
     "supabase_jwks_url",
+    "verify_realtime_ws_token",
 ]
