@@ -31,6 +31,17 @@ class TelegramLinkRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def list_all(self) -> list[TelegramLink]:
+        """Return every link in the store — the BROADCAST direction.
+
+        Exists for broadcast delivery: fan a single message out to every linked chat,
+        rather than resolving one specific recipient (`get_by_user_id` / `get_by_chat_id`).
+        Consumed by `/event-intelligence/demo` and `/telegram/send-test-news`, which push
+        one enriched market event over the shared bot to everyone who has linked.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def link(self, link: TelegramLink) -> TelegramLink:
         """Persist `link`, replacing any existing link for the same `user_id` or the
         same `chat_id` (unlink-then-relink semantics — see `TelegramLink`'s docstring

@@ -82,11 +82,9 @@ from app.domain.scenario.ports import ScenarioRepository
 from app.domain.sentiment.ports import FearGreedProvider, SentimentRepository
 from app.domain.signals.ports import SignalRepository
 from app.domain.telegram.ports import (
-    BotRegistrationPort,
     TelegramLinkRepository,
     TelegramLinkTokenRepository,
     TelegramMessenger,
-    UserBotRepository,
 )
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
@@ -152,7 +150,7 @@ from app.infrastructure.news import (
 )
 from app.infrastructure.notification import (
     LoggingEmailSender,
-    MultiBotNotificationChannel,
+    LoggingNotificationChannel,
     TelegramNotificationChannel,
 )
 from app.infrastructure.persistence import (
@@ -167,7 +165,6 @@ from app.infrastructure.persistence import (
     SupabaseSignalRepository,
     SupabaseTelegramLinkRepository,
     SupabaseTelegramLinkTokenRepository,
-    SupabaseUserBotRepository,
     SupabaseUserProfileRepository,
     SupabaseWatchlistRepository,
 )
@@ -186,7 +183,6 @@ from app.infrastructure.telegram import (
     SignalCommandHandler,
     SimulateCommandHandler,
     TelegramBotClient,
-    TelegramBotRegistration,
 )
 from app.infrastructure.tts import OpenAITTSProvider
 from app.infrastructure.universe import SupabaseInstrumentUniverse
@@ -254,8 +250,6 @@ class Container:
         self._telegram_link_token_repository: TelegramLinkTokenRepository | None = None
         self._telegram_messenger: TelegramMessenger | None = None
         self._link_telegram_account_use_case: LinkTelegramAccount | None = None
-        self._user_bot_repository: UserBotRepository | None = None
-        self._bot_registration: BotRegistrationPort | None = None
         self._scenario_repository: ScenarioRepository | None = None
         self._scenario_simulation_runner: ScenarioSimulationRunner | None = None
         self._briefing_command_handler: BriefingCommandHandler | None = None
@@ -546,11 +540,14 @@ class Container:
     def get_notification_channel(self) -> NotificationChannel:
         """Return the cached Watchdog alert delivery channel.
 
-        `TelegramNotificationChannel` when `TELEGRAM_BOT_TOKEN` is configured (issue #14);
-        `MultiBotNotificationChannel` (fans out to all registered user bots) otherwise —
-        same "graceful degradation when unconfigured" pattern as `get_agent_memory`'s Redis
-        fallback and `get_news_provider`'s per-key-gated fan-out. Nothing in
-        `application/` or `api/` needs to know which adapter is behind the port.
+        `TelegramNotificationChannel` when `TELEGRAM_BOT_TOKEN` is configured (issue #14) —
+        it delivers over the ONE shared bot, resolving each recipient's chat through
+        `telegram_links`. With no token there is no bot to deliver through at all, so the
+        fallback is `LoggingNotificationChannel`, which composes the notification and logs
+        it instead of sending: Watchdog stays demo-able end to end without a Telegram
+        integration. Same "graceful degradation when unconfigured" pattern as
+        `get_agent_memory`'s Redis fallback. Nothing in `application/` or `api/` needs to
+        know which adapter is behind the port.
         """
         if self._notification_channel is None:
             messenger = self.get_telegram_messenger()
@@ -561,11 +558,7 @@ class Container:
                     telegram_link_repository=self.get_telegram_link_repository(),
                 )
             else:
-                self._notification_channel = MultiBotNotificationChannel(
-                    user_bot_repository=self.get_user_bot_repository(),
-                    watchlist_repository=self.get_watchlist_repository(),
-                    telegram_link_repository=self.get_telegram_link_repository(),
-                )
+                self._notification_channel = LoggingNotificationChannel()
         return self._notification_channel
 
     def get_alerted_signal_tracker(self) -> AlertedSignalTracker:
@@ -646,43 +639,20 @@ class Container:
             )
         return self._link_telegram_account_use_case
 
-    def get_user_bot_repository(self) -> UserBotRepository:
-        """Return the cached `UserBotRepository` backed by Supabase."""
-        if self._user_bot_repository is None:
-            self._user_bot_repository = SupabaseUserBotRepository(
-                supabase_url=self._settings.supabase_url,
-                supabase_key=self._settings.supabase_key,
-            )
-        return self._user_bot_repository
-
-    def get_bot_registration(self) -> BotRegistrationPort:
-        """Return the cached `BotRegistrationPort` for registering user-owned bots."""
-        if self._bot_registration is None:
-            self._bot_registration = TelegramBotRegistration(
-                repository=self.get_user_bot_repository(),
-                webhook_base_url=self._settings.telegram_webhook_url or "",
-                webhook_secret=self._settings.telegram_webhook_secret,
-            )
-        return self._bot_registration
-
     # -- Telegram inbound-command handlers -------------------------------------------------
     #
-    # Each handler comes in two flavours, and the split is load-bearing:
+    # There is exactly ONE bot now (the shared `.env` bot users link to via
+    # `/telegram/link-token` -> `https://t.me/<bot>?start=<token>`), so there is exactly one
+    # messenger. The per-user BotFather registration flow -- and the `/telegram/webhook/{bot_id}`
+    # route that needed a handler bound to each registered bot's own token -- is gone.
     #
-    # `build_*_command_handler(messenger)` -- NOT cached. Builds a handler that replies
-    # through the messenger you pass. A user-registered bot's webhook
-    # (`/telegram/webhook/{bot_id}`) MUST use these, with a `TelegramBotClient` for that
-    # bot's own token: a handler answers via `messenger.send_text(...)`, so the messenger it
-    # holds IS the identity the user sees the reply come from. Building them is cheap --
-    # every expensive collaborator they take (repositories, agent runner, simulation runner)
-    # is still a cached singleton.
+    # `build_*_command_handler(messenger)` -- NOT cached. Builds a handler replying through the
+    # messenger you pass; a handler answers via `messenger.send_text(...)`, so the messenger it
+    # holds IS the identity the reply comes from. Kept as the construction seam the cached
+    # accessors below are built on (and the injection point tests use).
     #
-    # `get_*_command_handler()` -- cached, bound to the main `.env` bot's messenger. ONLY the
-    # main `/telegram/webhook` route may use these. Handing them to a user-registered bot's
-    # webhook (which is what this `Container` used to do) made every registered bot reply
-    # with the main bot's token; because a private-chat `chat_id` is the user's account ID
-    # and is identical across bots, those replies were delivered -- into the *other* bot's
-    # conversation.
+    # `get_*_command_handler()` -- cached, bound to the shared bot's messenger. This is what the
+    # `/telegram/webhook` route uses.
 
     def build_briefing_command_handler(
         self, messenger: TelegramMessenger
