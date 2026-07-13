@@ -45,6 +45,7 @@ from app.domain.watchlist.errors import (
     InvalidWatchlistIdentifierError,
 )
 from app.infrastructure.scheduling import build_watchdog_scheduler
+from app.infrastructure.telegram import register_telegram_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -112,9 +113,25 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler = build_watchdog_scheduler(container, settings)
     scheduler.start()
 
-    # User-bot webhooks are managed individually via the register-bot endpoint.
-    # The legacy single-bot webhook registration is no longer applied at startup
-    # because it would overwrite per-user bot webhooks on every restart.
+    # Point Telegram at THIS deployment's shared webhook. Load-bearing, not a nicety:
+    # without this `setWebhook` call Telegram has nowhere to POST updates, so `/start
+    # <token>` never reaches `LinkTelegramAccount` and the `telegram_links` table stays
+    # permanently empty — and every command handler (/briefing, /signal, /simular,
+    # /impact, chat) plus `TelegramNotificationChannel` resolves its recipient THROUGH
+    # that table, so the entire Telegram surface silently does nothing. Best-effort by
+    # design: `register_telegram_webhook` swallows its own failures so a sandbox without
+    # a reachable HTTPS URL still boots.
+    if settings.telegram_bot_token and settings.telegram_webhook_url:
+        await register_telegram_webhook(
+            bot_token=settings.telegram_bot_token,
+            webhook_url=settings.telegram_webhook_url,
+            secret_token=settings.telegram_webhook_secret,
+        )
+    else:
+        logger.warning(
+            "TELEGRAM_BOT_TOKEN and/or TELEGRAM_WEBHOOK_URL are not set; the Telegram "
+            "webhook was not registered. Account linking and alert delivery are disabled."
+        )
 
     try:
         yield

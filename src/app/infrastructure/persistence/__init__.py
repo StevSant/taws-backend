@@ -29,7 +29,6 @@ from app.infrastructure.persistence.supabase_telegram_link_repository import (
 from app.infrastructure.persistence.supabase_telegram_link_token_repository import (
     SupabaseTelegramLinkTokenRepository,
 )
-from app.infrastructure.persistence.supabase_user_bot_repository import SupabaseUserBotRepository
 from app.infrastructure.persistence.supabase_user_profile_repository import (
     SupabaseUserProfileRepository,
 )
@@ -50,7 +49,6 @@ __all__ = [
     "SupabaseSignalRepository",
     "SupabaseTelegramLinkRepository",
     "SupabaseTelegramLinkTokenRepository",
-    "SupabaseUserBotRepository",
     "SupabaseUserProfileRepository",
     "SupabaseWatchlistRepository",
     "sentiment_filter_to_range",

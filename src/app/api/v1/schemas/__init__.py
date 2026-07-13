@@ -62,8 +62,6 @@ from app.api.v1.schemas.realtime_session_response import RealtimeSessionResponse
 from app.api.v1.schemas.realtime_tool_request import RealtimeToolRequest
 from app.api.v1.schemas.realtime_tool_response import RealtimeToolResponse
 from app.api.v1.schemas.refresh_analysis_response import RefreshAnalysisResponse
-from app.api.v1.schemas.register_bot_request import RegisterBotRequest
-from app.api.v1.schemas.register_bot_response import RegisterBotResponse
 from app.api.v1.schemas.register_instrument_request import RegisterInstrumentRequest
 from app.api.v1.schemas.register_instrument_response import RegisterInstrumentResponse
 from app.api.v1.schemas.review_decision_request import ReviewDecisionRequest
@@ -99,9 +97,6 @@ __all__ = [
     "AlertResponse",
     "AnalyzePendingNewsResponse",
     "BriefingExportEmailRequest",
-    "RegisterBotRequest",
-    "RegisterBotResponse",
-    "SendTestNewsResponse",
     "BriefingExportEmailResponse",
     "BriefingInstrumentSectionResponse",
     "BriefingResponse",
@@ -167,6 +162,7 @@ __all__ = [
     "ScenarioPresetResponse",
     "ScenarioResultResponse",
     "ScenarioSpecResponse",
+    "SendTestNewsResponse",
     "SentimentReadingResponse",
     "SignalEvidenceResponse",
     "SignalResponse",
