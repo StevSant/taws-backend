@@ -109,6 +109,7 @@ __all__ = [
     "get_briefing_repository",
     "get_conversation_repository",
     "get_email_sender",
+    "get_event_news_provider",
     "get_embedding_provider",
     "get_event_news_provider",
     "get_fundamentals_provider",
