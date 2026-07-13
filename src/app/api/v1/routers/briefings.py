@@ -9,12 +9,14 @@ from app.api.v1.dependencies import (
     get_watchlist_repository,
     require_current_user,
 )
+from app.api.v1.mappers import resolve_linked_signals
 from app.api.v1.schemas import BriefingResponse, CurrentUser, GenerateBriefingRequest
 from app.application.briefing import EmptyWatchlistError
 from app.application.briefing.use_cases import GenerateBriefing
 from app.application.compliance import ComplianceViolationError
 from app.core.config import Settings, get_settings
 from app.domain.agents.ports import LLMProvider
+from app.domain.briefing.entities import Briefing
 from app.domain.briefing.ports import BriefingRepository
 from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.ports import WatchlistRepository
@@ -35,6 +37,21 @@ async def _require_owned_watchlist(
     watchlist = await watchlist_repository.get(watchlist_id)
     if watchlist is None or watchlist.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found")
+
+
+async def _to_response(
+    briefing: Briefing, signal_repository: SignalRepository
+) -> BriefingResponse:
+    """Validate a domain `Briefing` and enrich its `linked_signal_ids` into `linked_signals`.
+
+    Resolution runs here in the API layer (via the injected port), keeping the domain
+    `Briefing` — which carries only the raw ids — unaware of the read-time enrichment.
+    """
+    response = BriefingResponse.model_validate(briefing)
+    response.linked_signals = await resolve_linked_signals(
+        briefing.linked_signal_ids, signal_repository
+    )
+    return response
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -70,7 +87,7 @@ async def generate_briefing(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
-    return BriefingResponse.model_validate(briefing)
+    return await _to_response(briefing, signal_repository)
 
 
 @router.get("")
@@ -78,9 +95,10 @@ async def list_briefings(
     watchlist_id: str,
     user: Annotated[CurrentUser, Depends(require_current_user)],
     watchlist_repository: Annotated[WatchlistRepository, Depends(get_watchlist_repository)],
+    signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
     briefing_repository: Annotated[BriefingRepository, Depends(get_briefing_repository)],
 ) -> list[BriefingResponse]:
     """List every briefing generated for a watchlist owned by the authenticated user."""
     await _require_owned_watchlist(watchlist_id, user, watchlist_repository)
     briefings = await briefing_repository.list_for_watchlist(watchlist_id)
-    return [BriefingResponse.model_validate(briefing) for briefing in briefings]
+    return [await _to_response(briefing, signal_repository) for briefing in briefings]
