@@ -11,7 +11,9 @@ scenario.
 from app.application.instruments.errors import SymbolCollisionError
 from app.domain.market.entities import AssetClass, Instrument
 
-_EXISTING_STOCK = Instrument(symbol="COIN", name="Coinbase Global Inc.", asset_class=AssetClass.STOCK, currency="USD")
+_EXISTING_STOCK = Instrument(
+    symbol="COIN", name="Coinbase Global Inc.", asset_class=AssetClass.STOCK, currency="USD"
+)
 
 
 def test_symbol_collision_error_carries_symbol_and_existing_instrument() -> None:

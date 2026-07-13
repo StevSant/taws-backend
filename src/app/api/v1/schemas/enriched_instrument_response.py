@@ -11,6 +11,10 @@ class EnrichedInstrumentResponse(BaseModel):
     Every market-derived field is nullable and `sparkline` may be empty when the underlying
     price series is too thin — the frontend renders a muted/"sin datos" state rather than a
     crash. `sparkline` is a downsampled list of closing prices (oldest -> newest).
+
+    `market_cap`, `volume_24h`, `change_7d_pct` (instrument-enrichment spec) are additive
+    CoinGecko fields — `null` when CoinGecko has no mapping for the instrument or is
+    unavailable, never omitted from the payload.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -25,3 +29,6 @@ class EnrichedInstrumentResponse(BaseModel):
     volatility_regime: VolatilityRegime | None
     sparkline: list[float]
     latest_signal: SignalResponse | None
+    market_cap: float | None
+    volume_24h: float | None
+    change_7d_pct: float | None

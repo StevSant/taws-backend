@@ -56,6 +56,7 @@ from app.domain.market.ports import (
     CoinGeckoSearchProvider,
     FundamentalsProvider,
     InstrumentCatalogRepository,
+    InstrumentMetadataProvider,
     InstrumentUniverse,
     MacroDataProvider,
     MarketDataProvider,
@@ -112,6 +113,7 @@ from app.infrastructure.macro import (
 )
 from app.infrastructure.marketdata import (
     CoinGeckoCoinSearchProvider,
+    CoinGeckoInstrumentMetadataProvider,
     CoinGeckoMarketDataProvider,
     FixtureMarketDataProvider,
     RoutingMarketDataProvider,
@@ -202,6 +204,7 @@ class Container:
         self._coingecko_search_provider: CoinGeckoSearchProvider | None = None
         self._search_coins_use_case: SearchCoins | None = None
         self._register_instrument_use_case: RegisterInstrument | None = None
+        self._instrument_metadata_provider: InstrumentMetadataProvider | None = None
         self._market_data_provider: MarketDataProvider | None = None
         self._macro_data_provider: MacroDataProvider | None = None
         self._fundamentals_provider: FundamentalsProvider | None = None
@@ -847,6 +850,28 @@ class Container:
                 fixture_provider=fixture_provider,
             )
         return self._market_data_provider
+
+    def get_instrument_metadata_provider(self) -> InstrumentMetadataProvider:
+        """Return the cached CoinGecko `/coins/markets` batch metadata adapter.
+
+        Backs `GET /instruments/enriched`'s additive `market_cap`/`volume_24h`/
+        `change_7d_pct` fields (instrument-enrichment spec). Resolves symbol ->
+        CoinGecko id from the prebuilt instrument universe's LIVE
+        `coingecko_id_overrides()` dict — the SAME source
+        `get_market_data_provider` uses for its own CoinGecko id resolution — so a
+        coin registered via `POST /instruments` after this provider was first
+        built still resolves without a container rebuild.
+        """
+        if self._instrument_metadata_provider is None:
+            self.get_instrument_universe()  # raises if the universe wasn't built yet
+            assert self._instrument_universe is not None
+            self._instrument_metadata_provider = CoinGeckoInstrumentMetadataProvider(
+                base_url=self._settings.coingecko_base_url,
+                coingecko_id_overrides=self._instrument_universe.coingecko_id_overrides(),
+                api_key=self._settings.coingecko_api_key,
+                cooldown_seconds=self._settings.coingecko_cooldown_seconds,
+            )
+        return self._instrument_metadata_provider
 
     def get_chart_config(self) -> ChartConfig:
         """Return the cached ChartConfig built from Settings (single source for chart limits)."""
