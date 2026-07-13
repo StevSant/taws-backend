@@ -2,19 +2,23 @@
 
 Verifies the additive `candles` field on the market-stats response: exact keys
 (t,o,h,l,c,v), oldest -> newest order, and an empty list (never null) when the
-instrument has no price series. Uses `FixtureMarketDataProvider` for determinism.
+instrument has no price series.
+
+The deterministic candle generator lives HERE, in the test, on purpose. It used to be
+`FixtureMarketDataProvider` under `src/` — which the DI container also wired in as a
+production fallback, so synthetic prices reached real users (BTC was charted at $333.6).
+Synthetic data is a testing tool; it does not belong in shipped code.
 """
 
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.api.v1.dependencies import get_instrument_universe, get_market_data_provider
-from app.domain.market.entities import AssetClass, Instrument, PriceSeries
+from app.domain.market.entities import AssetClass, Instrument, PriceCandle, PriceSeries
 from app.domain.market.ports import InstrumentUniverse, MarketDataProvider
-from app.infrastructure.marketdata import FixtureMarketDataProvider
 from app.main import create_app
 
 _KNOWN_SYMBOL = "AAPL"
@@ -50,11 +54,38 @@ class _EmptyMarketDataProvider(MarketDataProvider):
         return None
 
 
+class _StubMarketDataProvider(MarketDataProvider):
+    """Emits `days` deterministic candles, oldest -> newest, so the shape assertions bite.
+
+    Test-only. The values are arbitrary and make no claim to resemble a real market — the
+    point of these tests is the response *shape*, not the numbers.
+    """
+
+    async def get_price_series(self, instrument: Instrument, days: int = 30) -> PriceSeries:
+        today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        candles = [
+            PriceCandle(
+                timestamp=today - timedelta(days=offset),
+                open=100.0 + offset,
+                high=101.0 + offset,
+                low=99.0 + offset,
+                close=100.5 + offset,
+                volume=1_000_000.0,
+            )
+            for offset in reversed(range(days))
+        ]
+        return PriceSeries(symbol=instrument.symbol, candles=candles)
+
+    async def get_last_price(self, instrument: Instrument) -> float | None:
+        series = await self.get_price_series(instrument, days=1)
+        return series.candles[-1].close
+
+
 @pytest.fixture
 def client() -> Iterator[TestClient]:
     app = create_app()
     app.dependency_overrides[get_instrument_universe] = lambda: _StubInstrumentUniverse()
-    app.dependency_overrides[get_market_data_provider] = FixtureMarketDataProvider
+    app.dependency_overrides[get_market_data_provider] = _StubMarketDataProvider
     test_client = TestClient(app)
     yield test_client
     app.dependency_overrides.clear()

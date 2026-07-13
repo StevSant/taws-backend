@@ -8,7 +8,7 @@ from app.infrastructure.realtime.ws.build_realtime_session_update import (
 from app.infrastructure.realtime.ws.openai_events import OPENAI_SESSION_CREATED
 
 
-async def initialize_openai_session(openai: Any, settings: Settings) -> None:
+async def initialize_openai_session(openai: Any, settings: Settings, locale: str) -> None:
     """Wait for OpenAI's `session.created`, then send the server-authored `session.update`.
 
     The Realtime API emits `session.created` once the socket is ready; the proxy must not
@@ -17,11 +17,14 @@ async def initialize_openai_session(openai: Any, settings: Settings) -> None:
     (the relay then takes over the socket). If the stream ends before `session.created`
     (connection dropped during handshake), sends nothing — the relay's cleanup closes the
     sockets.
+
+    `locale` is the caller's resolved locale; it pins the language the voice agent answers in
+    (see `build_realtime_session_update`).
     """
     async for raw in openai:
         event = _loads(raw)
         if event is not None and event.get("type") == OPENAI_SESSION_CREATED:
-            await openai.send(json.dumps(build_realtime_session_update(settings)))
+            await openai.send(json.dumps(build_realtime_session_update(settings, locale)))
             return
 
 

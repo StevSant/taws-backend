@@ -49,6 +49,38 @@ class Settings(BaseSettings):
     openai_model_reasoning: str | None = None
     openai_embedding_model: str = "text-embedding-3-small"
 
+    # --- Agent-graph chat model tuning (latency/cost quick wins). Applied by
+    # `infrastructure/llm/chat_model_factory.build_chat_model` to every ChatOpenAI it builds
+    # (router + specialists); the no-API-key fallback model ignores them. ---
+    # Per-request timeout (seconds) before a hung OpenAI call is abandoned, so one stalled
+    # request can't pin a chat turn open indefinitely.
+    openai_request_timeout_seconds: float = 60.0
+    # Automatic retries ChatOpenAI performs on a transient/5xx/timeout failure before giving up.
+    openai_max_retries: int = 2
+    # Cap on tokens generated per chat-model completion — bounds the worst-case latency and cost
+    # of a single reply. Raise if specialists start getting truncated mid-answer.
+    chat_max_output_tokens: int = 2048
+    # Temperature for the ROUTER's structured route classification only (specialists keep the
+    # model default). 0.0 makes the 1-of-6 route pick as deterministic as the provider allows.
+    router_temperature: float = 0.0
+    # How many trailing messages of the thread the router classifies. The router only needs the
+    # latest turn to pick a route; 4 messages (~ the last 2 exchanges) is enough for a follow-up
+    # like "and Tesla?" to inherit context without re-reading the whole accumulated history.
+    router_history_max_messages: int = 4
+    # Bounds the history splat sent to the specialist/contributor/synthesizer calls; 12 ~= the
+    # last 6 exchanges. Trims only what is SENT to the model on long threads (the checkpointed
+    # state is untouched), so per-call prompt growth stays bounded. The router has its own,
+    # tighter `router_history_max_messages` above — classification needs less context than a reply.
+    chat_history_max_messages: int = 12
+    # Total attempts the post-stream background persistence of a chat turn makes before the
+    # turn is dropped with a WARNING. The write is fire-and-forget (the client already has the
+    # reply), so a failure never reaches the user — but an unpersisted turn leaves a "ghost"
+    # conversation the frontend can never rehydrate. 3 spaced attempts outlive the brief
+    # unavailability window an App Runner deploy opens. 1 = the historical no-retry behavior.
+    chat_persist_retry_max_attempts: int = 3
+    # Base seconds between those attempts (linear backoff: attempt * base).
+    chat_persist_retry_backoff_seconds: float = 2.0
+
     # --- OpenAI Realtime voice agent (ephemeral-session mint + server-side tool dispatch) ---
     # Master switch; when False the DI container binds no realtime session provider and the
     # `/chat/realtime/*` endpoints return 503 (same "unconfigured -> degrade" pattern as the
@@ -179,18 +211,51 @@ class Settings(BaseSettings):
     # instruments are polled every ~60s; a cache this short still keeps prices fresh
     # enough for the product's polling cadence while cutting redundant calls.
     coingecko_cache_ttl_seconds: float = 60.0
-    # Optional free "Demo" API key (https://www.coingecko.com/en/api/pricing -> Demo plan):
-    # sent as the `x-cg-demo-api-key` header to lift the keyless public rate limits
-    # (~30 calls/min, 10k/month). Leave empty to use the keyless public API.
+    # Free "Demo" API key(s) (https://www.coingecko.com/en/api/pricing -> Demo plan), sent as
+    # the `x-cg-demo-api-key` header to lift the keyless public rate limits (~30 calls/min,
+    # 10k/month). Accepts a COMMA-SEPARATED LIST for failover: `CG-aaa,CG-bbb`. Read through
+    # the `coingecko_api_keys` property, never directly. Empty -> the keyless public API.
+    #
+    # The quota is metered per key, and CoinGecko issues one Demo key per account, so a second
+    # key means a second account. All three CoinGecko adapters (prices, metadata, search) spend
+    # from the same key, so a single key's ~30 calls/min is easy to exhaust from one dashboard.
     coingecko_api_key: str = ""
-    # Circuit-breaker backoff: once a live CoinGecko call fails (e.g. 429), stop calling it
-    # for this many seconds and serve fixtures instead, so one rate-limit doesn't turn into
-    # a per-request storm (the in-process cache only ever stores successful responses).
+    # How long a key that got 429'd is benched before the ring tries it again. The Demo limit is
+    # PER MINUTE, so ~60s is exactly how long a throttled key needs to recover — benching it for
+    # the full `coingecko_cooldown_seconds` below would waste 4 minutes of good quota.
+    coingecko_key_cooldown_seconds: float = 60.0
+    # Circuit-breaker backoff: once CoinGecko itself is DOWN (5xx / unreachable), stop calling it
+    # for this many seconds, so one outage doesn't turn into a per-request storm (the in-process
+    # cache only ever stores successful responses). While backing off, crypto prices are reported
+    # as unavailable — never faked.
+    #
+    # Rate limits (429) do NOT arm this breaker: they are handled per-key by `CoinGeckoKeyRing`
+    # (bench the throttled key, retry the same request on the next one). Arming a provider-wide
+    # 5-minute breaker on a 429 is what used to blank out EVERY crypto instrument the moment one
+    # key ran out of quota.
     coingecko_cooldown_seconds: float = 300.0
+    # Longest history CoinGecko's public/Demo tiers will serve: requests beyond this fail with
+    # `error_code: 10012` ("request exceeds the allowed time range"). Requests are clamped to
+    # it rather than sent and failed — the `max` chart timeframe asks for 1825 days, and that
+    # 400 used to trip the circuit breaker and poison EVERY crypto price for the whole cooldown
+    # window with fixture data. Raise this if you move to a paid plan with deeper history.
+    coingecko_max_history_days: int = 365
+
+    # --- yfinance (stocks/FX/commodities/credit ETFs, behind the MarketDataProvider port);
+    # no key required ---
+    # Short-TTL in-process cache in front of get_price_series/get_last_price (mirrors the
+    # CoinGecko cache above): the radar polls the same handful of instruments from every open
+    # browser every ~60s, and each read was a live Yahoo round-trip. Keyed by (ticker, days) for
+    # series and by ticker for last price; only non-empty results are cached, so a transient
+    # blank never pins an instrument as unavailable for the whole window. A little longer than
+    # the CoinGecko default since equities/FX quotes move less second-to-second than crypto.
+    yfinance_cache_ttl_seconds: float = 120.0
 
     # --- FRED (macro: rates, CPI; behind the MacroDataProvider port) ---
-    # Free key at https://fred.stlouisfed.org/docs/api/api_key.html. Leave empty to serve
-    # fixture rates/CPI instead (see RoutingMacroDataProvider/FixtureMacroDataProvider).
+    # Free key at https://fred.stlouisfed.org/docs/api/api_key.html. REQUIRED for rates/CPI:
+    # with no key those lookups raise `MacroDataUnavailableError` and the macro specialist
+    # says so. They used to fall back to hardcoded fixture values, which is how a misconfigured
+    # deployment could keep answering with confident invented rates and CPI prints forever.
     fred_api_key: str | None = None
     fred_base_url: str = "https://api.stlouisfed.org/fred"
     fred_rates_series_id: str = "FEDFUNDS"
@@ -202,6 +267,12 @@ class Settings(BaseSettings):
     fred_oil_series_id: str = "DCOILWTICO"
     fred_treasury_10y_series_id: str = "DGS10"
     fred_timeout_seconds: float = 10.0
+    # Short-TTL in-process cache in front of get_rates/get_cpi/get_volatility_regime (mirrors
+    # the CoinGecko cache): these macro series move slowly (rates/CPI monthly, VIX daily) but
+    # every macro-aware pipeline re-reads them per request. Longer default than the price caches
+    # since the underlying data barely changes within half an hour; only successful reads are
+    # cached, so a transient FRED/Yahoo failure still surfaces as MacroDataUnavailableError.
+    fred_cache_ttl_seconds: float = 1800.0
     # Default/max number of observations returned by GET /api/v1/macro/series/{indicator}.
     macro_series_default_days: int = 90
     macro_series_max_days: int = 365
@@ -212,23 +283,22 @@ class Settings(BaseSettings):
     vix_elevated_threshold: float = 20.0
     vix_high_threshold: float = 30.0
 
-    # --- Fixture macro fallback values (used when FRED_API_KEY is unset or a live call fails) ---
-    fixture_macro_rate: float = 5.25
-    fixture_macro_cpi: float = 3.2
-    fixture_macro_vix: float = 18.5
-    fixture_macro_gold: float = 2350.0
-    fixture_macro_oil: float = 78.0
-    fixture_macro_treasury_10y: float = 4.25
+    # NOTE: the `fixture_macro_*` fallbacks (rate 5.25, CPI 3.2, VIX 18.5, gold 2350, oil 78,
+    # 10Y 4.25) and the `fixture_fear_greed_*` pair used to live here. They are gone on purpose.
+    # Every one of those was a plausible-looking number — nobody double-takes at "CPI 3.2%" the
+    # way they would at "BTC $333" — so when a live call failed they were served, believed, and
+    # narrated to users as measured fact. Do not reintroduce defaults of this shape: a config
+    # default for a *market observation* is a fabrication with a settings key.
 
     # --- alternative.me (Crypto Fear & Greed Index; behind the FearGreedProvider port);
     # no key required ---
     alternative_me_base_url: str = "https://api.alternative.me"
     alternative_me_timeout_seconds: float = 10.0
-
-    # --- Fixture Fear & Greed fallback values (used when alternative.me is unreachable or
-    # returns an unparseable payload) ---
-    fixture_fear_greed_value: int = 50
-    fixture_fear_greed_classification: str = "Neutral"
+    # Short-TTL in-process cache in front of get_fear_greed_index (mirrors the CoinGecko cache):
+    # the index only updates ~once a day, yet every sentiment read re-fetched it live. Longest
+    # default of the three caches for that reason; only a successful read is cached, so an outage
+    # still surfaces as FearGreedUnavailableError rather than a stale value.
+    fear_greed_cache_ttl_seconds: float = 3600.0
 
     # --- Sentiment Analyst tone bucketing thresholds (tone_score -> SentimentLabel);
     # tone_score >= bullish -> bullish, tone_score <= bearish -> bearish, else neutral ---
@@ -357,6 +427,25 @@ class Settings(BaseSettings):
     # same APScheduler infra as the Watchdog jobs (`infrastructure/scheduling`).
     news_analysis_poll_interval_minutes: int = 15
 
+    # --- Per-article news sentiment (`ScoreNewsSentiment`) ---
+    # Fills `news_items.sentiment_score`, which had no producer other than Marketaux's own
+    # pass-through — every other adapter left it NULL, so the UI showed almost the whole corpus
+    # as "Sin clasificar". Distinct from the per-INSTRUMENT tone pipeline (`AnalyzeSentiment`,
+    # `sentiment_readings` table), which answers a different question and writes a different
+    # table. Master switch for the SCHEDULED tick only, same rationale as
+    # `news_analysis_enabled`: it is the job that spends LLM tokens unattended.
+    news_sentiment_enabled: bool = True
+    # Cadence (minutes) of the scoring tick. Also the backfill's rate: the pass takes unscored
+    # rows newest-first, so the NULL backlog drains at `batch_limit` per tick.
+    news_sentiment_poll_interval_minutes: int = 10
+    # Max articles pulled per tick. Bounds the unattended LLM spend, and — since the same pass
+    # backfills the existing NULL rows — decides how fast that archive drains.
+    news_sentiment_batch_limit: int = 60
+    # Articles scored per LLM call. Headlines are short and independent, so batching them keeps
+    # the backfill's cost proportional to the work rather than to the size of the archive. Too
+    # large and the model starts dropping entries from its response; ~15 is a safe ceiling.
+    news_sentiment_chunk_size: int = 15
+
     # --- News detail payload (issue #57: GET /api/v1/news/{id}, via `BuildNewsDetail`) ---
     # Caps how many of an article's `related_symbols` get a live price lookup, since each one
     # costs a `ComputeMarketStats` call (an upstream market-data fetch). An article tagged with
@@ -403,9 +492,12 @@ class Settings(BaseSettings):
     # Downsample cap: max points/bars shipped to the browser per series (perf guard).
     chart_max_points: int = 500
 
-    # --- Track-5 seed data paths (packaged with the app; override for custom fixtures) ---
+    # --- Track-5 seed data paths (packaged with the app) ---
+    # These seed the instrument UNIVERSE and the scenario PRESETS — configuration, i.e. which
+    # instruments exist and which scenarios are offered. There is deliberately no seed of
+    # market *observations* (prices, news, macro prints): a canned observation is a claim about
+    # the world that nobody measured. `news_fixture.json` lived here and is gone.
     universe_seed_path: Path = _MARKET_SEEDS_DIR / "universe.json"
-    news_fixture_seed_path: Path = _MARKET_SEEDS_DIR / "news_fixture.json"
     preset_scenarios_seed_path: Path = _MARKET_SEEDS_DIR / "preset_scenarios.json"
 
     # Upstash Redis URL. Leave unset to use the in-memory checkpointer fallback.
@@ -420,6 +512,12 @@ class Settings(BaseSettings):
     # Minimum Analyst-signal confidence for the Watchdog to consider a signal
     # notification-worthy (see `RunWatchdogScan._is_notification_worthy`).
     watchdog_min_confidence: float = 0.6
+    # How long the same instrument must stay quiet before its (unchanged) call may alert again.
+    # The novelty guard is keyed on `(watchlist, symbol)` and always lets a CHANGED call through
+    # immediately, so this only throttles an alert repeating the same direction. Without it, the
+    # analysis-refresh job minting a fresh signal row every few minutes re-alerted the same
+    # ticker on every scan and buried the user's chat with the bot.
+    watchdog_alert_cooldown_minutes: int = 360
     # UTC hour/minute the daily scheduled briefing run fires (issue #10 acceptance
     # criterion 4) — regenerates an Advisor briefing for every active watchlist.
     watchdog_daily_briefing_hour_utc: int = 13
@@ -444,6 +542,33 @@ class Settings(BaseSettings):
     # --- Gemini (Event Intelligence / Sentinel analyzer) ---
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.0-flash"
+
+    # --- Sentinel automatic news alerts (poll news -> Gemini -> important? -> Telegram) ---
+    # Master switch for the SCHEDULED scan. Off => nothing is broadcast automatically; the
+    # manual paths (`POST /event-intelligence/demo`, `POST /telegram/send-test-news`) still
+    # work. Like the other unattended-LLM jobs, this one spends Gemini tokens AND pushes
+    # notifications to every linked user without anyone asking, so an operator must be able to
+    # stop it without also losing the Watchdog's alerting.
+    sentinel_alerts_enabled: bool = True
+    # Minutes between scheduled Sentinel scans.
+    sentinel_poll_interval_minutes: int = 15
+    # How far back each scan looks for news. Should comfortably exceed the poll interval so a
+    # brief outage doesn't silently skip a window; overlap is free, since already-analyzed
+    # items are filtered by `ProcessedEventTracker` before any LLM call.
+    sentinel_news_since_hours: int = 6
+    # Articles pulled from the upstream providers per scan (before the already-seen filter).
+    sentinel_news_fetch_limit: int = 30
+    # Gemini's `importance` floor (0-1) an event must ALSO clear, on top of its own
+    # `shouldNotify` boolean, before anyone is notified. Two gates on purpose: the boolean is
+    # the model's judgment and can drift with a prompt or model change, and the blast radius
+    # here is a push notification to every linked user.
+    sentinel_importance_threshold: float = 0.7
+    # Hard cap on alerts sent per scan, applied AFTER sorting by importance. A chaotic morning
+    # can produce a dozen "important" headlines at once; without this the first genuinely busy
+    # day carpet-bombs everyone's phone and the bot gets muted. Anything dropped is logged.
+    sentinel_max_alerts_per_run: int = 3
+    # Max concurrent Gemini analysis calls inside one scan.
+    sentinel_max_concurrency: int = 3
 
     # --- Scenario synthesis resilience (issue #64) ---
     # Bounded retry around the Synthesis step's structured-output call. A transient
@@ -501,6 +626,17 @@ class Settings(BaseSettings):
     # Bounds concurrent generations inside one refresh tick, so a large watchlist union can't
     # fire unbounded concurrent LLM requests (same guard as `news_analysis_max_concurrency`).
     analysis_refresh_concurrency: int = 4
+    # Whether the refresh tick also covers the WHOLE curated instrument universe, not just the
+    # instruments somebody happens to have watchlisted. Off, the markets explorer is a
+    # graveyard: it lists every instrument but only ever shows a signal for the watchlisted
+    # few, so most rows render "Sin señal" forever no matter how much news breaks. The tick is
+    # freshness-gated (`analysis_ttl_*`), so widening the scope costs a handful of indexed
+    # SELECTs per already-fresh symbol, not an LLM run.
+    analysis_refresh_cover_universe: bool = True
+    # Hard ceiling on symbols refreshed per tick, so growing the universe can't silently grow
+    # the unattended LLM bill. Watchlisted instruments are always taken FIRST, so raising the
+    # universe's size can never starve an instrument a user actually pinned.
+    analysis_refresh_max_symbols: int = 40
 
     @property
     def reasoning_model(self) -> str:
@@ -511,6 +647,19 @@ class Settings(BaseSettings):
         place that fallback lives — no call site reads `openai_model_reasoning` directly.
         """
         return self.openai_model_reasoning or self.openai_model
+
+    @property
+    def coingecko_api_keys(self) -> list[str]:
+        """The CoinGecko Demo keys, in failover order (primary first). Empty -> keyless.
+
+        `COINGECKO_API_KEY` holds either one key or a comma-separated list, and this property
+        is the ONLY place that is parsed — no call site reads `coingecko_api_key` directly.
+        Overloading the existing var (rather than adding a second one) keeps a single key with
+        no comma behaving exactly as before, and means adding a fallback key in production is a
+        secret-VALUE change, with no Terraform/App Runner env plumbing to touch. A comma is not
+        a legal character in a CoinGecko key (`CG-` + alphanumeric), so the split is unambiguous.
+        """
+        return [key.strip() for key in self.coingecko_api_key.split(",") if key.strip()]
 
 
 @lru_cache

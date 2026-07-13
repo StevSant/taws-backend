@@ -1,7 +1,8 @@
 from typing import Any
 
-from app.application.charts import serialize_chart_spec
+from app.application.charts import serialize_chart_spec, summarize_comparison_chart
 from app.domain.charts.entities import ChartSpec, ChartType
+from app.infrastructure.agents.tools import format_price_level
 from app.infrastructure.realtime.tools.args.render_chart_args import (
     RenderComparisonChartArgs,
     RenderDistributionChartArgs,
@@ -36,8 +37,7 @@ async def handle_render_comparison_chart(container: Any, args: Any, user_id: str
     spec = await container.get_build_comparison_chart_use_case().execute(
         [symbol.upper() for symbol in typed.instrument_symbols], typed.timeframe
     )
-    names = ", ".join(series.name for series in spec.series)
-    return _result(f"Rendered a {spec.meta.timeframe} rebased comparison of {names}.", spec)
+    return _result(summarize_comparison_chart(spec), spec)
 
 
 async def handle_render_macro_chart(container: Any, args: Any, user_id: str) -> dict[str, Any]:
@@ -84,13 +84,14 @@ def _summarize_price(spec: ChartSpec) -> str:
         first, last = series.bars[0], series.bars[-1]
         return (
             f"Rendered a {spec.meta.timeframe} candlestick chart for "
-            f"{spec.meta.symbol}: latest close {last.c:.4g}{_pct(first.c, last.c)}."
+            f"{spec.meta.symbol}: latest close {format_price_level(last.c)}"
+            f"{_pct(first.c, last.c)}."
         )
     if series and series.points:
         first, last = series.points[0], series.points[-1]
         return (
             f"Rendered a {spec.meta.timeframe} price line for {spec.meta.symbol}: "
-            f"latest {last.y:.4g}{_pct(first.y, last.y)}."
+            f"latest {format_price_level(last.y)}{_pct(first.y, last.y)}."
         )
     return f"Rendered a chart for {spec.meta.symbol}."
 

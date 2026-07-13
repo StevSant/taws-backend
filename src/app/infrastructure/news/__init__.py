@@ -2,7 +2,6 @@ from app.infrastructure.news.aggregating_news_provider import AggregatingNewsPro
 from app.infrastructure.news.dedupe_news_items import dedupe_news_items
 from app.infrastructure.news.extract_rss_summary import extract_rss_summary
 from app.infrastructure.news.finnhub_news_provider import FinnhubNewsProvider
-from app.infrastructure.news.fixture_news_provider import FixtureNewsProvider
 from app.infrastructure.news.link_related_symbols import link_related_symbols
 from app.infrastructure.news.marketaux_article_mapper import map_marketaux_article
 from app.infrastructure.news.marketaux_entity_types import ASSET_CLASS_TO_ENTITY_TYPES
@@ -15,7 +14,6 @@ __all__ = [
     "ASSET_CLASS_TO_ENTITY_TYPES",
     "AggregatingNewsProvider",
     "FinnhubNewsProvider",
-    "FixtureNewsProvider",
     "MarketauxNewsProvider",
     "NewsApiNewsProvider",
     "RssNewsProvider",

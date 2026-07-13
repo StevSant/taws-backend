@@ -7,12 +7,13 @@ as `grounding_context`. With no reference the runner is streamed `grounding_cont
 exactly as today.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 
 from fastapi.testclient import TestClient
 
 from app.api.v1.dependencies import (
     get_agent_runner,
+    get_conversation_repository,
     get_instrument_universe,
     get_news_item_repository,
     require_current_user,
@@ -20,7 +21,15 @@ from app.api.v1.dependencies import (
 from app.api.v1.schemas import CurrentUser
 from app.domain.agents.entities import AgentStreamEvent, Message, TokenEvent
 from app.domain.agents.ports import AgentRunner
-from app.domain.market.entities import AssetClass, Instrument
+from app.domain.chat.entities import Conversation
+from app.domain.chat.ports import ConversationRepository
+from app.domain.market.entities import (
+    AssetClass,
+    Instrument,
+    NewsBrowseQuery,
+    NewsFacets,
+    PaginatedNewsItems,
+)
 from app.domain.market.ports import InstrumentUniverse, NewsItemRepository
 from app.main import app
 
@@ -71,7 +80,22 @@ class _EmptyNewsItemRepository(NewsItemRepository):
     async def get_by_id(self, news_id: str):
         return None
 
+    async def browse(self, query: NewsBrowseQuery) -> PaginatedNewsItems:
+        return PaginatedNewsItems(items=[], total=0, page=1, page_size=0)
+
+    async def list_facets(self) -> NewsFacets:
+        return NewsFacets(sources=[], providers=[])
+
     async def list_pending(self, limit: int):
+        return []
+
+    async def list_unscored(self, limit: int):
+        return []
+
+    async def save_sentiment_scores(self, scores_by_id: dict[str, float]) -> None:
+        return None
+
+    async def list_recent(self, symbols, since_hours: int, limit: int):
         return []
 
     async def list_related(self, item, limit: int):
@@ -84,6 +108,33 @@ class _EmptyNewsItemRepository(NewsItemRepository):
         raise NotImplementedError
 
 
+class _NullConversationRepository(ConversationRepository):
+    """Swallows the persistence `StreamAndPersistReply` now performs after the stream.
+
+    These tests assert what reaches the `AgentRunner`, not what reaches the database — but
+    the route persists the finished turn, so without this override the container would build
+    a real Supabase-backed repository and the test would try to talk to the network.
+    """
+
+    async def get(self, conversation_id: str) -> Conversation | None:
+        return None
+
+    async def list_for_user(self, user_id: str) -> list[Conversation]:
+        return []
+
+    async def ensure(self, conversation_id: str, user_id: str) -> None:
+        return None
+
+    async def append_messages(self, conversation_id: str, messages: Sequence[Message]) -> None:
+        return None
+
+    async def update_title(self, conversation_id: str, title: str) -> None:
+        return None
+
+    async def delete(self, conversation_id: str) -> None:
+        return None
+
+
 def _override_common(runner: AgentRunner) -> None:
     app.dependency_overrides[require_current_user] = lambda: CurrentUser(
         id=_USER_ID, email="dev@example.com"
@@ -91,6 +142,7 @@ def _override_common(runner: AgentRunner) -> None:
     app.dependency_overrides[get_agent_runner] = lambda: runner
     app.dependency_overrides[get_instrument_universe] = _FakeInstrumentUniverse
     app.dependency_overrides[get_news_item_repository] = _EmptyNewsItemRepository
+    app.dependency_overrides[get_conversation_repository] = _NullConversationRepository
 
 
 def test_asset_symbol_is_forwarded_as_grounding_context() -> None:

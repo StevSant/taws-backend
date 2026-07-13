@@ -1,4 +1,6 @@
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -50,6 +52,7 @@ class MarketauxNewsProvider(NewsProvider):
         max_pages: int,
         cooldown_seconds: float = 1200.0,
         rate_limit_cooldown_seconds: float = 300.0,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url
@@ -59,6 +62,10 @@ class MarketauxNewsProvider(NewsProvider):
         self._cooldown_seconds = cooldown_seconds
         self._rate_limit_cooldown_seconds = rate_limit_cooldown_seconds
         self._cooldown = CooldownGate()
+        # Optional shared pooled client (issue #71 perf): when injected, every page fetch reuses
+        # its warm connection pool + TLS session instead of opening a fresh client per call, and
+        # it is never closed here. `None` keeps the original per-call `httpx.AsyncClient` path.
+        self._http_client = http_client
 
     async def fetch_news(
         self,
@@ -72,9 +79,7 @@ class MarketauxNewsProvider(NewsProvider):
 
         params = self._build_params(symbols, asset_class, since_hours, limit)
         items: list[NewsItem] = []
-        async with httpx.AsyncClient(
-            base_url=self._base_url, timeout=self._timeout_seconds
-        ) as client:
+        async with self._acquire_client() as client:
             for page in range(1, self._max_pages + 1):
                 payload = await self._fetch_page(client, params, page)
                 if payload is None:
@@ -84,6 +89,21 @@ class MarketauxNewsProvider(NewsProvider):
                 if len(items) >= limit or self._is_last_page(payload, len(articles)):
                     break
         return items[:limit]
+
+    @asynccontextmanager
+    async def _acquire_client(self) -> AsyncIterator[httpx.AsyncClient]:
+        """Yield the shared injected client (left open for reuse) or a fresh per-call client.
+
+        The shared client carries no `base_url`/timeout, so `_fetch_page` uses an absolute URL
+        and passes `timeout` per request — which also works unchanged on the fallback client.
+        """
+        if self._http_client is not None:
+            yield self._http_client
+        else:
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=self._timeout_seconds
+            ) as client:
+                yield client
 
     def _build_params(
         self,
@@ -114,7 +134,11 @@ class MarketauxNewsProvider(NewsProvider):
         self, client: httpx.AsyncClient, params: dict[str, str], page: int
     ) -> dict | None:
         try:
-            response = await client.get("/news/all", params={**params, "page": str(page)})
+            response = await client.get(
+                f"{self._base_url.rstrip('/')}/news/all",
+                params={**params, "page": str(page)},
+                timeout=self._timeout_seconds,
+            )
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as exc:

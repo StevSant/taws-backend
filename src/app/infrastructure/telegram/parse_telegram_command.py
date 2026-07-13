@@ -5,6 +5,7 @@ from app.infrastructure.telegram.extract_message_text_and_chat_id import (
 )
 from app.infrastructure.telegram.parse_briefing_command import parse_briefing_command
 from app.infrastructure.telegram.parse_chat_message import parse_chat_message
+from app.infrastructure.telegram.parse_event_callback import parse_event_callback
 from app.infrastructure.telegram.parse_impact_command import parse_impact_command
 from app.infrastructure.telegram.parse_signal_command import parse_signal_command
 from app.infrastructure.telegram.parse_simulate_command import parse_simulate_command
@@ -35,6 +36,13 @@ def parse_telegram_command(update_payload: dict[str, Any]) -> TelegramCommand | 
       of a silent failure, per issue #19's acceptance criteria, without spamming a
       reply to unrelated chat text.
     """
+    # Checked first, and separately from everything below: a tapped inline button arrives as a
+    # `callback_query` update, not a `message`, so `extract_message_text_and_chat_id` returns
+    # `None` for it and every text parser below is structurally incapable of seeing it.
+    event_callback = parse_event_callback(update_payload)
+    if event_callback is not None:
+        return event_callback
+
     start = parse_start_command(update_payload)
     if start is not None:
         return start

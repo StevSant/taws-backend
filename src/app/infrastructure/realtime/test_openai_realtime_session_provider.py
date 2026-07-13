@@ -70,6 +70,7 @@ async def test_mint_returns_ephemeral_session_from_client_secret() -> None:
         instructions="You are TAWS voice.",
         tools=_TOOLS,
         expires_in_seconds=600,
+        transcription_language="es",
     )
 
     assert isinstance(session, EphemeralRealtimeSession)
@@ -89,6 +90,7 @@ async def test_mint_passes_model_voice_tools_and_ttl_through() -> None:
         instructions="Custom instructions.",
         tools=_TOOLS,
         expires_in_seconds=900,
+        transcription_language="es",
     )
 
     call = secrets.create_calls[0]
@@ -113,6 +115,7 @@ async def test_mint_sends_hashed_safety_identifier_never_raw_user_id() -> None:
         instructions="x",
         tools=[],
         expires_in_seconds=600,
+        transcription_language="es",
     )
 
     call = secrets.create_calls[0]
@@ -132,6 +135,7 @@ async def test_real_key_never_appears_on_returned_session() -> None:
         instructions="x",
         tools=[],
         expires_in_seconds=600,
+        transcription_language="es",
     )
 
     assert _REAL_KEY not in session.client_secret
@@ -150,4 +154,5 @@ async def test_missing_key_raises() -> None:
             instructions="x",
             tools=[],
             expires_in_seconds=600,
+            transcription_language="es",
         )

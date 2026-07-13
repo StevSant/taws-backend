@@ -7,6 +7,12 @@ from langgraph.config import get_stream_writer
 
 from app.application.common import build_locale_instruction
 from app.domain.agents.entities import AgentTraceEvent
+from app.infrastructure.agents.build_citations_from_contributions import (
+    build_citations_from_contributions,
+)
+from app.infrastructure.agents.extract_response_contribution import (
+    extract_response_contribution,
+)
 from app.infrastructure.agents.invoke_with_bound_tools import invoke_with_bound_tools
 from app.infrastructure.agents.personas import MIDAS_PERSONA, RESPONSE_FORMAT_GUIDANCE
 from app.infrastructure.agents.supervisor_state import SupervisorState
@@ -17,6 +23,9 @@ def build_specialist_node(
     persona: str,
     model: BaseChatModel,
     tools: list[BaseTool] | None = None,
+    *,
+    history_max_messages: int,
+    include_boilerplate: bool = True,
 ) -> Any:
     """Build a specialist node: invokes `model` with a persona system prompt.
 
@@ -53,6 +62,18 @@ def build_specialist_node(
     (signals/briefings/watchlists). `analyst`/`quant` keep calling this with `tools=None`
     and are completely unaffected.
 
+    `history_max_messages`: keyword-only, required — caps how many trailing thread messages are
+    sent to the model this call (`*state["messages"][-history_max_messages:]`), bounding per-call
+    prompt growth on long threads. A tail slice always keeps the latest user turn. This bounds
+    only what is SENT to the model; the checkpointed state is untouched (the node still returns
+    just the new `AIMessage`), so no history is actually lost from the thread.
+
+    `include_boilerplate`: keyword-only, defaults to `True` — every existing route keeps the
+    full `MIDAS_PERSONA` + `RESPONSE_FORMAT_GUIDANCE` header byte-for-byte. Passed `False` for the
+    lightweight scope terminals (smalltalk / out_of_scope), which only greet or decline: they get
+    just their own persona (+ optional grounding + locale + history), skipping the two large shared
+    system blocks the market specialists need, to cut their prompt size and latency.
+
     Returns `Any` (not a `Callable[[SupervisorState], ...]` alias): `StateGraph.add_node`
     expects its callable's `state` parameter to accept the keyword name `state`, which a
     `Callable[...]` type alias erases — annotating with one here makes pyright reject a
@@ -77,19 +98,45 @@ def build_specialist_node(
             else []
         )
         locale = state.get("locale")
+        boilerplate_messages = (
+            [
+                SystemMessage(content=MIDAS_PERSONA),
+                SystemMessage(content=RESPONSE_FORMAT_GUIDANCE),
+            ]
+            if include_boilerplate
+            else []
+        )
         messages = [
-            SystemMessage(content=MIDAS_PERSONA),
-            SystemMessage(content=RESPONSE_FORMAT_GUIDANCE),
+            *boilerplate_messages,
             SystemMessage(content=persona),
             *grounding_messages,
             *([SystemMessage(content=build_locale_instruction(locale))] if locale else []),
-            *state["messages"],
+            *state["messages"][-history_max_messages:],
         ]
+        evidence_messages: list[Any] = []
         response = (
-            await invoke_with_bound_tools(model, messages, tools, agent_name=agent_name)
+            await invoke_with_bound_tools(
+                model,
+                messages,
+                tools,
+                agent_name=agent_name,
+                locale=locale,
+                evidence_messages=evidence_messages,
+            )
             if tools
             else await model.ainvoke(messages)
         )
+
+        # Only extract citations when a tool actually returned evidence this turn. A specialist
+        # with tools bound that chose not to call any (`evidence_messages` empty) produces no
+        # citations, so the extraction LLM call would be pure latency/cost for an empty result.
+        if evidence_messages:
+            contribution = await extract_response_contribution(
+                model, agent_name, response, evidence_messages=evidence_messages
+            )
+            citations = build_citations_from_contributions([contribution])
+            if citations:
+                writer({"kind": "citations", "citations": citations})
 
         writer({"agent": agent_name, "event": AgentTraceEvent.DONE.value, "detail": None})
         return {"messages": [response]}

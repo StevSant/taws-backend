@@ -10,6 +10,7 @@ from app.api.v1.dependencies import (
     dev_fallback_allowed,
     get_briefing_command_handler,
     get_chat_message_handler,
+    get_event_callback_handler,
     get_event_news_provider,
     get_impact_command_handler,
     get_link_telegram_account_use_case,
@@ -42,6 +43,8 @@ from app.infrastructure.telegram import (
     BriefingCommandHandler,
     ChatMessage,
     ChatMessageHandler,
+    EventCallback,
+    EventCallbackHandler,
     ImpactCommand,
     ImpactCommandHandler,
     SignalCommand,
@@ -50,6 +53,7 @@ from app.infrastructure.telegram import (
     SimulateCommandHandler,
     StartCommand,
     UnknownCommand,
+    build_event_alert_buttons,
     format_event_alert,
     format_unknown_command_reply,
     format_welcome_reply,
@@ -130,6 +134,9 @@ async def telegram_webhook(
     ],
     impact_handler: Annotated[ImpactCommandHandler | None, Depends(get_impact_command_handler)],
     chat_handler: Annotated[ChatMessageHandler | None, Depends(get_chat_message_handler)],
+    event_callback_handler: Annotated[
+        EventCallbackHandler | None, Depends(get_event_callback_handler)
+    ],
     messenger: Annotated[TelegramMessenger | None, Depends(get_telegram_messenger)],
 ) -> dict[str, bool]:
     """Telegram webhook endpoint: Telegram POSTs every `Update` here once `setWebhook` is
@@ -198,6 +205,15 @@ async def telegram_webhook(
                 if chat_handler is not None:
                     await chat_handler.handle(command)
                 return {"ok": True}
+            case EventCallback():
+                # A tapped inline button on a broadcast news alert. Runs in the BACKGROUND for
+                # the same reason `/simular` does: both branches inside the handler call an LLM,
+                # and Telegram retries a webhook it doesn't get a prompt 200 from — which would
+                # run the analysis twice. The handler answers the callback query itself (which
+                # is what stops the button spinning), so acknowledging here immediately is safe.
+                if event_callback_handler is not None:
+                    background_tasks.add_task(event_callback_handler.handle, command)
+                return {"ok": True}
             case UnknownCommand():
                 if messenger is not None:
                     await messenger.send_text(command.chat_id, format_unknown_command_reply())
@@ -218,6 +234,7 @@ async def send_test_news(
     use_case: Annotated[ProcessIncomingEvent, Depends(get_process_incoming_event_use_case)],
     link_repository: Annotated[TelegramLinkRepository, Depends(get_telegram_link_repository)],
     messenger: Annotated[TelegramMessenger | None, Depends(get_telegram_messenger)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> SendTestNewsResponse:
     """Push ONE random news event, fully enriched, to the CALLER's own linked chat.
 
@@ -257,9 +274,10 @@ async def send_test_news(
 
     enriched = await use_case.execute(random.choice(events))
     text = format_event_alert(enriched)
+    buttons = build_event_alert_buttons(enriched, settings.frontend_base_url)
 
     try:
-        await messenger.send_text(link.chat_id, text, parse_mode="HTML")
+        await messenger.send_text(link.chat_id, text, parse_mode="HTML", buttons=buttons)
     except Exception:
         logger.exception(
             "Failed to send test news alert to chat %s (requested by user %s)",

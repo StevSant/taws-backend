@@ -2,10 +2,14 @@ from langchain_core.tools import StructuredTool
 from langgraph.config import get_stream_writer
 from pydantic import BaseModel, Field
 
-from app.application.charts import serialize_chart_spec
+from app.application.charts import serialize_chart_spec, summarize_comparison_chart
 from app.application.charts.use_cases import BuildComparisonChart
 from app.application.quant.unknown_instrument_error import UnknownInstrumentError
 from app.domain.charts.entities import ChartConfig
+from app.domain.market.errors import MarketDataUnavailableError
+from app.infrastructure.agents.tools.market_data_unavailable_message import (
+    market_data_unavailable_message,
+)
 
 
 def build_render_comparison_chart_tool(
@@ -32,9 +36,11 @@ def build_render_comparison_chart_tool(
             )
         except UnknownInstrumentError as exc:
             return str(exc)
+        except MarketDataUnavailableError as exc:
+            # No chart: one missing leg makes the whole rebased comparison a lie.
+            return market_data_unavailable_message(exc.symbol, exc)
         get_stream_writer()({"kind": "chart", "chart": serialize_chart_spec(spec)})
-        names = ", ".join(series.name for series in spec.series)
-        return f"Rendered a {spec.meta.timeframe} rebased comparison of {names}."
+        return summarize_comparison_chart(spec)
 
     return StructuredTool.from_function(
         coroutine=_run,

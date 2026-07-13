@@ -11,11 +11,10 @@ class FearGreedProvider(ABC):
     elsewhere (Scenario context gathering, the Analyst pipeline) keyed on
     rates/CPI/volatility specifically, and Fear & Greed is a distinct concern (crowd
     sentiment, not a FRED/VIX macro figure) with its own adapter (alternative.me, no key
-    required) and its own fixture fallback — same "one port, one responsibility"
-    rationale as keeping `NewsProvider` separate from `MacroDataProvider`. Adapters:
-    `AlternativeMeFearGreedProvider` (live), `FixtureFearGreedProvider` (fallback), and
-    `RoutingFearGreedProvider` (prefers live, falls back on any failure) — see
-    `infrastructure/sentiment/`.
+    required) — same "one port, one responsibility" rationale as keeping `NewsProvider`
+    separate from `MacroDataProvider`. Adapters: `AlternativeMeFearGreedProvider` (live) and
+    `RoutingFearGreedProvider`, which raises `FearGreedUnavailableError` on failure rather
+    than inventing a reading — see `infrastructure/sentiment/`.
     """
 
     @abstractmethod

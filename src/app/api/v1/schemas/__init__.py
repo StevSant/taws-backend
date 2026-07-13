@@ -16,6 +16,9 @@ from app.api.v1.schemas.coin_candidate_response import CoinCandidateResponse
 from app.api.v1.schemas.consequence_chain_response import ConsequenceChainResponse
 from app.api.v1.schemas.consequence_edge_response import ConsequenceEdgeResponse
 from app.api.v1.schemas.consequence_node_response import ConsequenceNodeResponse
+from app.api.v1.schemas.conversation_detail_response import ConversationDetailResponse
+from app.api.v1.schemas.conversation_message_response import ConversationMessageResponse
+from app.api.v1.schemas.conversation_summary_response import ConversationSummaryResponse
 from app.api.v1.schemas.conversation_title_response import ConversationTitleResponse
 from app.api.v1.schemas.current_user import CurrentUser
 from app.api.v1.schemas.earnings_calendar_entry_response import EarningsCalendarEntryResponse
@@ -108,6 +111,9 @@ __all__ = [
     "ChatToken",
     "CoinCandidateResponse",
     "ConsequenceChainResponse",
+    "ConversationDetailResponse",
+    "ConversationMessageResponse",
+    "ConversationSummaryResponse",
     "ConversationTitleResponse",
     "ConsequenceEdgeResponse",
     "ConsequenceNodeResponse",

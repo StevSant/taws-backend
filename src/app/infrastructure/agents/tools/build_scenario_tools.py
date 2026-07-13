@@ -18,5 +18,8 @@ def build_scenario_tools(
     and `build_advisor_grounding_tools.py` for the sibling tool list `advisor_tools`
     concatenates this with (kept in a separate builder since this isn't "grounding an
     answer in persisted signals", it's "trigger a whole pipeline").
+
+    `default_locale` is only the fallback — the tool prefers the turn's locale from its injected
+    `RunnableConfig` (see `resolve_tool_locale`).
     """
     return [build_run_scenario_simulation_tool(scenario_simulation_runner, default_locale)]

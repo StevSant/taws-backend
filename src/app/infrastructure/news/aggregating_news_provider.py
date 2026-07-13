@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from app.domain.market.entities import AssetClass, NewsItem
+from app.domain.market.errors import NewsUnavailableError
 from app.domain.market.ports import InstrumentUniverse, NewsProvider
 from app.infrastructure.news.dedupe_news_items import dedupe_news_items
 from app.infrastructure.news.link_related_symbols import link_related_symbols
@@ -21,20 +22,26 @@ class AggregatingNewsProvider(NewsProvider):
     entity linkage like Marketaux's isn't scoped to our universe and otherwise
     leaks NSE/BSE/ASX/LSE tickers and index symbols with no configured adapter
     straight through to consumers), applies filters/limit, and sorts by
-    `published_at` descending. Falls back to the fixture provider whenever no
-    live provider is configured, or every one of them fails or returns nothing.
+    `published_at` descending.
+
+    **Real articles, an empty list, or `NewsUnavailableError` — never invented news.** This
+    used to fall back to a `FixtureNewsProvider` whenever no live provider was configured or
+    all of them failed, which meant an outage produced canned headlines with `example.com`
+    URLs that the analyst then cited to the user as sourced reporting.
+
+    "Every provider failed" and "no articles matched" are kept strictly apart: the first
+    raises, the second returns `[]`. Collapsing them would have the agent state "there is no
+    recent news on X" during an outage — a fabricated finding, just a quieter one.
     """
 
     def __init__(
         self,
         providers: list[NewsProvider],
-        fixture_provider: NewsProvider,
         instrument_universe: InstrumentUniverse,
         provider_timeout_seconds: float = 2.5,
         live_fetch_budget_seconds: float = 3.5,
     ) -> None:
         self._providers = providers
-        self._fixture_provider = fixture_provider
         self._instrument_universe = instrument_universe
         self._provider_timeout_seconds = provider_timeout_seconds
         self._live_fetch_budget_seconds = live_fetch_budget_seconds
@@ -47,15 +54,6 @@ class AggregatingNewsProvider(NewsProvider):
         limit: int = 50,
     ) -> list[NewsItem]:
         items = await self._collect_from_live_providers(symbols, asset_class, since_hours, limit)
-        if not items:
-            items = await self._safe_fetch(
-                self._fixture_provider,
-                symbols,
-                asset_class,
-                since_hours,
-                limit,
-                apply_timeout=False,
-            )
 
         items = dedupe_news_items(items)
         items = self._backfill_related_symbols(items)
@@ -71,8 +69,14 @@ class AggregatingNewsProvider(NewsProvider):
         since_hours: int,
         limit: int,
     ) -> list[NewsItem]:
+        """Fan out to every provider. Raises `NewsUnavailableError` if they ALL failed.
+
+        A provider that succeeds but has nothing to say returns `[]`; a provider that blew up
+        returns `None`. Only if every single one returned `None` is this an outage — one
+        surviving provider with zero matching articles is still a real, if empty, answer.
+        """
         if not self._providers:
-            return []
+            raise NewsUnavailableError(0, "no news provider is configured")
 
         try:
             results = await asyncio.wait_for(
@@ -84,14 +88,18 @@ class AggregatingNewsProvider(NewsProvider):
                 ),
                 timeout=self._live_fetch_budget_seconds,
             )
-        except TimeoutError:
+        except TimeoutError as error:
             logger.warning(
-                "Live news fan-out exceeded %.1fs budget; falling back to fixture.",
-                self._live_fetch_budget_seconds,
+                "Live news fan-out exceeded its %.1fs budget.", self._live_fetch_budget_seconds
             )
-            return []
+            raise NewsUnavailableError(
+                len(self._providers), f"fan-out exceeded {self._live_fetch_budget_seconds:.1f}s"
+            ) from error
 
-        return [item for provider_items in results for item in provider_items]
+        if all(provider_items is None for provider_items in results):
+            raise NewsUnavailableError(len(self._providers), "every provider errored or timed out")
+
+        return [item for provider_items in results if provider_items for item in provider_items]
 
     async def _safe_fetch(
         self,
@@ -100,30 +108,27 @@ class AggregatingNewsProvider(NewsProvider):
         asset_class: AssetClass | None,
         since_hours: int,
         limit: int,
-        *,
-        apply_timeout: bool = True,
-    ) -> list[NewsItem]:
+    ) -> list[NewsItem] | None:
+        """The provider's articles, or `None` if it failed. `[]` means "succeeded, found none"."""
         try:
-            fetch = provider.fetch_news(
-                symbols=symbols, asset_class=asset_class, since_hours=since_hours, limit=limit
+            return await asyncio.wait_for(
+                provider.fetch_news(
+                    symbols=symbols, asset_class=asset_class, since_hours=since_hours, limit=limit
+                ),
+                timeout=self._provider_timeout_seconds,
             )
-            if apply_timeout:
-                items = await asyncio.wait_for(fetch, timeout=self._provider_timeout_seconds)
-            else:
-                items = await fetch
-            return items
         except TimeoutError:
             logger.warning(
                 "NewsProvider %s timed out after %.1fs; skipping it.",
                 type(provider).__name__,
                 self._provider_timeout_seconds,
             )
-            return []
+            return None
         except Exception:
             logger.warning(
                 "NewsProvider %s failed; skipping it.", type(provider).__name__, exc_info=True
             )
-            return []
+            return None
 
     def _backfill_related_symbols(self, items: list[NewsItem]) -> list[NewsItem]:
         instruments = self._instrument_universe.all()

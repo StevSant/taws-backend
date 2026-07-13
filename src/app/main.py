@@ -1,6 +1,7 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,7 @@ from app.api.middleware import (
     RequestIDMiddleware,
     duplicate_watchlist_item_handler,
     invalid_watchlist_identifier_handler,
+    market_data_unavailable_handler,
     unhandled_exception_handler,
 )
 from app.api.v1.dependencies import dev_fallback_allowed
@@ -40,6 +42,12 @@ from app.api.v1.routers import (
 from app.core.config import Settings, get_settings
 from app.core.di import get_container
 from app.core.logging import configure_logging
+from app.domain.market.errors import (
+    FundamentalsUnavailableError,
+    MacroDataUnavailableError,
+    MarketDataUnavailableError,
+)
+from app.domain.sentiment.errors import FearGreedUnavailableError
 from app.domain.watchlist.errors import (
     DuplicateWatchlistItemError,
     InvalidWatchlistIdentifierError,
@@ -82,6 +90,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _warn_on_misconfigured_auth(settings)
     container = get_container()
 
+    # Build the DURABLE agent checkpointer (Postgres) once, before the first chat builds the
+    # graph. Self-guarding: it degrades to in-memory and logs (critical outside dev) rather
+    # than crashing boot when the DB is configured but unreachable — see
+    # `Container.initialize_agent_memory`. Closed again in the finally block below.
+    await container.initialize_agent_memory()
+
     # Load the DB-backed instrument catalog once at startup (issue: Instruments
     # Catalog Slice 1) — MUST happen before any request-path code calls
     # `get_instrument_universe()`, which now only returns this prebuilt singleton
@@ -101,11 +115,18 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
     # Preload radar reads so the first browser visit does not pay cold-start DI +
-    # fixture assembly on the request path.
-    try:
-        await container.get_news_provider().fetch_news(since_hours=48, limit=50)
-    except Exception:
-        logger.warning("Radar warmup failed; first /radar load may be slower.", exc_info=True)
+    # fixture assembly on the request path. Run it in the BACKGROUND (unlike the instrument
+    # universe above, whose contract requires it be loaded before serving): the news fan-out
+    # can be slow, and blocking boot on it delays readiness for no correctness gain — a first
+    # /radar load that races the warmup is only slower, never wrong. The handle is cancelled
+    # in the finally block if it is still running at shutdown.
+    async def _warm_radar() -> None:
+        try:
+            await container.get_news_provider().fetch_news(since_hours=48, limit=50)
+        except Exception:
+            logger.warning("Radar warmup failed; first /radar load may be slower.", exc_info=True)
+
+    radar_warmup_task = asyncio.create_task(_warm_radar())
 
     # Watchdog/Notifier scheduled jobs (issue #10) — started on boot, shut down on exit so
     # no background task is left dangling. Scan/job logic itself lives in
@@ -136,7 +157,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if not radar_warmup_task.done():
+            radar_warmup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await radar_warmup_task
         scheduler.shutdown(wait=False)
+        await container.aclose_agent_memory()
+        await container.aclose_http_client()
 
 
 def create_app() -> FastAPI:
@@ -157,6 +184,11 @@ def create_app() -> FastAPI:
     # last as the 500 backstop for everything else.
     app.add_exception_handler(DuplicateWatchlistItemError, duplicate_watchlist_item_handler)
     app.add_exception_handler(InvalidWatchlistIdentifierError, invalid_watchlist_identifier_handler)
+    # Every "we have no real data" error maps to the same 503 — never a 200 with a fake number.
+    app.add_exception_handler(MarketDataUnavailableError, market_data_unavailable_handler)
+    app.add_exception_handler(MacroDataUnavailableError, market_data_unavailable_handler)
+    app.add_exception_handler(FundamentalsUnavailableError, market_data_unavailable_handler)
+    app.add_exception_handler(FearGreedUnavailableError, market_data_unavailable_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
     app.include_router(health_router)

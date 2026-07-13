@@ -24,6 +24,7 @@ class _FakeRealtimeSessionProvider(RealtimeSessionProvider):
         instructions: str,
         tools: list[dict],
         expires_in_seconds: int,
+        transcription_language: str,
     ) -> EphemeralRealtimeSession:
         self.calls.append(
             {
@@ -33,6 +34,7 @@ class _FakeRealtimeSessionProvider(RealtimeSessionProvider):
                 "instructions": instructions,
                 "tools": tools,
                 "expires_in_seconds": expires_in_seconds,
+                "transcription_language": transcription_language,
             }
         )
         return EphemeralRealtimeSession(
@@ -54,6 +56,7 @@ async def test_fake_mint_returns_ephemeral_session_and_records_args() -> None:
         instructions="You are TAWS voice.",
         tools=tools,
         expires_in_seconds=600,
+        transcription_language="es",
     )
 
     assert isinstance(session, EphemeralRealtimeSession)
@@ -63,6 +66,7 @@ async def test_fake_mint_returns_ephemeral_session_and_records_args() -> None:
     assert session.tools == tools
     assert provider.calls[0]["user_id"] == "user-1"
     assert provider.calls[0]["expires_in_seconds"] == 600
+    assert provider.calls[0]["transcription_language"] == "es"
 
 
 def test_entity_is_frozen() -> None:

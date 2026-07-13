@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 
+from app.application.common import build_locale_instruction
 from app.application.macro.macro_asset_class_impact_draft import MacroAssetClassImpactDraft
 from app.application.macro.macro_event_extraction import MacroEventExtraction
 from app.domain.agents.entities import Message, MessageRole
@@ -72,7 +73,9 @@ class InterpretMacroEvent:
         self._macro_data_provider = macro_data_provider
         self._llm_provider = llm_provider
 
-    async def execute(self, event_description: str | None = None) -> MacroEventInterpretation:
+    async def execute(
+        self, event_description: str | None = None, locale: str | None = None
+    ) -> MacroEventInterpretation:
         description = event_description or _DEFAULT_EVENT_DESCRIPTION
         rates, cpi, volatility = await asyncio.gather(
             self._macro_data_provider.get_rates(),
@@ -80,7 +83,7 @@ class InterpretMacroEvent:
             self._macro_data_provider.get_volatility_regime(),
         )
 
-        extraction = await self._interpret(description, rates, cpi, volatility)
+        extraction = await self._interpret(description, rates, cpi, volatility, locale)
         impacts = _to_impact_map(extraction.asset_class_impacts)
 
         return MacroEventInterpretation(
@@ -99,11 +102,20 @@ class InterpretMacroEvent:
         rates: MacroObservation,
         cpi: MacroObservation,
         volatility: VolatilityRegime,
+        locale: str | None = None,
     ) -> MacroEventExtraction:
+        # `locale` is optional so a caller that doesn't care keeps the English-authored prompt
+        # verbatim — same shape as `GenerateConsequenceChain._extract_chain`. When given, the
+        # instruction is appended so every `rationale` comes back in the user's language: this
+        # pipeline emits one or two sentences of prose per asset class, which is exactly the
+        # sort of output that otherwise silently reverts to English.
+        system_prompt = _EXTRACTION_SYSTEM_PROMPT
+        if locale:
+            system_prompt += build_locale_instruction(locale)
         try:
             raw = await self._llm_provider.complete_structured(
                 messages=[
-                    Message(role=MessageRole.SYSTEM, content=_EXTRACTION_SYSTEM_PROMPT),
+                    Message(role=MessageRole.SYSTEM, content=system_prompt),
                     Message(
                         role=MessageRole.USER,
                         content=_format_macro_context(event_description, rates, cpi, volatility),

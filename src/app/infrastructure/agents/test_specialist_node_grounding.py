@@ -32,7 +32,7 @@ def _patch_writer(monkeypatch: Any) -> None:
 async def test_grounding_context_injected_after_guardrails(monkeypatch: Any) -> None:
     _patch_writer(monkeypatch)
     model = _RecordingChatModel()
-    node = build_specialist_node("analyst", "PERSONA", model)  # type: ignore[arg-type]
+    node = build_specialist_node("analyst", "PERSONA", model, history_max_messages=12)  # type: ignore[arg-type]
 
     grounding = "Asset AAPL (Apple Inc.)"
     await node({"messages": ["user-msg"], "grounding_context": grounding})
@@ -49,7 +49,7 @@ async def test_grounding_context_injected_after_guardrails(monkeypatch: Any) -> 
 async def test_no_grounding_context_leaves_messages_unchanged(monkeypatch: Any) -> None:
     _patch_writer(monkeypatch)
     model = _RecordingChatModel()
-    node = build_specialist_node("analyst", "PERSONA", model)  # type: ignore[arg-type]
+    node = build_specialist_node("analyst", "PERSONA", model, history_max_messages=12)  # type: ignore[arg-type]
 
     await node({"messages": ["user-msg"]})
 

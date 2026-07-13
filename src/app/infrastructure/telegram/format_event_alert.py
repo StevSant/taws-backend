@@ -34,10 +34,8 @@ def format_event_alert(event: EnrichedEvent) -> str:
     lines.append("<b>🎯 Confianza del Análisis</b>")
     lines.append(f"{event.confidence:.0%}")
 
-    if event.suggested_questions:
-        lines.append("")
-        lines.append("<b>💬 Preguntas Sugeridas</b>")
-        for q in event.suggested_questions:
-            lines.append(f"• {html.escape(q)}")
-
+    # `suggested_questions` used to be listed here as inert bullet text. They are now rendered
+    # as tappable inline buttons instead (`build_event_alert_buttons`), which route straight
+    # into the conversational agent — so repeating them in the body would just be noise above
+    # the very buttons that act on them.
     return truncate_telegram_text("\n".join(lines))

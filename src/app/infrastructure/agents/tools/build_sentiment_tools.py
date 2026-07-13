@@ -13,5 +13,8 @@ def build_sentiment_tools(use_case: AnalyzeSentiment, default_locale: str) -> li
     instead of reasoning about sentiment from memory. See `Container._get_chat_graph` for
     where this gets wired in, and `build_consequence_tools.py` for the sibling pattern
     this mirrors.
+
+    `default_locale` is only the fallback — the tool prefers the turn's locale from its injected
+    `RunnableConfig` (see `resolve_tool_locale`).
     """
     return [build_analyze_sentiment_tool(use_case, default_locale)]

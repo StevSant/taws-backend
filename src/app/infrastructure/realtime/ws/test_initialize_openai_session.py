@@ -36,7 +36,7 @@ class FakeOpenAISocket:
 async def test_sends_session_update_after_session_created() -> None:
     socket = FakeOpenAISocket(events=[{"type": "session.created"}])
 
-    await initialize_openai_session(socket, Settings(openai_realtime_voice="alloy"))
+    await initialize_openai_session(socket, Settings(openai_realtime_voice="alloy"), "es")
 
     assert len(socket.sent) == 1
     assert socket.sent[0]["type"] == "session.update"
@@ -47,7 +47,7 @@ async def test_sends_session_update_after_session_created() -> None:
 async def test_skips_leading_events_until_session_created() -> None:
     socket = FakeOpenAISocket(events=[{"type": "response.created"}, {"type": "session.created"}])
 
-    await initialize_openai_session(socket, Settings())
+    await initialize_openai_session(socket, Settings(), "es")
 
     assert [m["type"] for m in socket.sent] == ["session.update"]
 
@@ -56,6 +56,6 @@ async def test_skips_leading_events_until_session_created() -> None:
 async def test_stream_ending_before_session_created_sends_nothing() -> None:
     socket = FakeOpenAISocket(events=[{"type": "response.created"}])
 
-    await initialize_openai_session(socket, Settings())
+    await initialize_openai_session(socket, Settings(), "es")
 
     assert socket.sent == []

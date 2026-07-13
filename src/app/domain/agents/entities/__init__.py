@@ -4,6 +4,7 @@ from app.domain.agents.entities.agent_stream_event import AgentStreamEvent
 from app.domain.agents.entities.agent_trace import AgentTrace
 from app.domain.agents.entities.agent_trace_event import AgentTraceEvent
 from app.domain.agents.entities.chart_event import ChartEvent
+from app.domain.agents.entities.citations_event import CitationsEvent
 from app.domain.agents.entities.ephemeral_realtime_session import EphemeralRealtimeSession
 from app.domain.agents.entities.error_event import ErrorEvent
 from app.domain.agents.entities.message import Message
@@ -21,6 +22,7 @@ __all__ = [
     "AgentTrace",
     "AgentTraceEvent",
     "ChartEvent",
+    "CitationsEvent",
     "EphemeralRealtimeSession",
     "ErrorEvent",
     "Message",

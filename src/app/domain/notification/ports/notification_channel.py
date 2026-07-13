@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 
+from app.domain.event_intelligence.entities import EnrichedEvent
 from app.domain.notification.entities import (
     Alert,
     BriefingReadyNotification,
@@ -48,4 +49,27 @@ class NotificationChannel(ABC):
         """Deliver one "scenario materializing" match notification. Same never-raise
         contract as `send`/`send_briefing_ready` — one user's missing/broken Telegram link
         must never break Watchdog's scheduled monitor evaluation pass for anyone else."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def broadcast_event_alert(self, event: EnrichedEvent) -> None:
+        """Broadcast one important market event to EVERY linked recipient.
+
+        The delivery half of the automatic Sentinel scan (`BroadcastImportantEvents`): a news
+        event the Gemini analyzer judged important enough to interrupt people for. Same
+        never-raise contract as the three above — one dead chat must not abort delivery to
+        everyone behind it, and a broadcast failure must never kill the scheduled scan.
+
+        **Broadcast, not addressed** — unlike `send`/`send_briefing_ready` (routed via a
+        `watchlist_id`) and `send_scenario_match` (routed via a `user_id`), this one has no
+        recipient on it at all: a market-moving event is not about one person's watchlist, so
+        every user who linked their Telegram gets it. Resolving "everyone" stays inside the
+        adapter, exactly like the other three resolve their own recipients.
+
+        Takes the `EnrichedEvent` itself rather than a mirror notification entity: the adapter
+        needs essentially every field on it (summary, affected assets/sectors, confidence, the
+        suggested questions that become inline buttons), so a parallel entity would be a
+        field-for-field copy with no added meaning. Both types are pure domain, so this stays
+        a domain -> domain dependency with no vendor leak.
+        """
         raise NotImplementedError

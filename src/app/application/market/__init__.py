@@ -8,5 +8,13 @@ slow provider can no longer time out the radar page (taws#71).
 """
 
 from app.application.market.news_feed_refresher import NewsFeedRefresher
+from app.application.market.news_sentiment_batch import NewsSentimentBatch
+from app.application.market.news_sentiment_score import NewsSentimentScore
+from app.application.market.sentiment_scoring_result import SentimentScoringResult
 
-__all__ = ["NewsFeedRefresher"]
+__all__ = [
+    "NewsFeedRefresher",
+    "NewsSentimentBatch",
+    "NewsSentimentScore",
+    "SentimentScoringResult",
+]

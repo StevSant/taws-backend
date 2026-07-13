@@ -1,3 +1,4 @@
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
@@ -5,6 +6,7 @@ from app.application.compliance import ComplianceViolationError
 from app.application.scenario import InvalidScenarioIntakeError, UnknownPresetError
 from app.domain.scenario.entities import ScenarioResult
 from app.infrastructure.agents.scenario import ScenarioSimulationRunner
+from app.infrastructure.agents.tools.resolve_tool_locale import resolve_tool_locale
 
 
 class _RunScenarioSimulationArgs(BaseModel):
@@ -45,12 +47,24 @@ def build_run_scenario_simulation_tool(
     and returns a plain-text explanation instead of letting the tool call raise — a chat
     tool result must always be a string the model can read back to the user, unlike the
     REST endpoint, which is expected to translate these into HTTP status codes.
+
+    The simulation's narrative and recommended actions are LLM-written prose, and the whole
+    six-step graph runs in one locale, so the locale is read from the turn's `RunnableConfig`
+    (see `resolve_tool_locale`) rather than the DI-injected `default_locale`, which is now only
+    the fallback. Note the run is also *persisted* (`ScenarioRepository`) — while this was
+    frozen, a Spanish user's chat-run scenario was stored with a default-locale narrative.
     """
 
-    async def _run(preset_id: str | None = None, free_text: str | None = None) -> str:
+    async def _run(
+        config: RunnableConfig,
+        preset_id: str | None = None,
+        free_text: str | None = None,
+    ) -> str:
         try:
             result = await scenario_simulation_runner.execute(
-                preset_id=preset_id, free_text=free_text, locale=default_locale
+                preset_id=preset_id,
+                free_text=free_text,
+                locale=resolve_tool_locale(config, default_locale),
             )
         except InvalidScenarioIntakeError as exc:
             return str(exc)

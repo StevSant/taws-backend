@@ -12,6 +12,15 @@ _NO_KEY_ERROR = (
     "ephemeral session."
 )
 
+# Vocabulary hint for the input transcriber — biases it toward finance jargon and tickers it
+# would otherwise mangle. Deliberately bilingual: `transcription_language` already pins which
+# language is being transcribed, and the domain terms overlap heavily across the two, so one
+# shared hint beats maintaining a prompt per locale.
+_TRANSCRIPTION_PROMPT = (
+    "Financial markets, tickers, stocks, crypto, and chart requests. "
+    "Mercados financieros, tickers, acciones, criptomonedas y solicitudes de gráficos."
+)
+
 
 class OpenAIRealtimeSessionProvider(RealtimeSessionProvider):
     """`RealtimeSessionProvider` adapter backed by OpenAI's Realtime API.
@@ -41,6 +50,7 @@ class OpenAIRealtimeSessionProvider(RealtimeSessionProvider):
         instructions: str,
         tools: list[dict],
         expires_in_seconds: int,
+        transcription_language: str,
     ) -> EphemeralRealtimeSession:
         if self._client is None:
             raise RuntimeError(_NO_KEY_ERROR)
@@ -60,11 +70,10 @@ class OpenAIRealtimeSessionProvider(RealtimeSessionProvider):
                     "input": {
                         "transcription": {
                             "model": "gpt-4o-mini-transcribe",
-                            "language": "es",
-                            "prompt": (
-                                "Mercados financieros, tickers, acciones, criptomonedas "
-                                "y solicitudes de gráficos."
-                            ),
+                            # Was hardcoded "es", which mis-transcribed English speakers as
+                            # Spanish. Now follows the caller's resolved locale.
+                            "language": transcription_language,
+                            "prompt": _TRANSCRIPTION_PROMPT,
                         }
                     },
                     "output": {"voice": voice},

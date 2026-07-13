@@ -6,6 +6,11 @@ from app.application.charts import serialize_chart_spec
 from app.application.charts.use_cases import BuildPriceChart
 from app.application.quant.unknown_instrument_error import UnknownInstrumentError
 from app.domain.charts.entities import ChartConfig, ChartSpec, ChartType
+from app.domain.market.errors import MarketDataUnavailableError
+from app.infrastructure.agents.tools.format_price_level import format_price_level
+from app.infrastructure.agents.tools.market_data_unavailable_message import (
+    market_data_unavailable_message,
+)
 
 _CANDLESTICK = "candlestick"
 _LINE = "line"
@@ -50,6 +55,10 @@ def build_render_price_chart_tool(
             )
         except UnknownInstrumentError as exc:
             return str(exc)
+        except MarketDataUnavailableError as exc:
+            # Return BEFORE touching the stream writer: a chart the user can see is an
+            # implicit claim that the data behind it is real. No data, no chart.
+            return market_data_unavailable_message(instrument_symbol.upper(), exc)
 
         writer = get_stream_writer()
         writer({"kind": "chart", "chart": serialize_chart_spec(spec)})
@@ -76,14 +85,14 @@ def _summarize(spec: ChartSpec) -> str:
         change = _pct(first.c, last.c)
         return (
             f"Rendered a {spec.meta.timeframe} candlestick chart for {spec.meta.symbol}: "
-            f"latest close {last.c:.4g}{change}."
+            f"latest close {format_price_level(last.c)}{change}."
         )
     if series and series.points:
         first, last = series.points[0], series.points[-1]
         change = _pct(first.y, last.y)
         return (
             f"Rendered a {spec.meta.timeframe} price line for {spec.meta.symbol}: "
-            f"latest {last.y:.4g}{change}."
+            f"latest {format_price_level(last.y)}{change}."
         )
     return f"Rendered a chart for {spec.meta.symbol}."
 

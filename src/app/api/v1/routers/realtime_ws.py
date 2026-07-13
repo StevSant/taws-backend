@@ -28,6 +28,7 @@ _WS_TRY_AGAIN_LATER = 1013
 async def realtime_ws(
     websocket: WebSocket,
     token: str = Query(default=""),
+    locale: str = Query(default=""),
 ) -> None:
     """WebSocket voice-proxy transport: browser <-WSS-> backend <-WSS-> OpenAI Realtime.
 
@@ -42,6 +43,14 @@ async def realtime_ws(
     invalid/missing token closes with 1008 before any OpenAI connection is opened. When the
     Realtime feature is unconfigured (no key), the socket is accepted then closed with 1011
     so the frontend can fall back. Both sockets are always closed on exit — no leaks.
+
+    `?locale=` rides alongside `?token=` for the same reason the JWT does — a browser
+    `WebSocket` can't send a request body or custom headers, so there is nowhere else to put
+    it. It pins the language the voice agent answers in; omitted, it falls back to
+    `Settings.default_locale`. A `ResolveLocale` lookup of the user's stored preference isn't
+    used here: this handler is not a DI-injected route (it resolves the container by hand) and
+    the browser always knows the active UI locale, so passing it explicitly is both simpler
+    and more accurate than a DB round-trip on socket open.
     """
     settings = get_settings()
 
@@ -49,6 +58,8 @@ async def realtime_ws(
     if user is None:
         await websocket.close(code=_WS_POLICY_VIOLATION)
         return
+
+    effective_locale = locale.strip() or settings.default_locale
 
     if not settings.openai_realtime_enabled:
         await websocket.accept()
@@ -70,7 +81,7 @@ async def realtime_ws(
         return
 
     try:
-        await initialize_openai_session(openai_socket, settings)
+        await initialize_openai_session(openai_socket, settings, effective_locale)
         await run_realtime_relay(websocket, openai_socket, get_container(), user, settings)
     except WebSocketDisconnect:
         # Browser hung up during handshake/relay; `run_realtime_relay` (or its absence

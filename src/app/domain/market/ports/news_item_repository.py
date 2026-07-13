@@ -74,6 +74,32 @@ class NewsItemRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def list_unscored(self, limit: int) -> list[NewsItem]:
+        """Return up to `limit` persisted items with `sentiment_score IS NULL`, newest first.
+
+        Deliberately keyed on the NULL score and NOT on `analysis_status`: the two are
+        orthogonal, and conflating them is what hid the missing-sentiment bug for so long.
+        `analysis_status` tracks the SIGNAL pipeline (did the Analyst look at this item?) — a
+        row can be `analyzed`, carry a `signal_id`, and still have no sentiment of its own,
+        because nothing ever wrote one. Filtering on the column this pass actually fills is
+        also what lets it double as the backfill for the rows already sitting at NULL.
+
+        Newest first so a growing backlog degrades gracefully: the articles a user is most
+        likely to be looking at get scored first.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def save_sentiment_scores(self, scores_by_id: dict[str, float]) -> None:
+        """Persist `sentiment_score` for each `{news_item_id: score}` entry.
+
+        Bulk rather than per-item because the backfill writes a whole chunk at a time. An id
+        that no longer exists is ignored rather than raising — a row can be pruned between the
+        `list_unscored` read and this write, and losing one score is not worth failing the pass.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def list_related(self, item: NewsItem, limit: int) -> list[NewsItem]:
         """Return up to `limit` other persisted items related to `item`, most-recent first.
 

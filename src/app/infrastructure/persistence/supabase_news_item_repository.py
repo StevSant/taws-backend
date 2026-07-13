@@ -3,6 +3,7 @@ import re
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from typing import Any, cast
 
 from postgrest import AsyncSelectRequestBuilder, CountMethod
@@ -26,6 +27,7 @@ from app.infrastructure.persistence.news_item_row_mapper import (
 )
 from app.infrastructure.persistence.sentiment_filter_to_range import sentiment_filter_to_range
 from app.infrastructure.persistence.supabase_client_cache import SupabaseClientCache
+from app.infrastructure.persistence.with_supabase_retry import with_supabase_retry
 
 _NEWS_ITEMS_TABLE = "news_items"
 _DEFAULT_SENTIMENT_NEUTRAL_THRESHOLD = 0.15
@@ -42,6 +44,13 @@ class SupabaseNewsItemRepository(NewsItemRepository):
     See `migrations/versions/0009_news_items.py` for the `news_items` schema. Not
     user-scoped — see that migration's RLS rationale (same "shared reference data,
     written via the service-role key" model as `signals`).
+
+    Every `.execute()` is wrapped in `with_supabase_retry` (issue #7), like every other
+    `Supabase*Repository`. This adapter was the one that wasn't: it issued its calls raw, so
+    a transient `httpx.ConnectError`/`ReadTimeout` — the exact fault the shared helper exists
+    to absorb — aborted an ingest batch outright instead of retrying it. That mattered more
+    here than anywhere else, because this repository sits on the scheduled ingest path where
+    a dropped batch is silently just... missing news, with no user to see the error.
     """
 
     def __init__(
@@ -49,9 +58,16 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         supabase_url: str | None,
         supabase_key: str | None,
         sentiment_neutral_threshold: float = _DEFAULT_SENTIMENT_NEUTRAL_THRESHOLD,
+        retry_max_attempts: int = 2,
+        retry_backoff_base_seconds: float = 0.2,
     ) -> None:
         self._clients = SupabaseClientCache(supabase_url, supabase_key)
         self._sentiment_neutral_threshold = sentiment_neutral_threshold
+        self._retry = partial(
+            with_supabase_retry,
+            max_attempts=retry_max_attempts,
+            backoff_base_seconds=retry_backoff_base_seconds,
+        )
 
     async def upsert_many(self, items: list[NewsItem]) -> list[NewsItem]:
         """Insert every item not already known by `url` (`ON CONFLICT (url) DO NOTHING`,
@@ -66,10 +82,12 @@ class SupabaseNewsItemRepository(NewsItemRepository):
 
         client = await self._clients.get()
         rows = [news_item_to_insert_row(item) for item in items]
-        await (
-            client.table(_NEWS_ITEMS_TABLE)
-            .upsert(rows, on_conflict="url", ignore_duplicates=True)
-            .execute()
+        await self._retry(
+            lambda: (
+                client.table(_NEWS_ITEMS_TABLE)
+                .upsert(rows, on_conflict="url", ignore_duplicates=True)
+                .execute()
+            )
         )
 
         # One backfill round-trip per item, fanned out concurrently: run sequentially this
@@ -84,7 +102,9 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         await self._backfill_categories(client, items)
 
         urls = [item.url for item in items]
-        response = await client.table(_NEWS_ITEMS_TABLE).select("*").in_("url", urls).execute()
+        response = await self._retry(
+            lambda: client.table(_NEWS_ITEMS_TABLE).select("*").in_("url", urls).execute()
+        )
         persisted = [news_item_from_row(row) for row in response.data]
         by_url = {news_item.url: news_item for news_item in persisted}
         return [by_url[item.url] for item in items if item.url in by_url]
@@ -93,12 +113,14 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         """Fill in `image_url` on an already-persisted row that has none — a later fetch of
         the same article (via a provider that does carry images) enriches the stored row,
         while never overwriting an image already on it (`.is_("image_url", "null")`)."""
-        await (
-            client.table(_NEWS_ITEMS_TABLE)
-            .update({"image_url": item.image_url})
-            .eq("url", item.url)
-            .is_("image_url", "null")
-            .execute()
+        await self._retry(
+            lambda: (
+                client.table(_NEWS_ITEMS_TABLE)
+                .update({"image_url": item.image_url})
+                .eq("url", item.url)
+                .is_("image_url", "null")
+                .execute()
+            )
         )
 
     async def _backfill_summary(self, client: Any, item: NewsItem) -> None:
@@ -107,12 +129,14 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         (the feed's description was never read), and `ignore_duplicates` means a re-fetch
         would never repair them. Guarded on `summary = ''` so this can only ever fill a
         blank, never overwrite a real one."""
-        await (
-            client.table(_NEWS_ITEMS_TABLE)
-            .update({"summary": item.summary})
-            .eq("url", item.url)
-            .eq("summary", "")
-            .execute()
+        await self._retry(
+            lambda: (
+                client.table(_NEWS_ITEMS_TABLE)
+                .update({"summary": item.summary})
+                .eq("url", item.url)
+                .eq("summary", "")
+                .execute()
+            )
         )
 
     async def _backfill_categories(self, client: AsyncClient, items: list[NewsItem]) -> None:
@@ -135,12 +159,17 @@ class SupabaseNewsItemRepository(NewsItemRepository):
                 urls_by_category[item.category.value].append(item.url)
 
         for category, urls in urls_by_category.items():
-            await (
-                client.table(_NEWS_ITEMS_TABLE)
-                .update({"category": category})
-                .in_("url", urls)
-                .is_("category", "null")
-                .execute()
+            # `category=category, urls=urls` binds this iteration's values into the lambda
+            # rather than closing over the loop variables, which a retry (or any deferred
+            # call) would otherwise re-read after they had moved on.
+            await self._retry(
+                lambda category=category, urls=urls: (
+                    client.table(_NEWS_ITEMS_TABLE)
+                    .update({"category": category})
+                    .in_("url", urls)
+                    .is_("category", "null")
+                    .execute()
+                )
             )
 
     async def list_recent(
@@ -153,12 +182,16 @@ class SupabaseNewsItemRepository(NewsItemRepository):
             # `related_symbols` is a `text[]` (migration 0009) — `overlaps` is the array
             # `&&` operator, i.e. "linked to at least one of these instruments".
             query = query.overlaps("related_symbols", symbols)
-        response = await query.order("published_at", desc=True).limit(limit).execute()
+        response = await self._retry(
+            lambda: query.order("published_at", desc=True).limit(limit).execute()
+        )
         return [news_item_from_row(row) for row in response.data]
 
     async def get_by_id(self, news_id: str) -> NewsItem | None:
         client = await self._clients.get()
-        response = await client.table(_NEWS_ITEMS_TABLE).select("*").eq("id", news_id).execute()
+        response = await self._retry(
+            lambda: client.table(_NEWS_ITEMS_TABLE).select("*").eq("id", news_id).execute()
+        )
         return news_item_from_row(response.data[0]) if response.data else None
 
     async def browse(self, query: NewsBrowseQuery) -> PaginatedNewsItems:
@@ -174,7 +207,9 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         request = self._apply_order(request, query)
 
         start = query.offset
-        response = await request.range(start, start + query.page_size - 1).execute()
+        response = await self._retry(
+            lambda: request.range(start, start + query.page_size - 1).execute()
+        )
         return PaginatedNewsItems(
             items=[news_item_from_row(row) for row in response.data],
             total=response.count or 0,
@@ -190,7 +225,9 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         honest: a value only appears if some row can actually be filtered down to it.
         """
         client = await self._clients.get()
-        response = await client.table(_NEWS_ITEMS_TABLE).select("source, provider").execute()
+        response = await self._retry(
+            lambda: client.table(_NEWS_ITEMS_TABLE).select("source, provider").execute()
+        )
         # `response.data` is typed as a JSON union, so indexing it by key doesn't type-check;
         # the row mappers in this package take the same escape hatch (`news_item_from_row`
         # accepts `Any`).
@@ -253,15 +290,57 @@ class SupabaseNewsItemRepository(NewsItemRepository):
 
     async def list_pending(self, limit: int) -> list[NewsItem]:
         client = await self._clients.get()
-        response = (
-            await client.table(_NEWS_ITEMS_TABLE)
-            .select("*")
-            .eq("analysis_status", AnalysisStatus.PENDING.value)
-            .order("published_at", desc=True)
-            .limit(limit)
-            .execute()
+        response = await self._retry(
+            lambda: (
+                client.table(_NEWS_ITEMS_TABLE)
+                .select("*")
+                .eq("analysis_status", AnalysisStatus.PENDING.value)
+                .order("published_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
         )
         return [news_item_from_row(row) for row in response.data]
+
+    async def list_unscored(self, limit: int) -> list[NewsItem]:
+        client = await self._clients.get()
+        response = await self._retry(
+            lambda: (
+                client.table(_NEWS_ITEMS_TABLE)
+                .select("*")
+                .is_("sentiment_score", "null")
+                .order("published_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+        )
+        return [news_item_from_row(row) for row in response.data]
+
+    async def save_sentiment_scores(self, scores_by_id: dict[str, float]) -> None:
+        """One UPDATE per distinct score, not per row.
+
+        The scores are a small set of floats over a much larger set of ids, so grouping the ids
+        by score collapses a chunk-sized write into a handful of round trips — the same
+        "batch by value, not by row" shape `_backfill_categories` already uses. A per-item loop
+        here would put a network round trip on every article in the backlog.
+        """
+        if not scores_by_id:
+            return
+
+        ids_by_score: dict[float, list[str]] = defaultdict(list)
+        for news_id, score in scores_by_id.items():
+            ids_by_score[score].append(news_id)
+
+        client = await self._clients.get()
+        for score, news_ids in ids_by_score.items():
+            await self._retry(
+                lambda score=score, news_ids=news_ids: (  # type: ignore[misc]
+                    client.table(_NEWS_ITEMS_TABLE)
+                    .update({"sentiment_score": score})
+                    .in_("id", news_ids)
+                    .execute()
+                )
+            )
 
     async def list_related(self, item: NewsItem, limit: int) -> list[NewsItem]:
         """Shared-symbol matches first, then same-source, then plain recency — see the port
@@ -300,11 +379,13 @@ class SupabaseNewsItemRepository(NewsItemRepository):
             return []
         client = await self._clients.get()
         query = narrow(client.table(_NEWS_ITEMS_TABLE).select("*"))
-        response = (
-            await query.not_.in_("id", list(seen))
-            .order("published_at", desc=True)
-            .limit(limit)
-            .execute()
+        response = await self._retry(
+            lambda: (
+                query.not_.in_("id", list(seen))
+                .order("published_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
         )
         items = [news_item_from_row(row) for row in response.data]
         seen.update(news_item.id for news_item in items)
@@ -314,15 +395,17 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         self, symbol: str, from_date: date, to_date: date, limit: int
     ) -> list[NewsItem]:
         client = await self._clients.get()
-        response = (
-            await client.table(_NEWS_ITEMS_TABLE)
-            .select("*")
-            .contains("related_symbols", [symbol])
-            .gte("published_at", from_date.isoformat())
-            .lt("published_at", (to_date + timedelta(days=1)).isoformat())
-            .order("published_at", desc=True)
-            .limit(limit)
-            .execute()
+        response = await self._retry(
+            lambda: (
+                client.table(_NEWS_ITEMS_TABLE)
+                .select("*")
+                .contains("related_symbols", [symbol])
+                .gte("published_at", from_date.isoformat())
+                .lt("published_at", (to_date + timedelta(days=1)).isoformat())
+                .order("published_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
         )
         return [news_item_from_row(row) for row in response.data]
 
@@ -337,16 +420,18 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         was previously gated and is now `analyzed` doesn't keep a stale `skip_reason` (and
         vice-versa) — see the port's contract."""
         client = await self._clients.get()
-        response = (
-            await client.table(_NEWS_ITEMS_TABLE)
-            .update(
-                {
-                    "analysis_status": status.value,
-                    "signal_id": signal_id,
-                    "skip_reason": skip_reason.value if skip_reason else None,
-                }
+        response = await self._retry(
+            lambda: (
+                client.table(_NEWS_ITEMS_TABLE)
+                .update(
+                    {
+                        "analysis_status": status.value,
+                        "signal_id": signal_id,
+                        "skip_reason": skip_reason.value if skip_reason else None,
+                    }
+                )
+                .eq("id", news_item_id)
+                .execute()
             )
-            .eq("id", news_item_id)
-            .execute()
         )
         return news_item_from_row(response.data[0])

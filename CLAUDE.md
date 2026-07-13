@@ -124,9 +124,13 @@ reference. **No SQLAlchemy ORM models / autogenerate**: the runtime data layer i
 ## Environment / settings rule
 
 `Settings` in `core/config/settings.py` is the only place env vars are read. Every
-field must exist in `.env.example` with a placeholder and a short comment. `REDIS_URL`
-is optional — leave it unset locally; `Container.get_agent_memory()` falls back to
-`InMemoryCheckpointer` automatically when it's not configured.
+field must exist in `.env.example` with a placeholder and a short comment. The durable
+agent checkpointer is now Postgres, keyed off `DATABASE_URL` (the same direct connection
+string the vector store and Alembic use). `REDIS_URL` is a LEGACY fallback and optional;
+leave both unset locally and `Container.get_agent_memory()` uses `InMemoryCheckpointer`
+automatically. `initialize_agent_memory()` (awaited in `main.py`'s lifespan) builds the
+Postgres checkpointer and degrades to in-memory with a loud log — never a boot crash —
+when `DATABASE_URL` is set but unreachable.
 
 ## uv commands
 
@@ -190,6 +194,47 @@ Nothing else in the codebase needs to change.
 `chat_graph.build_chat_graph` (the original single-node graph) still exists but is no longer
 wired into `Container` — kept only as a minimal reference shape.
 
+### Locale: two channels, one value (issue #67)
+
+The reply's locale is resolved **once per request**, before the stream opens
+(`application/profile/use_cases/resolve_locale.py`: request locale → the user's stored
+`preferred_locale` → `Settings.default_locale`), and `LangGraphAgentRunner.stream` then sends it
+down **two** channels — because the graph has two kinds of consumer and they can't read the same
+one:
+
+| Consumer | Channel | Reads it via |
+|----------|---------|--------------|
+| supervisor + specialist **nodes** | `SupervisorState["locale"]` | they already take `state` |
+| **tools** | the run's `config["configurable"]["locale"]` (`LOCALE_CONFIG_KEY`) | `tools/resolve_tool_locale.py` |
+
+A tool is invoked by `invoke_with_bound_tools` from *inside* a node, so it never receives the
+graph state — the config is the only channel that reaches it. Same value, one resolution, so the
+two can't disagree.
+
+**When you add a tool that produces LLM-written prose** (a thesis, a rationale, a narrative — as
+opposed to raw numbers or verbatim source headlines), wire the locale like this:
+
+```python
+async def _run(symbol: str, config: RunnableConfig) -> str:          # `config` is INJECTED
+    locale = resolve_tool_locale(config, default_locale)             # turn's locale, else fallback
+    result = await use_case.execute(symbol, locale)
+```
+
+- Annotating the parameter `RunnableConfig` makes LangChain inject the ambient config **and keep
+  the parameter out of the tool's args schema** — so the model never sees it and can't pick a
+  language itself. Don't add `locale` as a normal tool argument.
+- Keep `default_locale` as the constructor-injected **fallback**, not the operating locale: it's
+  what applies where there is no per-turn locale to read (the Telegram and scheduled paths, and
+  direct calls outside a graph run).
+- Do **not** capture `default_locale` and pass it straight to the use case. That's the bug this
+  design replaced: the tools were frozen to the container's default at build time, so a Spanish
+  user's chat-initiated signal/sentiment/scenario was generated in — and, for the cached ones,
+  *stored under* — the server default.
+
+Note the locale instruction (`application/common/build_locale_instruction.py`) is also
+**re-asserted after tool results** in `invoke_with_bound_tools`: tool output is English-heavy and
+lands in the recency slot, so the rule has to sit below it, not just in the system block.
+
 ### Trace events
 
 Every node emits `AgentTrace` frames via LangGraph's `get_stream_writer()`
@@ -223,9 +268,13 @@ these three values; `AgentTrace` (`domain/agents/entities/agent_trace.py`) is th
   propagating — a mid-stream failure still reaches the client as a well-formed frame instead of
   dropping the connection.
 - **Per-thread history is the checkpointer's job**, not the application layer's: the
-  `AgentMemory` port (`Container.get_agent_memory()`, in-memory or Redis) supplies the
-  checkpointer, which persists/replays each thread's accumulated `messages` list keyed by
-  `thread_id`. `StreamReply.execute(thread_id, message)` only forwards a single new
+  `AgentMemory` port (`Container.get_agent_memory()`) supplies the checkpointer, which
+  persists/replays each thread's accumulated `messages` list keyed by `thread_id`. The
+  primary durable adapter is `PostgresCheckpointer` (LangGraph's `AsyncPostgresSaver`,
+  built at startup by `initialize_agent_memory()`); it's the only one whose async
+  `aget_tuple`/`aput` the `astream` runner can actually await. `RedisCheckpointer` is a
+  LEGACY path (the sync `RedisSaver` leaves those async methods unimplemented, so it errors
+  on module-capable Redis), and `InMemoryCheckpointer` is the dev/offline fallback. `StreamReply.execute(thread_id, message)` only forwards a single new
   `Message` and passes `AgentStreamEvent`s straight through — it does not build or persist a
   message list itself, so multi-turn conversations aren't amnesiac between calls with the same
   `thread_id`.

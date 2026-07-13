@@ -11,7 +11,19 @@ class ScenarioConsensusExtraction(BaseModel):
     agreements: list[str] = Field(default_factory=list, max_length=6)
     disagreements: list[str] = Field(default_factory=list, max_length=6)
     uncertainties: list[str] = Field(default_factory=list, max_length=6)
-    confidence: float = Field(ge=0.0, le=1.0)
+    # Optional with a 0.0 default, mirroring the domain `ScenarioConsensus.confidence`. Under
+    # `strict: False` structured output OpenAI does not enforce required fields, and models
+    # reliably DROP this one nested scalar when it carries no description — which failed schema
+    # validation on every attempt and 503'd the whole run (the sibling
+    # `ScenarioAssetClassSynthesisDraft.confidence`, which IS described, was never dropped). A
+    # description now nudges the model to fill it; the default keeps one missing scalar from
+    # nuking an otherwise-complete, grounded synthesis.
+    confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Overall confidence in the consensus conclusion, from 0.0 to 1.0.",
+    )
 
 
 class ScenarioSynthesisExtraction(BaseModel):

@@ -17,3 +17,6 @@ class MemoryEventRepository(EventRepositoryPort):
 
     async def list_all(self) -> list[EnrichedEvent]:
         return list(self._events)
+
+    async def get(self, event_id: str) -> EnrichedEvent | None:
+        return next((event for event in self._events if event.id == event_id), None)

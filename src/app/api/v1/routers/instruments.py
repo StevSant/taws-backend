@@ -4,12 +4,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.v1.dependencies import (
-    get_instrument_metadata_provider,
     get_instrument_universe,
-    get_market_data_provider,
+    get_list_enriched_instruments_use_case,
     get_register_instrument_use_case,
     get_search_coins_use_case,
-    get_signal_repository,
     get_watchlist_repository,
     require_current_user,
 )
@@ -31,12 +29,7 @@ from app.application.instruments.use_cases import (
 )
 from app.core.config import Settings, get_settings
 from app.domain.market.entities import AssetClass, CoinCandidate
-from app.domain.market.ports import (
-    InstrumentMetadataProvider,
-    InstrumentUniverse,
-    MarketDataProvider,
-)
-from app.domain.signals.ports import SignalRepository
+from app.domain.market.ports import InstrumentUniverse
 from app.domain.watchlist.entities import Watchlist
 from app.domain.watchlist.ports import WatchlistRepository
 
@@ -68,11 +61,8 @@ async def list_instruments(
 
 @router.get("/enriched")
 async def list_enriched_instruments(
-    universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
-    market_data_provider: Annotated[MarketDataProvider, Depends(get_market_data_provider)],
-    signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
-    instrument_metadata_provider: Annotated[
-        InstrumentMetadataProvider, Depends(get_instrument_metadata_provider)
+    use_case: Annotated[
+        ListEnrichedInstruments, Depends(get_list_enriched_instruments_use_case)
     ],
     settings: Annotated[Settings, Depends(get_settings)],
     asset_class: Annotated[AssetClass | None, Query()] = None,
@@ -92,12 +82,6 @@ async def list_enriched_instruments(
     instrument per column (cf. the #44 N+1 warning). The server does one bounded concurrent
     fan-out over the small curated universe instead.
     """
-    use_case = ListEnrichedInstruments(
-        instrument_universe=universe,
-        market_data_provider=market_data_provider,
-        signal_repository=signal_repository,
-        instrument_metadata_provider=instrument_metadata_provider,
-    )
     page_result = await use_case.execute(
         # `locale` selects which localized signal to show per row (issue #29): signals are
         # cached per `(symbol, locale)`, so the explorer has to say which language it wants.

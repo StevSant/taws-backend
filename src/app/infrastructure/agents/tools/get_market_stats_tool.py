@@ -4,6 +4,10 @@ from pydantic import BaseModel, Field
 from app.application.quant.market_stats import MarketStats
 from app.application.quant.unknown_instrument_error import UnknownInstrumentError
 from app.application.quant.use_cases.compute_market_stats import ComputeMarketStats
+from app.domain.market.errors import MarketDataUnavailableError
+from app.infrastructure.agents.tools.market_data_unavailable_message import (
+    market_data_unavailable_message,
+)
 
 _DEFAULT_WINDOW_DAYS = 30
 
@@ -36,6 +40,8 @@ def build_get_market_stats_tool(compute_market_stats: ComputeMarketStats) -> Str
             stats = await compute_market_stats.execute(instrument_symbol.upper(), window_days)
         except UnknownInstrumentError as exc:
             return str(exc)
+        except MarketDataUnavailableError as exc:
+            return market_data_unavailable_message(instrument_symbol.upper(), exc)
         return _format_market_stats(stats)
 
     return StructuredTool.from_function(

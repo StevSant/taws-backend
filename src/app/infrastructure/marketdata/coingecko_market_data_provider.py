@@ -8,6 +8,9 @@ import httpx
 from app.domain.market.entities import Instrument, PriceCandle, PriceSeries
 from app.domain.market.ports import MarketDataProvider
 from app.infrastructure.caching import TtlCache
+from app.infrastructure.marketdata.coingecko_get import coingecko_get
+from app.infrastructure.marketdata.coingecko_key_ring import CoinGeckoKeyRing
+from app.infrastructure.marketdata.coingecko_rate_limited_error import CoinGeckoRateLimitedError
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +52,24 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
         coingecko_id_overrides: dict[str, str] | None = None,
         timeout_seconds: float = 10.0,
         cache_ttl_seconds: float = 60.0,
-        api_key: str | None = None,
+        key_ring: CoinGeckoKeyRing | None = None,
         cooldown_seconds: float = 300.0,
+        max_history_days: int = 365,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._base_url = base_url
         self._overrides = coingecko_id_overrides or {}
         self._timeout_seconds = timeout_seconds
-        # Optional free "Demo" API key, sent as the `x-cg-demo-api-key` header to lift the
-        # keyless public rate limits. Empty string -> None -> no header (keyless mode).
-        self._api_key = api_key or None
+        # Shared pooled client threaded through `coingecko_get` (issue #71 perf); `None` keeps
+        # the per-call client behavior used by the failover unit tests. See `coingecko_get`.
+        self._http_client = http_client
+        # Public/Demo tiers refuse windows beyond this with `error_code: 10012`. Clamp instead
+        # of sending a request we know will 400 — the `max` chart timeframe asks for 1825 days.
+        self._max_history_days = max_history_days
+        # The Demo API keys, tried in order with failover on a 429 (see `CoinGeckoKeyRing`).
+        # Shared with the metadata/search adapters — one key's quota is spent by all three.
+        # Defaults to an empty ring, i.e. the keyless public API.
+        self._key_ring = key_ring or CoinGeckoKeyRing([])
         # Short-TTL cache (issue #8): CoinGecko's free tier rate-limits (429) hard when
         # the same handful of crypto instruments get polled every ~60s. Keyed by
         # `(coin_id, days)` for series, plain `coin_id` for last-price — two independent
@@ -66,18 +78,24 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
             cache_ttl_seconds
         )
         self._last_price_cache: TtlCache[str, float | None] = TtlCache(cache_ttl_seconds)
-        # Circuit breaker: the TtlCache only ever stores *successful* responses, so while
-        # CoinGecko is rate-limiting (429) the cache never populates and every request
-        # re-hits the live API — turning one 429 into a continuous per-poll storm. Once a
-        # live call fails, back off for `cooldown_seconds` and serve fixtures (by returning
-        # an empty result the RoutingMarketDataProvider falls back on) instead of hammering
-        # the API on every poll. `None` = not currently backing off.
+        # Circuit breaker for when CoinGecko itself is DOWN (5xx / unreachable): the TtlCache
+        # only ever stores *successful* responses, so while CoinGecko is failing the cache
+        # never populates and every request re-hits the live API — turning one outage into a
+        # continuous per-poll storm. Back off for `cooldown_seconds` and report prices as
+        # unavailable instead. `None` = not currently backing off.
+        #
+        # Rate limits (429) are deliberately NOT this breaker's job anymore: they are handled
+        # per-key by `CoinGeckoKeyRing`, which benches only the throttled key and fails the
+        # same request over to the next one. Tripping this provider-wide breaker on a 429 was
+        # exactly what turned one exhausted key into a 5-minute blackout of EVERY crypto
+        # instrument (the `503 No real market data available for BTC` the radar surfaced).
         self._cooldown_seconds = cooldown_seconds
         self._cooldown_until: float | None = None
 
     async def get_price_series(self, instrument: Instrument, days: int = 30) -> PriceSeries:
         coin_id = self._resolve_id(instrument)
-        cache_key = (coin_id, days)
+        window_days = min(days, self._max_history_days)
+        cache_key = (coin_id, window_days)
         cached = self._price_series_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -85,15 +103,19 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
             return PriceSeries(symbol=instrument.symbol, candles=[])
 
         try:
-            async with httpx.AsyncClient(
-                base_url=self._base_url, timeout=self._timeout_seconds, headers=self._headers()
-            ) as client:
-                response = await client.get(
-                    f"/coins/{coin_id}/market_chart",
-                    params={"vs_currency": "usd", "days": days, "interval": "daily"},
-                )
-                response.raise_for_status()
-                payload = response.json()
+            payload = await coingecko_get(
+                base_url=self._base_url,
+                path=f"/coins/{coin_id}/market_chart",
+                params={"vs_currency": "usd", "days": window_days, "interval": "daily"},
+                timeout_seconds=self._timeout_seconds,
+                key_ring=self._key_ring,
+                http_client=self._http_client,
+            )
+        except CoinGeckoRateLimitedError:
+            # Every key is throttled. The ring is already timing each key's comeback, so do
+            # NOT also trip the provider-wide breaker — that would keep crypto dark for the
+            # full `cooldown_seconds` even after a key's per-minute window rolled over.
+            return PriceSeries(symbol=instrument.symbol, candles=[])
         except httpx.HTTPError as error:
             self._enter_cooldown(error)
             return PriceSeries(symbol=instrument.symbol, candles=[])
@@ -112,14 +134,16 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
             return None
 
         try:
-            async with httpx.AsyncClient(
-                base_url=self._base_url, timeout=self._timeout_seconds, headers=self._headers()
-            ) as client:
-                response = await client.get(
-                    "/simple/price", params={"ids": coin_id, "vs_currencies": "usd"}
-                )
-                response.raise_for_status()
-                payload = response.json()
+            payload = await coingecko_get(
+                base_url=self._base_url,
+                path="/simple/price",
+                params={"ids": coin_id, "vs_currencies": "usd"},
+                timeout_seconds=self._timeout_seconds,
+                key_ring=self._key_ring,
+                http_client=self._http_client,
+            )
+        except CoinGeckoRateLimitedError:
+            return None
         except httpx.HTTPError as error:
             self._enter_cooldown(error)
             return None
@@ -132,10 +156,6 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
     def _resolve_id(self, instrument: Instrument) -> str:
         return self._overrides.get(instrument.symbol, instrument.symbol.lower())
 
-    def _headers(self) -> dict[str, str]:
-        """CoinGecko Demo API key header when configured; empty (keyless) otherwise."""
-        return {"x-cg-demo-api-key": self._api_key} if self._api_key else {}
-
     def _in_cooldown(self) -> bool:
         """True while backing off from a recent live failure; clears itself once elapsed."""
         if self._cooldown_until is None:
@@ -146,10 +166,28 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
         return True
 
     def _enter_cooldown(self, error: Exception) -> None:
-        """Back off from CoinGecko after a live failure, logging once per cooldown window."""
+        """Back off from CoinGecko, but ONLY when backing off is the right answer.
+
+        A 5xx (API down) or a network failure means "stop calling me" — backing off is
+        correct. A 4xx means WE sent a bad request; the API is perfectly healthy, and
+        silencing it for the whole cooldown window punishes every other instrument for one
+        malformed call. That distinction is not academic: the `max` chart timeframe asked
+        for 1825 days, CoinGecko's public tier caps history at 365 and rejected it with a
+        400, and that single 400 blanked out crypto pricing for 5 minutes — which is how a
+        user clicking "max" ended up looking at a synthetic BTC chart.
+
+        A 429 no longer reaches here at all: `coingecko_get` turns it into a
+        `CoinGeckoRateLimitedError` after exhausting the key ring, and the caller returns empty
+        without arming this breaker. `_is_client_error` still excludes 429 as defense in
+        depth, in case a future call site bypasses `coingecko_get`.
+        """
+        if _is_client_error(error):
+            logger.warning("CoinGecko rejected our request (%s); not backing off.", error)
+            return
         self._cooldown_until = time.monotonic() + self._cooldown_seconds
         logger.warning(
-            "CoinGecko unavailable (%s); backing off for %.0fs and serving fixtures.",
+            "CoinGecko unavailable (%s); backing off for %.0fs. Crypto prices will be "
+            "reported as unavailable until it recovers.",
             error,
             self._cooldown_seconds,
         )
@@ -172,3 +210,16 @@ class CoinGeckoMarketDataProvider(MarketDataProvider):
             close=price,
             volume=None,
         )
+
+
+def _is_client_error(error: Exception) -> bool:
+    """True for a 4xx OTHER than 429 — i.e. our request was wrong, not CoinGecko's fault.
+
+    429 is excluded deliberately: it is nominally 4xx but it genuinely means "stop calling
+    me", and that is the key ring's job (bench the throttled key, fail over to the next),
+    not this provider-wide breaker's.
+    """
+    if not isinstance(error, httpx.HTTPStatusError):
+        return False
+    status = error.response.status_code
+    return 400 <= status < 500 and status != 429

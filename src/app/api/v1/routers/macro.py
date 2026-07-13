@@ -56,6 +56,8 @@ async def get_macro_series(
 async def interpret_macro_event(
     payload: InterpretMacroEventRequest,
     use_case: Annotated[InterpretMacroEvent, Depends(get_interpret_macro_event_use_case)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    locale: Annotated[str | None, Query()] = None,
 ) -> MacroEventInterpretationResponse:
     """Trigger the Macro Analyst on-demand for one event (issue #21): tags every asset
     class with a direction + magnitude, grounded in the real current FRED/VIX state.
@@ -65,6 +67,14 @@ async def interpret_macro_event(
     is optional; omitting it interprets the current macro state generally. Never raises:
     `InterpretMacroEvent` degrades to a fallback interpretation instead of erroring when
     structured output is unavailable, so this endpoint always returns `201`.
+
+    `locale` localizes each asset class's `rationale` prose and defaults to
+    `Settings.default_locale` — the same query-param + default shape as
+    `POST /api/v1/sentiment/{symbol}/analyze`. Being unauthenticated, this endpoint can't
+    resolve a locale from the caller's stored profile the way `/chat/stream` does, so an
+    explicit param is the only per-request signal available.
     """
-    interpretation = await use_case.execute(payload.event_description)
+    interpretation = await use_case.execute(
+        payload.event_description, locale or settings.default_locale
+    )
     return MacroEventInterpretationResponse.model_validate(interpretation)

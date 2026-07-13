@@ -1,8 +1,10 @@
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from app.application.macro.use_cases import InterpretMacroEvent
 from app.domain.macro.entities import MacroEventInterpretation
+from app.infrastructure.agents.tools.resolve_tool_locale import resolve_tool_locale
 
 
 class _InterpretMacroEventArgs(BaseModel):
@@ -15,19 +17,29 @@ class _InterpretMacroEventArgs(BaseModel):
     )
 
 
-def build_interpret_macro_event_tool(use_case: InterpretMacroEvent) -> StructuredTool:
+def build_interpret_macro_event_tool(
+    use_case: InterpretMacroEvent,
+    default_locale: str,
+) -> StructuredTool:
     """Build a LangChain tool wrapping `InterpretMacroEvent` for the `macro` specialist
     node — thin wrapper, same shape as `generate_consequence_chain_tool.py`.
 
     Bound only to the `macro` specialist node (see `specialist_node_factory.py` /
     `supervisor_graph.py`). The wrapped use case is the same reusable
-    `InterpretMacroEvent.execute(event_description)` also called directly by
+    `InterpretMacroEvent.execute(event_description, locale)` also called directly by
     `POST /api/v1/macro/interpret`, so an interpretation generated through chat and one
     generated through the REST endpoint always come from the same code path.
+
+    The locale is read from the turn's `RunnableConfig` (see `resolve_tool_locale`), with
+    `default_locale` as the fallback. This tool had no locale parameter at all until now, so
+    every asset-class `rationale` it produced came back in the prompt's authoring language —
+    English — regardless of who was asking.
     """
 
-    async def _run(event_description: str | None = None) -> str:
-        interpretation = await use_case.execute(event_description)
+    async def _run(config: RunnableConfig, event_description: str | None = None) -> str:
+        interpretation = await use_case.execute(
+            event_description, resolve_tool_locale(config, default_locale)
+        )
         return _format_interpretation(interpretation)
 
     return StructuredTool.from_function(

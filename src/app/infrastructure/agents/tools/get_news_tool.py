@@ -28,12 +28,25 @@ def build_get_news_tool(news_provider: NewsProvider) -> StructuredTool:
         symbols = [symbol.upper()] if symbol else None
         fetch_limit = limit if symbol else min(limit * 5, 50)
         items = await news_provider.fetch_news(symbols=symbols, limit=fetch_limit)
+        fell_back = False
+        if not items and symbol:
+            # The requested symbol matched nothing — this also catches free-text the model
+            # passed as a symbol ("BIG TECH"), an untracked ticker, or a symbol with no
+            # recent coverage. Widen to market-wide news once rather than dead-ending, so the
+            # reply can still be grounded instead of the agent giving up (or, worse, inventing).
+            items = await news_provider.fetch_news(symbols=None, limit=min(limit * 5, 50))
+            fell_back = True
         if not items:
-            scope = symbol.upper() if symbol else "the market"
-            return f"No recent news was found for {scope}. Do not infer or invent events."
-        if not symbol:
+            return "No recent news was found for the market. Do not infer or invent events."
+        if not symbol or fell_back:
             items.sort(key=lambda item: bool(item.related_symbols), reverse=True)
-        return _format_news(items[:limit])
+        body = _format_news(items[:limit])
+        if fell_back:
+            return (
+                f"No news was found specifically for '{symbol}', so here is the most important "
+                "recent market-wide news instead — tell the user that when you use it.\n" + body
+            )
+        return body
 
     return StructuredTool.from_function(
         coroutine=_run,

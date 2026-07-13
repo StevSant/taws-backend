@@ -1,6 +1,7 @@
 import logging
 
-from app.domain.compliance import NOT_PERSONALIZED_ADVICE_DISCLAIMER
+from app.domain.compliance import NOT_PERSONALIZED_ADVICE_DISCLAIMER, disclaimer_for_locale
+from app.domain.event_intelligence.entities import EnrichedEvent
 from app.domain.notification.entities import (
     Alert,
     BriefingReadyNotification,
@@ -9,6 +10,7 @@ from app.domain.notification.entities import (
 from app.domain.notification.ports import NotificationChannel
 from app.domain.telegram.ports import TelegramLinkRepository, TelegramMessenger
 from app.domain.watchlist.ports import WatchlistRepository
+from app.infrastructure.telegram import build_event_alert_buttons, format_event_alert
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +53,12 @@ class TelegramNotificationChannel(NotificationChannel):
         messenger: TelegramMessenger,
         watchlist_repository: WatchlistRepository,
         telegram_link_repository: TelegramLinkRepository,
+        frontend_base_url: str,
     ) -> None:
         self._messenger = messenger
         self._watchlist_repository = watchlist_repository
         self._telegram_link_repository = telegram_link_repository
+        self._frontend_base_url = frontend_base_url
 
     async def send(self, alert: Alert) -> None:
         try:
@@ -102,6 +106,38 @@ class TelegramNotificationChannel(NotificationChannel):
                 notification.user_id,
             )
 
+    async def broadcast_event_alert(self, event: EnrichedEvent) -> None:
+        """Fan one important market event out to EVERY linked chat, with inline buttons.
+
+        Per-recipient isolation is the whole point of the inner try/except: one dead chat (bot
+        blocked, account deleted, chat cleared) must not abort delivery to everyone queued
+        behind it — which is exactly what a single try around the loop would do. The outer
+        guard covers the `list_all()` lookup itself, keeping this method's never-raise contract
+        whole so a scheduled Sentinel scan can't be killed by a transient Supabase blip.
+        """
+        try:
+            links = await self._telegram_link_repository.list_all()
+        except Exception:  # noqa: BLE001 — this port must never raise; see class docstring.
+            logger.exception("Failed to list Telegram links for event %s", event.id)
+            return
+
+        if not links:
+            logger.info("No linked Telegram chats; event %s not broadcast", event.id)
+            return
+
+        text = format_event_alert(event)
+        buttons = build_event_alert_buttons(event, self._frontend_base_url)
+        delivered = 0
+        for link in links:
+            try:
+                await self._messenger.send_text(
+                    link.chat_id, text, parse_mode="HTML", buttons=buttons
+                )
+                delivered += 1
+            except Exception:  # noqa: BLE001 — one bad chat must not stop the rest
+                logger.exception("Failed to broadcast event %s to chat %s", event.id, link.chat_id)
+        logger.info("event %s broadcast to %d/%d linked chat(s)", event.id, delivered, len(links))
+
     async def _resolve_chat_id_for_user(self, user_id: str, *, context: str) -> str | None:
         """Resolve a `user_id` directly to its linked Telegram `chat_id`, or `None` if the
         user has no linked chat. Used only by `send_scenario_match`, which — unlike
@@ -147,12 +183,24 @@ class TelegramNotificationChannel(NotificationChannel):
         return link.chat_id
 
 
+# Chrome around the alert body, per language. `consequence_hint` already arrives written in
+# `alert.locale` (see `derive_consequence_hint`); these are the remaining strings that used to be
+# unconditionally English, which is what produced a Spanish-UI user receiving an entirely English
+# Telegram alert. Keyed by primary language subtag so `es-MX` resolves to Spanish.
+_ALERT_CHROME = {
+    "es": {"header": "Alerta TAWS", "link_label": "Ver detalles"},
+    "en": {"header": "TAWS Alert", "link_label": "View details"},
+}
+
+
 def _format_alert(alert: Alert) -> str:
+    language = alert.locale.split("-", 1)[0].strip().lower()
+    chrome = _ALERT_CHROME.get(language, _ALERT_CHROME["en"])
     return (
-        f"TAWS Alert — {alert.instrument_symbol}\n\n"
+        f"{chrome['header']} — {alert.instrument_symbol}\n\n"
         f"{alert.consequence_hint}\n\n"
-        f"View details: {alert.link_url}\n\n"
-        f"{NOT_PERSONALIZED_ADVICE_DISCLAIMER}"
+        f"{chrome['link_label']}: {alert.link_url}\n\n"
+        f"{disclaimer_for_locale(alert.locale)}"
     )
 
 

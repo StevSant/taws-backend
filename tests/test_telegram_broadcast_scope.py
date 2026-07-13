@@ -25,7 +25,7 @@ from app.api.v1.dependencies import (
 from app.api.v1.schemas import CurrentUser
 from app.core.config import get_settings
 from app.core.di import get_container
-from app.domain.telegram.entities import TelegramLink
+from app.domain.telegram.entities import InlineButton, TelegramLink
 from app.domain.telegram.ports import TelegramLinkRepository, TelegramMessenger
 from app.main import create_app
 
@@ -62,9 +62,22 @@ class FakeLinkRepository(TelegramLinkRepository):
 class RecordingMessenger(TelegramMessenger):
     def __init__(self) -> None:
         self.chat_ids: list[str] = []
+        self.buttons: list[list[list[InlineButton]] | None] = []
+        self.answered: list[str] = []
 
-    async def send_text(self, chat_id: str, text: str, *, parse_mode: str | None = None) -> None:
+    async def send_text(
+        self,
+        chat_id: str,
+        text: str,
+        *,
+        parse_mode: str | None = None,
+        buttons: list[list[InlineButton]] | None = None,
+    ) -> None:
         self.chat_ids.append(chat_id)
+        self.buttons.append(buttons)
+
+    async def answer_callback(self, callback_query_id: str, text: str | None = None) -> None:
+        self.answered.append(callback_query_id)
 
 
 @pytest.fixture

@@ -6,8 +6,7 @@ def bucket_volatility_regime(
 ) -> VolatilityLevel:
     """Bucket a raw VIX level into a `VolatilityLevel`, using configured thresholds.
 
-    Shared by `FredMacroDataProvider` (live VIX) and `FixtureMacroDataProvider` (fixture VIX) so
-    the bucketing rule never drifts between the two. Thresholds come from `Settings` (see
+    Used by `FredMacroDataProvider` on the live VIX level. Thresholds come from `Settings` (see
     `Settings.vix_low_threshold` / `vix_elevated_threshold` / `vix_high_threshold`), never
     hardcoded here.
     """

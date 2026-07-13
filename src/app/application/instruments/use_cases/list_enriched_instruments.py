@@ -6,6 +6,7 @@ from app.application.instruments.instrument_highlights import InstrumentHighligh
 from app.application.instruments.instrument_page import InstrumentPage
 from app.application.instruments.instrument_sort_field import InstrumentSortField
 from app.application.instruments.sort_direction import SortDirection
+from app.application.quant import MarketStats
 from app.application.quant.use_cases import ComputeMarketStats
 from app.domain.market.entities import AssetClass, Instrument, InstrumentMetadata, PriceCandle
 from app.domain.market.ports import (
@@ -148,23 +149,45 @@ class ListEnrichedInstruments:
         sparkline_points: int,
         metadata_by_symbol: dict[str, InstrumentMetadata],
     ) -> EnrichedInstrument:
-        stats = await self._market_stats.execute(instrument.symbol, window_days)
+        stats = await self._stats_or_none(instrument.symbol, window_days)
         metadata = metadata_by_symbol.get(instrument.symbol, _EMPTY_METADATA)
         return EnrichedInstrument(
             symbol=instrument.symbol,
             name=instrument.name,
             asset_class=instrument.asset_class,
             currency=instrument.currency,
-            last_price=stats.last_price,
-            price_delta_pct=stats.price_delta_pct,
-            volatility_pct=stats.volatility_pct,
-            volatility_regime=stats.volatility_regime,
-            sparkline=_downsample_closes(stats.candles, sparkline_points),
+            last_price=stats.last_price if stats else None,
+            price_delta_pct=stats.price_delta_pct if stats else None,
+            volatility_pct=stats.volatility_pct if stats else None,
+            volatility_regime=stats.volatility_regime if stats else None,
+            sparkline=_downsample_closes(stats.candles, sparkline_points) if stats else [],
             latest_signal=await self._latest_signal(instrument.symbol, locale),
             market_cap=metadata.market_cap,
             volume_24h=metadata.volume_24h,
             change_7d_pct=metadata.change_7d_pct,
         )
+
+    async def _stats_or_none(self, symbol: str, window_days: int) -> MarketStats | None:
+        """Market stats for one row, or `None` when the price provider can't serve it.
+
+        The price fetch is the ONE enrichment that used to be unguarded, which made this
+        endpoint all-or-nothing despite the class docstring promising per-row degradation:
+        `ComputeMarketStats` raises `MarketDataUnavailableError` when the upstream provider
+        returns no candles, `asyncio.gather` (no `return_exceptions`) propagated it, and the
+        API middleware turned one dark instrument into a 503 for the WHOLE explorer page.
+        That is how a single rate-limited crypto symbol blanked out all 28 rows.
+
+        Degrading to `None` here lets that row render with null metrics — exactly what
+        `EnrichedInstrumentResponse` already documents its nullable fields to mean — while
+        every other instrument keeps its data.
+        """
+        try:
+            return await self._market_stats.execute(symbol, window_days)
+        except Exception:
+            logger.warning(
+                "Market stats unavailable for %s; row omits price metrics.", symbol, exc_info=True
+            )
+            return None
 
     async def _latest_signal(self, symbol: str, locale: str) -> Signal | None:
         try:

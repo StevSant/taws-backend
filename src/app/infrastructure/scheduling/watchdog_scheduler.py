@@ -20,6 +20,8 @@ _DAILY_BRIEFINGS_JOB_ID = "watchdog-daily-briefings"
 _EVALUATE_SCENARIO_MONITORS_JOB_ID = "watchdog-evaluate-scenario-monitors"
 _ANALYZE_PENDING_NEWS_JOB_ID = "analyze-pending-news"
 _REFRESH_ANALYSIS_JOB_ID = "refresh-tracked-analysis"
+_SENTINEL_SCAN_JOB_ID = "sentinel-news-scan"
+_SCORE_NEWS_SENTIMENT_JOB_ID = "score-news-sentiment"
 
 
 async def _run_scan_job(container: Container, settings: Settings) -> None:
@@ -30,6 +32,7 @@ async def _run_scan_job(container: Container, settings: Settings) -> None:
         signal_repository=container.get_signal_repository(),
         notification_channel=container.get_notification_channel(),
         alerted_signal_tracker=container.get_alerted_signal_tracker(),
+        resolve_locale=container.get_resolve_locale_use_case(),
         frontend_base_url=settings.frontend_base_url,
         min_confidence=settings.watchdog_min_confidence,
     )
@@ -113,6 +116,27 @@ async def _run_analyze_pending_news_job(container: Container, settings: Settings
         logger.exception("analyze-pending-news job failed")
 
 
+async def _run_score_news_sentiment_job(container: Container, settings: Settings) -> None:
+    """Periodic per-article sentiment tick — fills `news_items.sentiment_score`.
+
+    Doubles as the backfill for the rows that predate this job: the pass selects on
+    `sentiment_score IS NULL`, so historical articles and freshly-ingested ones drain through
+    the exact same code path. `considered == news_sentiment_batch_limit` in the log below means
+    a backlog remains and the next tick has more to do.
+    """
+    use_case = container.get_score_news_sentiment_use_case()
+    try:
+        result = await use_case.execute()
+        logger.info(
+            "score-news-sentiment tick complete: %d considered, %d scored, %d failed.",
+            result.considered,
+            result.scored,
+            result.failed,
+        )
+    except Exception:  # noqa: BLE001 — same resilience guarantee as the other scheduled jobs
+        logger.exception("score-news-sentiment job failed")
+
+
 async def _run_refresh_tracked_analysis_job(container: Container, settings: Settings) -> None:
     """Periodic shared-analysis refresh tick (issue #29) — the SAME `RefreshTrackedAnalysis`
     use case `POST /api/v1/analysis/refresh` triggers on demand.
@@ -139,6 +163,29 @@ async def _run_refresh_tracked_analysis_job(container: Container, settings: Sett
         )
     except Exception:  # noqa: BLE001 — same resilience guarantee as the other scheduled jobs
         logger.exception("analysis refresh job failed")
+
+
+async def _run_sentinel_scan_job(container: Container, settings: Settings) -> None:
+    """Periodic Sentinel scan: poll real news -> Gemini judges importance -> broadcast to
+    Telegram.
+
+    This is the automatic path the product wanted and never had. Every piece existed already —
+    the Gemini analyzer returns `importance`/`should_notify`, the Telegram links resolve to chat
+    ids, this scheduler runs five other jobs — but nothing connected "an important article
+    arrived" to "tell the users". The only manual trigger, `POST /telegram/send-test-news`,
+    picks a RANDOM article and deliberately ignores importance, because its job is proving the
+    wiring works, not judging the news.
+
+    Gated by `settings.sentinel_alerts_enabled` for the same reason as the two jobs below it: it
+    spends Gemini tokens unattended AND pushes notifications to every linked user without anyone
+    asking, so an operator needs to be able to stop it without losing the Watchdog's alerting.
+    """
+    use_case = container.get_broadcast_important_events_use_case()
+    try:
+        broadcast = await use_case.execute()
+        logger.info("sentinel scan complete: %d important event(s) broadcast", len(broadcast))
+    except Exception:  # noqa: BLE001 — same resilience guarantee as the other scheduled jobs
+        logger.exception("sentinel scan job failed")
 
 
 def build_watchdog_scheduler(container: Container, settings: Settings) -> AsyncIOScheduler:
@@ -227,6 +274,25 @@ def build_watchdog_scheduler(container: Container, settings: Settings) -> AsyncI
             "analyze-pending-news job is DISABLED (NEWS_ANALYSIS_ENABLED=false): ingested news "
             "will stay 'pending' until POST /api/v1/news/analyze-pending is called on demand."
         )
+    if settings.news_sentiment_enabled:
+        scheduler.add_job(
+            _run_score_news_sentiment_job,
+            trigger=IntervalTrigger(minutes=settings.news_sentiment_poll_interval_minutes),
+            args=(container, settings),
+            id=_SCORE_NEWS_SENTIMENT_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+        )
+        logger.info(
+            "score-news-sentiment job scheduled every %d minute(s), %d article(s) per tick",
+            settings.news_sentiment_poll_interval_minutes,
+            settings.news_sentiment_batch_limit,
+        )
+    else:
+        logger.warning(
+            "score-news-sentiment job is DISABLED (NEWS_SENTIMENT_ENABLED=false): news items "
+            "will keep sentiment_score = NULL and render as 'unclassified' in the UI."
+        )
     if settings.analysis_refresh_enabled:
         scheduler.add_job(
             _run_refresh_tracked_analysis_job,
@@ -246,5 +312,27 @@ def build_watchdog_scheduler(container: Container, settings: Settings) -> AsyncI
             "analysis-refresh job is DISABLED (ANALYSIS_REFRESH_ENABLED=false): shared analysis "
             "will only be regenerated when a user request finds it stale, so that request pays "
             "the full pipeline latency inline."
+        )
+    if settings.sentinel_alerts_enabled:
+        scheduler.add_job(
+            _run_sentinel_scan_job,
+            trigger=IntervalTrigger(minutes=settings.sentinel_poll_interval_minutes),
+            args=(container, settings),
+            id=_SENTINEL_SCAN_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+        )
+        logger.info(
+            "sentinel-news-scan job scheduled every %d minute(s) "
+            "(importance >= %.2f, max %d alert(s) per run)",
+            settings.sentinel_poll_interval_minutes,
+            settings.sentinel_importance_threshold,
+            settings.sentinel_max_alerts_per_run,
+        )
+    else:
+        logger.warning(
+            "sentinel-news-scan job is DISABLED (SENTINEL_ALERTS_ENABLED=false): important news "
+            "will NOT be pushed to Telegram automatically. POST /event-intelligence/demo and "
+            "POST /telegram/send-test-news still work on demand."
         )
     return scheduler

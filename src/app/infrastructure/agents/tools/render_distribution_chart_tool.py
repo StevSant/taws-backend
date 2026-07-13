@@ -6,6 +6,10 @@ from app.application.charts import serialize_chart_spec
 from app.application.charts.use_cases import BuildDistributionChart
 from app.application.quant.unknown_instrument_error import UnknownInstrumentError
 from app.domain.charts.entities import ChartConfig
+from app.domain.market.errors import MarketDataUnavailableError
+from app.infrastructure.agents.tools.market_data_unavailable_message import (
+    market_data_unavailable_message,
+)
 
 
 def build_render_distribution_chart_tool(
@@ -33,6 +37,8 @@ def build_render_distribution_chart_tool(
             spec = await build_distribution_chart.execute(instrument_symbol.upper(), timeframe)
         except UnknownInstrumentError as exc:
             return str(exc)
+        except MarketDataUnavailableError as exc:
+            return market_data_unavailable_message(instrument_symbol.upper(), exc)
         get_stream_writer()({"kind": "chart", "chart": serialize_chart_spec(spec)})
         return f"Rendered a daily-return distribution for {spec.meta.symbol}."
 

@@ -8,6 +8,7 @@ from app.application.market.use_cases.ingest_news import IngestNews
 from app.application.market.use_cases.list_recent_news import ListRecentNews
 from app.application.market.use_cases.news_asset_impact import NewsAssetImpact
 from app.application.market.use_cases.news_detail import NewsDetail
+from app.application.market.use_cases.score_news_sentiment import ScoreNewsSentiment
 
 __all__ = [
     "BrowseNews",
@@ -16,6 +17,7 @@ __all__ = [
     "ListRecentNews",
     "NewsAssetImpact",
     "NewsDetail",
+    "ScoreNewsSentiment",
     "classify_news_category",
     "extract_instrument_name_tokens",
 ]

@@ -1,3 +1,4 @@
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
@@ -6,6 +7,7 @@ from app.application.signals.insufficient_evidence_error import InsufficientEvid
 from app.application.signals.unknown_instrument_error import UnknownInstrumentError
 from app.application.signals.use_cases import GenerateSignal
 from app.domain.signals.entities import Signal
+from app.infrastructure.agents.tools.resolve_tool_locale import resolve_tool_locale
 
 
 class _GenerateSignalArgs(BaseModel):
@@ -19,12 +21,20 @@ def build_generate_signal_tool(
     use_case: GenerateSignal,
     default_locale: str,
 ) -> StructuredTool:
-    """Build the Analyst tool over the existing news + price + RAG signal pipeline."""
+    """Build the Analyst tool over the existing news + price + RAG signal pipeline.
 
-    async def _run(symbol: str) -> str:
+    The signal's thesis, drivers and risks are LLM-written prose, so the locale isn't
+    cosmetic here — it's what the pipeline generates in. It comes from the turn's
+    `RunnableConfig` (see `resolve_tool_locale`), falling back to `default_locale` when
+    there's no per-turn locale to read.
+    """
+
+    async def _run(symbol: str, config: RunnableConfig) -> str:
         normalized_symbol = symbol.upper()
         try:
-            signal = await use_case.execute(normalized_symbol, default_locale)
+            signal = await use_case.execute(
+                normalized_symbol, resolve_tool_locale(config, default_locale)
+            )
         except (UnknownInstrumentError, InsufficientEvidenceError, ComplianceViolationError) as exc:
             return f"Signal unavailable: {exc}. Do not estimate or invent a replacement."
         return _format_signal(signal)

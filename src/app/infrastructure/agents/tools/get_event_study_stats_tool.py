@@ -4,6 +4,10 @@ from pydantic import BaseModel, Field
 from app.application.quant.event_study_stats import EventStudyStats
 from app.application.quant.unknown_instrument_error import UnknownInstrumentError
 from app.application.quant.use_cases.compute_event_study import ComputeEventStudy
+from app.domain.market.errors import MarketDataUnavailableError
+from app.infrastructure.agents.tools.market_data_unavailable_message import (
+    market_data_unavailable_message,
+)
 
 _DEFAULT_LOOKBACK_DAYS = 365
 _DEFAULT_MOVE_THRESHOLD_PCT = 3.0
@@ -51,6 +55,8 @@ def build_get_event_study_stats_tool(compute_event_study: ComputeEventStudy) -> 
             )
         except UnknownInstrumentError as exc:
             return str(exc)
+        except MarketDataUnavailableError as exc:
+            return market_data_unavailable_message(instrument_symbol.upper(), exc)
         return _format_event_study_stats(stats)
 
     return StructuredTool.from_function(

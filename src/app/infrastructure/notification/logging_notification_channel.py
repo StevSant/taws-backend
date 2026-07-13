@@ -1,5 +1,6 @@
 import logging
 
+from app.domain.event_intelligence.entities import EnrichedEvent
 from app.domain.notification.entities import (
     Alert,
     BriefingReadyNotification,
@@ -47,4 +48,16 @@ class LoggingNotificationChannel(NotificationChannel):
             notification.user_id,
             notification.match_reason,
             notification.link_url,
+        )
+
+    async def broadcast_event_alert(self, event: EnrichedEvent) -> None:
+        logger.info(
+            "important event alert composed: event=%s importance=%.2f confidence=%.2f "
+            "title=%r assets=%s sectors=%s",
+            event.id,
+            event.importance,
+            event.confidence,
+            event.original.title,
+            event.affected_assets,
+            event.affected_sectors,
         )

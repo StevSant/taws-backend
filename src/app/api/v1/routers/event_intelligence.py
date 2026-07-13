@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 
 from app.api.v1.dependencies import (
+    get_event_repository,
     get_process_incoming_event_use_case,
     get_telegram_link_repository,
     get_telegram_messenger,
@@ -11,9 +12,11 @@ from app.api.v1.dependencies import (
 )
 from app.api.v1.schemas import CurrentUser, EnrichedEventResponse, EventIntelligenceDemoRequest
 from app.application.event_intelligence.use_cases import ProcessIncomingEvent
+from app.core.config import Settings, get_settings
 from app.domain.event_intelligence.entities import NewsEvent
+from app.domain.event_intelligence.ports import EventRepositoryPort
 from app.domain.telegram.ports import TelegramLinkRepository, TelegramMessenger
-from app.infrastructure.telegram import format_event_alert
+from app.infrastructure.telegram import build_event_alert_buttons, format_event_alert
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +30,7 @@ async def demo_analyze_event(
     use_case: Annotated[ProcessIncomingEvent, Depends(get_process_incoming_event_use_case)],
     link_repository: Annotated[TelegramLinkRepository, Depends(get_telegram_link_repository)],
     messenger: Annotated[TelegramMessenger | None, Depends(get_telegram_messenger)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> EnrichedEventResponse:
     """Inject a news event manually and run it through the full Sentinel pipeline.
 
@@ -59,11 +63,14 @@ async def demo_analyze_event(
             )
         else:
             text = format_event_alert(enriched)
+            buttons = build_event_alert_buttons(enriched, settings.frontend_base_url)
             # Per-recipient guard: one bad chat (bot blocked, chat deleted) must never abort
             # delivery to everyone behind it in the loop.
             for link in await link_repository.list_all():
                 try:
-                    await messenger.send_text(link.chat_id, text, parse_mode="HTML")
+                    await messenger.send_text(
+                        link.chat_id, text, parse_mode="HTML", buttons=buttons
+                    )
                 except Exception:
                     logger.exception("Failed to send event alert to chat %s", link.chat_id)
 
@@ -72,8 +79,19 @@ async def demo_analyze_event(
 
 @router.get("/events")
 async def list_events(
-    use_case: Annotated[ProcessIncomingEvent, Depends(get_process_incoming_event_use_case)],
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    repository: Annotated[EventRepositoryPort, Depends(get_event_repository)],
 ) -> list[EnrichedEventResponse]:
-    """Return all events that have been processed by the Sentinel pipeline."""
-    events = await use_case._repository.list_all()
-    return [EnrichedEventResponse.model_validate(e) for e in events]
+    """Return all events that have been processed by the Sentinel pipeline, newest first.
+
+    Auth-gated like every other endpoint in this router. It previously wasn't — the one
+    route here with no `require_current_user` — which left the full Gemini-enriched event
+    feed (summaries, importance scores, affected assets, reasoning) readable by anyone who
+    could reach the API.
+
+    It also reached into `ProcessIncomingEvent._repository`, a private attribute of a use
+    case, to get at the store. The repository is a port; this now injects it directly rather
+    than borrowing another object's reference to it.
+    """
+    events = await repository.list_all()
+    return [EnrichedEventResponse.model_validate(event) for event in events]

@@ -65,6 +65,12 @@ class _FakeSignalRepository(SignalRepository):
     async def list_review_states(self, signal_id: str):  # type: ignore[no-untyped-def]
         return []
 
+    async def get_latest_for_instrument(self, symbol: str, locale: str):  # type: ignore[no-untyped-def]
+        return None
+
+    async def prune_for_instrument(self, symbol: str, locale: str, keep: int):  # type: ignore[no-untyped-def]
+        return None
+
 
 class _FakeMetadataProvider(InstrumentMetadataProvider):
     """Records every `symbols` argument passed, to assert a single batch call."""
@@ -107,7 +113,7 @@ async def test_does_one_batch_call_for_all_symbols_in_the_page() -> None:
     )
     use_case = _build_use_case([_BTC, _ETH], metadata_provider)
 
-    await use_case.execute()
+    await use_case.execute(locale="es")
 
     assert len(metadata_provider.calls) == 1
     assert set(metadata_provider.calls[0]) == {"BTC", "ETH"}
@@ -122,7 +128,7 @@ async def test_merges_metadata_per_row_when_present() -> None:
     )
     use_case = _build_use_case([_BTC, _ETH], metadata_provider)
 
-    page = await use_case.execute()
+    page = await use_case.execute(locale="es")
 
     by_symbol = {item.symbol: item for item in page.items}
     assert by_symbol["BTC"].market_cap == 1.0
@@ -139,7 +145,7 @@ async def test_symbol_absent_from_batch_result_gets_null_fields_row_still_presen
     )
     use_case = _build_use_case([_BTC, _AAPL], metadata_provider)
 
-    page = await use_case.execute()
+    page = await use_case.execute(locale="es")
 
     assert len(page.items) == 2
     by_symbol = {item.symbol: item for item in page.items}
@@ -151,7 +157,7 @@ async def test_symbol_absent_from_batch_result_gets_null_fields_row_still_presen
 async def test_provider_returning_empty_dict_leaves_all_rows_present_with_null_fields() -> None:
     use_case = _build_use_case([_BTC, _ETH, _AAPL], _AlwaysEmptyMetadataProvider())
 
-    page = await use_case.execute()
+    page = await use_case.execute(locale="es")
 
     assert len(page.items) == 3
     for item in page.items:

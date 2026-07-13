@@ -54,6 +54,12 @@ class _FakeSignalRepository(SignalRepository):
     async def list_review_states(self, signal_id: str):  # type: ignore[no-untyped-def]
         return []
 
+    async def get_latest_for_instrument(self, symbol: str, locale: str):  # type: ignore[no-untyped-def]
+        return None
+
+    async def prune_for_instrument(self, symbol: str, locale: str, keep: int):  # type: ignore[no-untyped-def]
+        return None
+
 
 class _FixedMetadataProvider(InstrumentMetadataProvider):
     """Returns a fixed reading for BTC only; AAPL is absent (no CoinGecko mapping)."""

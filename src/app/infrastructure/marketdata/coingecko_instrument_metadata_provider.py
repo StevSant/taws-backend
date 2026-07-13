@@ -6,6 +6,9 @@ import httpx
 
 from app.domain.market.entities import InstrumentMetadata
 from app.domain.market.ports import InstrumentMetadataProvider
+from app.infrastructure.marketdata.coingecko_get import coingecko_get
+from app.infrastructure.marketdata.coingecko_key_ring import CoinGeckoKeyRing
+from app.infrastructure.marketdata.coingecko_rate_limited_error import CoinGeckoRateLimitedError
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +40,19 @@ class CoinGeckoInstrumentMetadataProvider(InstrumentMetadataProvider):
         base_url: str,
         coingecko_id_overrides: dict[str, str] | None = None,
         timeout_seconds: float = 10.0,
-        api_key: str | None = None,
+        key_ring: CoinGeckoKeyRing | None = None,
         cooldown_seconds: float = 300.0,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._base_url = base_url
         self._overrides = coingecko_id_overrides or {}
         self._timeout_seconds = timeout_seconds
-        self._api_key = api_key or None
+        self._key_ring = key_ring or CoinGeckoKeyRing([])
         self._cooldown_seconds = cooldown_seconds
         self._cooldown_until: float | None = None
+        # Shared pooled client threaded through `coingecko_get` (issue #71 perf); `None` keeps
+        # the per-call client behavior used by the failover unit tests. See `coingecko_get`.
+        self._http_client = http_client
 
     async def get_metadata_batch(self, symbols: list[str]) -> dict[str, InstrumentMetadata]:
         symbol_by_coin_id = {
@@ -57,28 +64,28 @@ class CoinGeckoInstrumentMetadataProvider(InstrumentMetadataProvider):
             return {}
 
         try:
-            async with httpx.AsyncClient(
-                base_url=self._base_url, timeout=self._timeout_seconds, headers=self._headers()
-            ) as client:
-                response = await client.get(
-                    "/coins/markets",
-                    params={
-                        "vs_currency": "usd",
-                        "ids": ",".join(symbol_by_coin_id.keys()),
-                        "price_change_percentage": "7d",
-                    },
-                )
-                response.raise_for_status()
-                payload = response.json()
+            payload = await coingecko_get(
+                base_url=self._base_url,
+                path="/coins/markets",
+                params={
+                    "vs_currency": "usd",
+                    "ids": ",".join(symbol_by_coin_id.keys()),
+                    "price_change_percentage": "7d",
+                },
+                timeout_seconds=self._timeout_seconds,
+                key_ring=self._key_ring,
+                http_client=self._http_client,
+            )
             return _to_metadata_by_symbol(payload, symbol_by_coin_id)
+        except CoinGeckoRateLimitedError:
+            # Every key is throttled; the ring is already timing their comeback. Degrade to
+            # "no metadata" (the enrichment spec's null contract) WITHOUT arming the breaker.
+            return {}
         except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as error:
             # `ValueError` covers `json.JSONDecodeError` (malformed body on a 200);
             # `KeyError`/`TypeError`/`AttributeError` cover an unexpected row shape.
             self._enter_cooldown(error)
             return {}
-
-    def _headers(self) -> dict[str, str]:
-        return {"x-cg-demo-api-key": self._api_key} if self._api_key else {}
 
     def _in_cooldown(self) -> bool:
         if self._cooldown_until is None:

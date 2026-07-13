@@ -7,11 +7,13 @@ from app.api.v1.dependencies import (
     get_instrument_universe,
     get_market_data_provider,
     get_notification_channel,
+    get_resolve_locale_use_case,
     get_scenario_repository,
     get_signal_repository,
     get_watchlist_repository,
 )
 from app.api.v1.schemas import AlertResponse, ScenarioMonitorResponse
+from app.application.profile.use_cases import ResolveLocale
 from app.application.watchdog import AlertedSignalTracker
 from app.application.watchdog.use_cases import EvaluateScenarioMonitors, RunWatchdogScan
 from app.core.config import Settings, get_settings
@@ -31,6 +33,7 @@ async def scan_now(
     signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
     notification_channel: Annotated[NotificationChannel, Depends(get_notification_channel)],
     alerted_signal_tracker: Annotated[AlertedSignalTracker, Depends(get_alerted_signal_tracker)],
+    resolve_locale: Annotated[ResolveLocale, Depends(get_resolve_locale_use_case)],
 ) -> list[AlertResponse]:
     """Trigger one Watchdog scan pass immediately (demo-safe manual "Scan now" trigger).
 
@@ -44,6 +47,7 @@ async def scan_now(
         signal_repository=signal_repository,
         notification_channel=notification_channel,
         alerted_signal_tracker=alerted_signal_tracker,
+        resolve_locale=resolve_locale,
         frontend_base_url=settings.frontend_base_url,
         min_confidence=settings.watchdog_min_confidence,
     )

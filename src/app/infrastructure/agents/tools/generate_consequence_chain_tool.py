@@ -1,8 +1,10 @@
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.domain.consequence.entities import ConsequenceChain
+from app.infrastructure.agents.tools.resolve_tool_locale import resolve_tool_locale
 
 
 class _GenerateConsequenceChainArgs(BaseModel):
@@ -14,19 +16,27 @@ class _GenerateConsequenceChainArgs(BaseModel):
     )
 
 
-def build_generate_consequence_chain_tool(use_case: GenerateConsequenceChain) -> StructuredTool:
+def build_generate_consequence_chain_tool(
+    use_case: GenerateConsequenceChain,
+    default_locale: str,
+) -> StructuredTool:
     """Build a LangChain tool wrapping `GenerateConsequenceChain` for the `consequence`
     specialist node — thin wrapper, same shape as `get_signals_for_instrument_tool.py`.
 
     Bound only to the `consequence` specialist node (see `specialist_node_factory.py` /
     `supervisor_graph.py`) — the other specialists are unaffected. The wrapped use case is
-    the same reusable `GenerateConsequenceChain.execute(subject)` also called directly by
-    `POST /api/v1/consequence-chains/generate`, so a chain generated through chat and one
+    the same reusable `GenerateConsequenceChain.execute(subject, locale)` also called directly
+    by `POST /api/v1/consequence-chains/generate`, so a chain generated through chat and one
     generated through the REST endpoint always come from the same code path.
+
+    `GenerateConsequenceChain.execute` has taken an optional `locale` since issue #65, but this
+    tool never passed one — so the chain's node labels and edge mechanisms came back in English
+    for every chat user. The locale now comes from the turn's `RunnableConfig` (see
+    `resolve_tool_locale`), with `default_locale` as the fallback.
     """
 
-    async def _run(subject: str) -> str:
-        chain = await use_case.execute(subject)
+    async def _run(subject: str, config: RunnableConfig) -> str:
+        chain = await use_case.execute(subject, resolve_tool_locale(config, default_locale))
         return _format_chain(chain)
 
     return StructuredTool.from_function(

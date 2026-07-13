@@ -6,7 +6,9 @@ from app.infrastructure.agents.tools.generate_consequence_chain_tool import (
 )
 
 
-def build_consequence_tools(use_case: GenerateConsequenceChain) -> list[BaseTool]:
+def build_consequence_tools(
+    use_case: GenerateConsequenceChain, default_locale: str
+) -> list[BaseTool]:
     """Build the tools bound only to the `consequence` specialist node.
 
     Wraps the reusable `GenerateConsequenceChain` use case
@@ -15,5 +17,8 @@ def build_consequence_tools(use_case: GenerateConsequenceChain) -> list[BaseTool
     instead of reasoning about causality from memory. See `Container._get_chat_graph`
     for where this gets wired in, and `build_advisor_grounding_tools.py` for the sibling
     pattern this mirrors.
+
+    `default_locale` is only the fallback — the tool prefers the turn's locale from its injected
+    `RunnableConfig` (see `resolve_tool_locale`).
     """
-    return [build_generate_consequence_chain_tool(use_case)]
+    return [build_generate_consequence_chain_tool(use_case, default_locale)]

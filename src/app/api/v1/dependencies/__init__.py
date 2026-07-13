@@ -16,7 +16,9 @@ from app.api.v1.dependencies.get_coingecko_search_provider import get_coingecko_
 from app.api.v1.dependencies.get_conversation_repository import get_conversation_repository
 from app.api.v1.dependencies.get_email_sender import get_email_sender
 from app.api.v1.dependencies.get_embedding_provider import get_embedding_provider
+from app.api.v1.dependencies.get_event_callback_handler import get_event_callback_handler
 from app.api.v1.dependencies.get_event_news_provider import get_event_news_provider
+from app.api.v1.dependencies.get_event_repository import get_event_repository
 from app.api.v1.dependencies.get_fast_llm_provider import get_fast_llm_provider
 from app.api.v1.dependencies.get_fear_greed_provider import get_fear_greed_provider
 from app.api.v1.dependencies.get_force_analyze_news_item_use_case import (
@@ -40,6 +42,9 @@ from app.api.v1.dependencies.get_interpret_macro_event_use_case import (
 )
 from app.api.v1.dependencies.get_link_telegram_account_use_case import (
     get_link_telegram_account_use_case,
+)
+from app.api.v1.dependencies.get_list_enriched_instruments_use_case import (
+    get_list_enriched_instruments_use_case,
 )
 from app.api.v1.dependencies.get_macro_data_provider import get_macro_data_provider
 from app.api.v1.dependencies.get_market_data_provider import get_market_data_provider
@@ -109,6 +114,8 @@ __all__ = [
     "get_briefing_repository",
     "get_conversation_repository",
     "get_email_sender",
+    "get_event_callback_handler",
+    "get_event_repository",
     "get_event_news_provider",
     "get_embedding_provider",
     "get_event_news_provider",
@@ -121,6 +128,7 @@ __all__ = [
     "get_interpret_macro_event_use_case",
     "get_jwks_client",
     "get_link_telegram_account_use_case",
+    "get_list_enriched_instruments_use_case",
     "get_analyze_pending_news_use_case",
     "get_fast_llm_provider",
     "get_force_analyze_news_item_use_case",

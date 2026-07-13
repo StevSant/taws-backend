@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from google import genai
 from google.genai import types
 
+from app.application.common import build_locale_instruction
 from app.domain.event_intelligence.entities import EnrichedEvent, NewsEvent
 from app.domain.event_intelligence.ports import EventAnalyzerPort
 
@@ -24,9 +25,7 @@ Given a news event, produce a structured JSON analysis with the following fields
 - reasoning: brief explanation of the analysis
 - suggestedQuestions: list of 1-3 follow-up questions a trader might ask
 
-Respond ONLY with valid JSON. No markdown, no code fences, no extra text.
-
-IMPORTANT: Write the summary, reasoning, and suggestedQuestions in the SAME LANGUAGE as the event title and content."""  # noqa: E501
+Respond ONLY with valid JSON. No markdown, no code fences, no extra text."""
 
 _IMPACT_SYSTEM_PROMPT = """You are a financial intelligence analyst. Your job is to analyze \
 how a specific market sector or asset is affected by a given news event.
@@ -38,9 +37,7 @@ Consider:
 - Time horizon: short-term vs long-term implications
 - Magnitude: mild, moderate, or severe impact
 
-Respond with a plain text analysis (2-4 paragraphs). No markdown, no JSON, no extra formatting.
-
-IMPORTANT: Write the analysis in the SAME LANGUAGE as the event title and content."""  # noqa: E501
+Respond with a plain text analysis (2-4 paragraphs). No markdown, no JSON, no extra formatting."""
 
 _ANALYSIS_RESPONSE_SCHEMA = {
     "type": "object",
@@ -73,25 +70,42 @@ class GeminiEventAnalyzer(EventAnalyzerPort):
     The model is prompted to act as a financial analyst and respond with
     a strict JSON schema — no free text, no markdown. Falls back to a
     zero-signal result when Gemini is unavailable or the API key is missing.
+
+    **Uses the SDK's async surface (`client.aio.models`), and holds ONE client.** Both matter
+    now that the scheduled Sentinel scan calls this on a timer instead of only on a manual
+    button press:
+
+    - `client.models.generate_content` is *synchronous*. Awaiting an `async def` that calls it
+      does not yield — it blocks the event loop for the entire round-trip to Google. One tick
+      analyzing a batch of articles would have frozen every in-flight HTTP request and the
+      scheduler itself for as long as that took. `client.aio.models.generate_content` is the
+      genuinely awaitable variant.
+    - The client was also rebuilt on every call, discarding its connection pool each time.
     """
 
-    def __init__(self, api_key: str | None, model: str) -> None:
-        self._api_key = api_key
+    def __init__(self, api_key: str | None, model: str, locale: str) -> None:
         self._model = model
+        self._client = genai.Client(api_key=api_key) if api_key else None
+        # Both prompts previously ended with "write ... in the SAME LANGUAGE as the event title
+        # and content". Upstream market news is overwhelmingly English, so that instruction
+        # guaranteed English output — an English summary and English suggested questions, then
+        # rendered inside a Spanish-framed Telegram alert ("ALERTA DE MERCADO", "Resumen").
+        # Reuses the same shared locale instruction as every other LLM pipeline here, so the
+        # Sentinel path can't drift to its own phrasing of the rule.
+        self._locale_instruction = build_locale_instruction(locale)
 
     async def analyze(self, event: NewsEvent) -> EnrichedEvent:
-        if not self._api_key:
+        if self._client is None:
             return _fallback_enriched(event)
 
-        client = genai.Client(api_key=self._api_key)
         prompt = _build_prompt(event)
 
         try:
-            response = client.models.generate_content(
+            response = await self._client.aio.models.generate_content(
                 model=self._model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    system_instruction=_ANALYSIS_SYSTEM_PROMPT,
+                    system_instruction=_ANALYSIS_SYSTEM_PROMPT + self._locale_instruction,
                     response_mime_type="application/json",
                     response_schema=_ANALYSIS_RESPONSE_SCHEMA,
                 ),
@@ -119,18 +133,17 @@ class GeminiEventAnalyzer(EventAnalyzerPort):
         )
 
     async def analyze_impact(self, event: EnrichedEvent, sector: str) -> str:
-        if not self._api_key:
+        if self._client is None:
             return _fallback_impact_analysis(sector)
 
-        client = genai.Client(api_key=self._api_key)
         prompt = _build_impact_prompt(event, sector)
 
         try:
-            response = client.models.generate_content(
+            response = await self._client.aio.models.generate_content(
                 model=self._model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    system_instruction=_IMPACT_SYSTEM_PROMPT,
+                    system_instruction=_IMPACT_SYSTEM_PROMPT + self._locale_instruction,
                 ),
             )
             text = response.text

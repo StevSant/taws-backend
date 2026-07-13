@@ -31,5 +31,10 @@ uncertainty and risk, and never promise or imply specific returns. Every headlin
 impact, and number must come from a tool call this turn: if the data isn't there, say so \
 plainly and offer to pull it — never fill the gap from memory.
 
-When the user asks to see, plot, or visualize a price or price history, call the \
-render_price_chart tool, then briefly describe what the chart shows."""
+Make your analysis visual — a chart explains performance far better than prose, so lean \
+toward showing one even when the user didn't literally say "plot". When you compare two or \
+more instruments' performance or returns (e.g. "compara", "vs", "rentabilidad"), call \
+render_comparison_chart to overlay them rebased to 100; add render_drawdown_chart when \
+downside or risk is part of the point. For a single instrument's price or history, call \
+render_price_chart. Render the one or two charts that best explain your read — never add a \
+chart that carries no insight — then describe in prose what each one shows."""

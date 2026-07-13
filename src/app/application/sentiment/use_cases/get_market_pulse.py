@@ -4,8 +4,8 @@ from dataclasses import dataclass
 import yfinance as yf
 
 from app.domain.sentiment.entities import FearGreedReading
+from app.domain.sentiment.errors import FearGreedUnavailableError
 from app.infrastructure.sentiment.cnn_fear_greed_provider import CnnFearGreedProvider
-from app.infrastructure.sentiment.fixture_fear_greed_provider import FixtureFearGreedProvider
 
 _INDEX_TICKERS: tuple[tuple[str, str], ...] = (
     ("SPY", "S&P 500 (SPY)"),
@@ -34,13 +34,8 @@ class MarketPulseSnapshot:
 class GetMarketPulse:
     """Radar-facing market pulse: CNN stock Fear & Greed + major index quotes."""
 
-    def __init__(
-        self,
-        cnn_provider: CnnFearGreedProvider,
-        fixture_provider: FixtureFearGreedProvider,
-    ) -> None:
+    def __init__(self, cnn_provider: CnnFearGreedProvider) -> None:
         self._cnn_provider = cnn_provider
-        self._fixture_provider = fixture_provider
 
     async def execute(self) -> MarketPulseSnapshot:
         fear_greed, delta_points = await self._fetch_fear_greed()
@@ -54,11 +49,16 @@ class GetMarketPulse:
         )
 
     async def _fetch_fear_greed(self) -> tuple[FearGreedReading, float]:
+        """The real CNN reading, or nothing. A fixture here is an invented market mood.
+
+        This used to swallow the failure and return a `FixtureFearGreedReading` with a
+        `delta_points` of 0.0 — a fabricated sentiment score, rendered to the user as a
+        gauge and labelled `source="cnn"`, which CNN had never published.
+        """
         try:
             return await self._cnn_provider.fetch_snapshot()
-        except Exception:
-            reading = await self._fixture_provider.get_fear_greed_index()
-            return reading, 0.0
+        except Exception as error:
+            raise FearGreedUnavailableError(str(error)) from error
 
 
 def _fetch_index_quotes() -> tuple[MarketIndexQuote, ...]:

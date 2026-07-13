@@ -1,18 +1,23 @@
 import asyncio
 import logging
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 from app.application.analysis.refresh_result import RefreshResult
 from app.application.sentiment.use_cases import AnalyzeSentiment
 from app.application.signals.use_cases import GenerateSignal
+from app.domain.market.ports import InstrumentUniverse
 from app.domain.watchlist.ports import WatchlistRepository
 
 logger = logging.getLogger(__name__)
 
 
 class RefreshTrackedAnalysis:
-    """Keep every watchlisted instrument's shared analysis warm, off the request path (#29).
+    """Keep the tracked instruments' shared analysis warm, off the request path (#29).
+
+    "Tracked" means every watchlisted instrument plus — when `cover_universe` is on — the rest
+    of the curated universe, capped at `max_symbols`. See `_tracked_symbols` for why the
+    universe half exists and why the ordering between the two halves matters.
 
     The other half of the freshness cache. The gate in `GenerateSignal`/`AnalyzeSentiment`
     stops redundant LLM runs, but on its own it would just move the cost to whoever happens to
@@ -40,14 +45,28 @@ class RefreshTrackedAnalysis:
         watchlist_repository: WatchlistRepository,
         generate_signal: GenerateSignal,
         analyze_sentiment: AnalyzeSentiment,
+        instrument_universe: Callable[[], InstrumentUniverse],
         locales: list[str],
         max_concurrency: int,
+        cover_universe: bool,
+        max_symbols: int,
     ) -> None:
         self._watchlist_repository = watchlist_repository
         self._generate_signal = generate_signal
         self._analyze_sentiment = analyze_sentiment
+        # A zero-arg accessor, NOT the universe itself. `execute(symbols=[...])` — the
+        # watchlist-add seed, and the only path a user request ever takes into this use case —
+        # never reads the universe at all, and this class is resolved by FastAPI `Depends` on
+        # `POST /watchlists/{id}/items`. Holding the instance would therefore make that endpoint
+        # require a built universe just to construct a use case that will not consult it, which
+        # 500s the request whenever the universe accessor is not ready. Deferring the lookup to
+        # `_tracked_symbols` — the one place that actually needs it — keeps the seed path's
+        # dependency surface exactly what it was.
+        self._instrument_universe = instrument_universe
         self._locales = locales
         self._max_concurrency = max(1, max_concurrency)
+        self._cover_universe = cover_universe
+        self._max_symbols = max(1, max_symbols)
 
     async def execute(self, symbols: list[str] | None = None) -> RefreshResult:
         """Refresh analysis for `symbols`, or for every watchlisted instrument when omitted."""
@@ -74,11 +93,36 @@ class RefreshTrackedAnalysis:
         )
 
     async def _tracked_symbols(self) -> list[str]:
-        """The de-duplicated union of every symbol on every watchlist.
+        """Every watchlisted symbol FIRST, then the rest of the curated universe, capped.
 
         Global, not user-scoped — analysis is shared, so one refresh of AAPL serves every user
-        tracking it. Sorted purely to make the pass deterministic and its logs readable.
+        tracking it.
+
+        The universe half is what stops the markets explorer being a graveyard. Scoping this
+        pass to watchlists alone meant an instrument nobody had pinned was never handed to
+        `GenerateSignal` by ANY producer, so it had no `signals` row, and the explorer — which
+        is deliberately read-only and never generates inline — rendered it "Sin señal" forever.
+        Breaking news about it changed nothing. Coverage, not the classifier, was the gap.
+
+        Ordering is load-bearing, not cosmetic: `_max_symbols` truncates, so watchlisted
+        symbols go first to guarantee a cap can never starve an instrument a user explicitly
+        pinned in favour of one they never asked for. Within each half, sorted for a
+        deterministic pass and readable logs.
         """
+        watchlisted = await self._watchlisted_symbols()
+        if not self._cover_universe:
+            return watchlisted[: self._max_symbols]
+
+        pinned = set(watchlisted)
+        rest = sorted(
+            instrument.symbol.upper()
+            for instrument in self._instrument_universe().all()
+            if instrument.symbol.upper() not in pinned
+        )
+        return (watchlisted + rest)[: self._max_symbols]
+
+    async def _watchlisted_symbols(self) -> list[str]:
+        """The de-duplicated union of every symbol on every watchlist."""
         watchlists = await self._watchlist_repository.list_all()
         symbols: set[str] = set()
         for watchlist in watchlists:

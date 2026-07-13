@@ -1,9 +1,11 @@
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from app.application.sentiment.unknown_instrument_error import UnknownInstrumentError
 from app.application.sentiment.use_cases import AnalyzeSentiment
 from app.domain.sentiment.entities import SentimentReading
+from app.infrastructure.agents.tools.resolve_tool_locale import resolve_tool_locale
 
 
 class _AnalyzeSentimentArgs(BaseModel):
@@ -24,15 +26,20 @@ def build_analyze_sentiment_tool(use_case: AnalyzeSentiment, default_locale: str
     one generated through the REST endpoint always come from the same code path — and, since
     issue #29, hit the same `(symbol, locale)` cache.
 
-    `default_locale` is injected (from `Settings`, via the DI container) rather than defaulted
-    here — same pattern as `build_scenario_tools`. The chat graph has no per-turn locale to
-    thread through a tool call, so the configured default is what a chat-initiated reading is
-    cached under.
+    The locale comes from the turn's `RunnableConfig` (see `resolve_tool_locale`), with the
+    DI-injected `default_locale` as the fallback. It is not cosmetic on this tool: the reading's
+    `rationale` is localized and `(symbol, locale)` is the cache key (issue #29). While the tool
+    was frozen to `default_locale`, a chat-initiated reading was both *generated in* and *cached
+    under* the server default — so a Spanish user's reading was written in the default locale,
+    and the entry it wrote could then be served to a request that genuinely wanted that locale.
+    Reading the per-turn locale fixes the write side and the cache key together.
     """
 
-    async def _run(instrument_symbol: str) -> str:
+    async def _run(instrument_symbol: str, config: RunnableConfig) -> str:
         try:
-            reading = await use_case.execute(instrument_symbol.upper(), default_locale)
+            reading = await use_case.execute(
+                instrument_symbol.upper(), resolve_tool_locale(config, default_locale)
+            )
         except UnknownInstrumentError as exc:
             return str(exc)
         return _format_reading(reading)

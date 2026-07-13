@@ -55,13 +55,12 @@ class ComputeMarketStats:
     existing ports — no new port method was needed: `MarketDataProvider.
     get_price_series` already returns the OHLC candles this computes from).
 
-    Degrades gracefully rather than raising on thin data: `RoutingMarketDataProvider`
-    already falls back to the deterministic `FixtureMarketDataProvider` on any live
-    -source failure or empty result, so a `PriceSeries` is effectively always
-    available; if it's still too short to compute a given statistic from (fewer than
-    2 candles for price delta, fewer than 3 for volatility/unusual moves), that
-    field is `None`/empty in the returned `MarketStats` instead of raising. Only an
-    unknown instrument symbol raises (`UnknownInstrumentError`).
+    Thin REAL data degrades gracefully: if the series is too short to compute a given
+    statistic from (fewer than 2 candles for price delta, fewer than 3 for volatility/
+    unusual moves), that field comes back `None`/empty in `MarketStats` rather than
+    raising. That is a statement about a genuinely short history, not a cover for missing
+    data — no data at all propagates `MarketDataUnavailableError` from the provider, and
+    an unknown symbol raises `UnknownInstrumentError`.
 
     Volatility regime and unusual-move detection are both documented T1
     simplifications (see the module-level threshold constants above): generic
