@@ -517,8 +517,74 @@ class Container:
             )
         return self._bot_registration
 
+    # -- Telegram inbound-command handlers -------------------------------------------------
+    #
+    # Each handler comes in two flavours, and the split is load-bearing:
+    #
+    # `build_*_command_handler(messenger)` -- NOT cached. Builds a handler that replies
+    # through the messenger you pass. A user-registered bot's webhook
+    # (`/telegram/webhook/{bot_id}`) MUST use these, with a `TelegramBotClient` for that
+    # bot's own token: a handler answers via `messenger.send_text(...)`, so the messenger it
+    # holds IS the identity the user sees the reply come from. Building them is cheap --
+    # every expensive collaborator they take (repositories, agent runner, simulation runner)
+    # is still a cached singleton.
+    #
+    # `get_*_command_handler()` -- cached, bound to the main `.env` bot's messenger. ONLY the
+    # main `/telegram/webhook` route may use these. Handing them to a user-registered bot's
+    # webhook (which is what this `Container` used to do) made every registered bot reply
+    # with the main bot's token; because a private-chat `chat_id` is the user's account ID
+    # and is identical across bots, those replies were delivered -- into the *other* bot's
+    # conversation.
+
+    def build_briefing_command_handler(
+        self, messenger: TelegramMessenger
+    ) -> BriefingCommandHandler:
+        """A `/briefing` handler replying through `messenger`. See the note above."""
+        return BriefingCommandHandler(
+            link_repository=self.get_telegram_link_repository(),
+            watchlist_repository=self.get_watchlist_repository(),
+            briefing_repository=self.get_briefing_repository(),
+            messenger=messenger,
+            frontend_base_url=self._settings.frontend_base_url,
+        )
+
+    def build_signal_command_handler(self, messenger: TelegramMessenger) -> SignalCommandHandler:
+        """A `/signal <TICKER>` handler replying through `messenger`. See the note above."""
+        return SignalCommandHandler(
+            link_repository=self.get_telegram_link_repository(),
+            instrument_universe=self.get_instrument_universe(),
+            signal_repository=self.get_signal_repository(),
+            messenger=messenger,
+        )
+
+    def build_simulate_command_handler(
+        self, messenger: TelegramMessenger
+    ) -> SimulateCommandHandler:
+        """A `/simular <text>` handler replying through `messenger`. Reuses the same cached
+        `ScenarioSimulationRunner` as `POST /api/v1/scenarios/generate` and the
+        `run_scenario_simulation` chat tool — see `get_scenario_simulation_runner`."""
+        return SimulateCommandHandler(
+            link_repository=self.get_telegram_link_repository(),
+            scenario_simulation_runner=self.get_scenario_simulation_runner(),
+            messenger=messenger,
+            frontend_base_url=self._settings.frontend_base_url,
+            default_locale=self._settings.default_locale,
+        )
+
+    def build_impact_command_handler(self, messenger: TelegramMessenger) -> ImpactCommandHandler:
+        """An `/impact <sector>` handler replying through `messenger`. See the note above."""
+        return ImpactCommandHandler(
+            event_repository=self.get_event_repository(),
+            analyze_event_impact=AnalyzeEventImpact(analyzer=self.get_event_analyzer()),
+            messenger=messenger,
+        )
+
+    def build_chat_message_handler(self, messenger: TelegramMessenger) -> ChatMessageHandler:
+        """A conversational handler replying through `messenger`. See the note above."""
+        return ChatMessageHandler(agent_runner=self.get_agent_runner(), messenger=messenger)
+
     def get_briefing_command_handler(self) -> BriefingCommandHandler | None:
-        """Return the cached `/briefing` command handler, or `None` when Telegram isn't
+        """Return the main bot's cached `/briefing` handler, or `None` when Telegram isn't
         configured — same unconfigured-integration fallback shape as
         `get_link_telegram_account_use_case` (issue #19).
         """
@@ -526,76 +592,47 @@ class Container:
         if messenger is None:
             return None
         if self._briefing_command_handler is None:
-            self._briefing_command_handler = BriefingCommandHandler(
-                link_repository=self.get_telegram_link_repository(),
-                watchlist_repository=self.get_watchlist_repository(),
-                briefing_repository=self.get_briefing_repository(),
-                messenger=messenger,
-                frontend_base_url=self._settings.frontend_base_url,
-            )
+            self._briefing_command_handler = self.build_briefing_command_handler(messenger)
         return self._briefing_command_handler
 
     def get_signal_command_handler(self) -> SignalCommandHandler | None:
-        """Return the cached `/signal <TICKER>` command handler, or `None` when
+        """Return the main bot's cached `/signal <TICKER>` handler, or `None` when
         Telegram isn't configured (issue #19)."""
         messenger = self.get_telegram_messenger()
         if messenger is None:
             return None
         if self._signal_command_handler is None:
-            self._signal_command_handler = SignalCommandHandler(
-                link_repository=self.get_telegram_link_repository(),
-                instrument_universe=self.get_instrument_universe(),
-                signal_repository=self.get_signal_repository(),
-                messenger=messenger,
-            )
+            self._signal_command_handler = self.build_signal_command_handler(messenger)
         return self._signal_command_handler
 
     def get_simulate_command_handler(self) -> SimulateCommandHandler | None:
-        """Return the cached `/simular <text>` command handler, or `None` when
-        Telegram isn't configured (issue #19). Reuses the same cached
-        `ScenarioSimulationRunner` as `POST /api/v1/scenarios/generate` and the
-        `run_scenario_simulation` chat tool — see `get_scenario_simulation_runner`.
-        """
+        """Return the main bot's cached `/simular <text>` handler, or `None` when
+        Telegram isn't configured (issue #19)."""
         messenger = self.get_telegram_messenger()
         if messenger is None:
             return None
         if self._simulate_command_handler is None:
-            self._simulate_command_handler = SimulateCommandHandler(
-                link_repository=self.get_telegram_link_repository(),
-                scenario_simulation_runner=self.get_scenario_simulation_runner(),
-                messenger=messenger,
-                frontend_base_url=self._settings.frontend_base_url,
-                default_locale=self._settings.default_locale,
-            )
+            self._simulate_command_handler = self.build_simulate_command_handler(messenger)
         return self._simulate_command_handler
 
     def get_impact_command_handler(self) -> ImpactCommandHandler | None:
-        """Return the cached `/impact <sector>` command handler, or `None` when
+        """Return the main bot's cached `/impact <sector>` handler, or `None` when
         Telegram isn't configured — same pattern as `get_briefing_command_handler`."""
         messenger = self.get_telegram_messenger()
         if messenger is None:
             return None
         if self._impact_command_handler is None:
-            self._impact_command_handler = ImpactCommandHandler(
-                event_repository=self.get_event_repository(),
-                analyze_event_impact=AnalyzeEventImpact(
-                    analyzer=self.get_event_analyzer(),
-                ),
-                messenger=messenger,
-            )
+            self._impact_command_handler = self.build_impact_command_handler(messenger)
         return self._impact_command_handler
 
     def get_chat_message_handler(self) -> ChatMessageHandler | None:
-        """Return the cached conversational chat handler, or `None` when Telegram
+        """Return the main bot's cached conversational handler, or `None` when Telegram
         isn't configured — same pattern as `get_briefing_command_handler`."""
         messenger = self.get_telegram_messenger()
         if messenger is None:
             return None
         if self._chat_message_handler is None:
-            self._chat_message_handler = ChatMessageHandler(
-                agent_runner=self.get_agent_runner(),
-                messenger=messenger,
-            )
+            self._chat_message_handler = self.build_chat_message_handler(messenger)
         return self._chat_message_handler
 
     def get_news_provider(self) -> NewsProvider:
