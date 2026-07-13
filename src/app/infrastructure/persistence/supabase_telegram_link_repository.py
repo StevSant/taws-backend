@@ -49,6 +49,11 @@ class SupabaseTelegramLinkRepository(TelegramLinkRepository):
         )
         return telegram_link_from_row(response.data[0]) if response.data else None
 
+    async def list_all(self) -> list[TelegramLink]:
+        client = await self._clients.get()
+        response = await self._retry(lambda: client.table(_TABLE).select("*").execute())
+        return [telegram_link_from_row(row) for row in response.data]
+
     async def link(self, link: TelegramLink) -> TelegramLink:
         client = await self._clients.get()
         # Unlink-then-relink used to be two separate `delete` calls issued from here,

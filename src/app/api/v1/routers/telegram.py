@@ -1,4 +1,5 @@
 import logging
+import random
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
@@ -7,36 +8,34 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 
 from app.api.v1.dependencies import (
     dev_fallback_allowed,
-    get_bot_registration,
     get_briefing_command_handler,
     get_chat_message_handler,
+    get_event_news_provider,
     get_impact_command_handler,
     get_link_telegram_account_use_case,
+    get_process_incoming_event_use_case,
     get_signal_command_handler,
     get_simulate_command_handler,
     get_telegram_link_repository,
     get_telegram_link_token_repository,
     get_telegram_messenger,
-    get_user_bot_repository,
     require_current_user,
 )
 from app.api.v1.schemas import (
     CurrentUser,
-    RegisterBotRequest,
-    RegisterBotResponse,
+    SendTestNewsResponse,
     TelegramLinkStatusResponse,
     TelegramLinkTokenResponse,
 )
+from app.application.event_intelligence.use_cases import ProcessIncomingEvent
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.core.config import Settings, get_settings
-from app.core.di import Container, get_container
+from app.domain.event_intelligence.ports import NewsProviderPort
 from app.domain.telegram.entities import TelegramLinkToken
 from app.domain.telegram.ports import (
-    BotRegistrationPort,
     TelegramLinkRepository,
     TelegramLinkTokenRepository,
     TelegramMessenger,
-    UserBotRepository,
 )
 from app.infrastructure.telegram import (
     BriefingCommand,
@@ -50,8 +49,8 @@ from app.infrastructure.telegram import (
     SimulateCommand,
     SimulateCommandHandler,
     StartCommand,
-    TelegramBotClient,
     UnknownCommand,
+    format_event_alert,
     format_unknown_command_reply,
     format_welcome_reply,
     parse_telegram_command,
@@ -63,35 +62,6 @@ logger = logging.getLogger(__name__)
 _telegram_secret_warned = False
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
-
-
-@router.post("/register-bot", status_code=status.HTTP_201_CREATED)
-async def register_bot(
-    user: Annotated[CurrentUser, Depends(require_current_user)],
-    body: RegisterBotRequest,
-    registration: Annotated[BotRegistrationPort, Depends(get_bot_registration)],
-) -> RegisterBotResponse:
-    """Register a user-owned Telegram bot from BotFather's welcome message.
-
-    The user pastes the full message they received from BotFather after creating
-    their bot. The system:
-    1. Extracts the bot token and username from the text
-    2. Calls `getUpdates` to find the user's chat_id
-    3. Sets up the webhook for this bot
-    4. Persists the bot registration
-
-    The user must send at least one message to their bot before calling this endpoint.
-    """
-    try:
-        bot = await registration.register(user_id=user.id, botfather_text=body.botfather_text)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
-    return RegisterBotResponse(
-        bot_id=bot.id,
-        bot_username=bot.bot_username,
-        chat_id=bot.chat_id,
-        status="ok",
-    )
 
 
 @router.post("/link-token", status_code=status.HTTP_201_CREATED)
@@ -241,79 +211,54 @@ async def telegram_webhook(
         return {"ok": False}
 
 
-@router.post("/webhook/{bot_id}", status_code=status.HTTP_200_OK)
-async def telegram_webhook_for_bot(
-    bot_id: str,
-    request: Request,
-    background_tasks: BackgroundTasks,
-    bot_repository: Annotated[UserBotRepository, Depends(get_user_bot_repository)],
-    container: Annotated[Container, Depends(get_container)],
-) -> dict[str, bool]:
-    """Webhook endpoint for a user-registered Telegram bot.
+@router.post("/send-test-news", status_code=status.HTTP_200_OK)
+async def send_test_news(
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    news_provider: Annotated[NewsProviderPort, Depends(get_event_news_provider)],
+    use_case: Annotated[ProcessIncomingEvent, Depends(get_process_incoming_event_use_case)],
+    link_repository: Annotated[TelegramLinkRepository, Depends(get_telegram_link_repository)],
+    messenger: Annotated[TelegramMessenger | None, Depends(get_telegram_messenger)],
+) -> SendTestNewsResponse:
+    """Push ONE random news event, fully enriched, to every linked Telegram chat.
 
-    Identical logic to the main webhook, but every reply goes out through the registered
-    bot's OWN token instead of the `.env` bot's. The bot is looked up by `bot_id` from the
-    URL path (each registration gets its own webhook URL — see
-    `TelegramBotRegistration._set_webhook`).
+    The "is my Telegram wiring actually working?" button in the frontend. Runs a randomly
+    chosen event from the same news source the Sentinel pipeline uses through the SAME
+    `ProcessIncomingEvent` pipeline as `/event-intelligence/demo`, then broadcasts the
+    formatted alert over the shared bot — deliberately ignoring `should_notify`, since the
+    point is to prove delivery, not to judge the event's importance.
 
-    Every handler is therefore built here, per bot, via `container.build_*_command_handler(
-    messenger)` — NOT taken from the cached `Depends(get_*_command_handler)` singletons the
-    main webhook uses. Those are bound to the main `.env` messenger, so dispatching to them
-    from here made a user's brand-new bot answer with the main bot's token. In a private chat
-    the `chat_id` is the user's account ID and is identical across every bot, so those replies
-    were still delivered — into the *other* bot's conversation, which is exactly how the bug
-    showed up. Do not reintroduce a `Depends(get_*_command_handler)` on this route.
-
-    Only the handler the command actually needs is built (a `/start` must not have to
-    construct the scenario runner or the instrument universe to say hello).
+    Both failure modes are 400s the frontend already renders from `detail`: no news event
+    available, and no `TELEGRAM_BOT_TOKEN` configured (nothing to send through).
     """
-    bot = await bot_repository.get_by_id(bot_id)
-    if bot is None:
-        logger.warning("Unknown bot_id %s in webhook call", bot_id)
-        return {"ok": False}
-
-    payload: dict[str, Any] = await request.json()
-    command = parse_telegram_command(payload)
-    if command is None:
-        return {"ok": True}
-
-    messenger = TelegramBotClient(bot_token=bot.bot_token)
-
-    try:
-        match command:
-            case StartCommand():
-                await messenger.send_text(command.chat_id, format_welcome_reply())
-                return {"ok": True}
-            case BriefingCommand():
-                await container.build_briefing_command_handler(messenger).handle(command)
-                return {"ok": True}
-            case SignalCommand():
-                await container.build_signal_command_handler(messenger).handle(command)
-                return {"ok": True}
-            case SimulateCommand():
-                simulate_handler = container.build_simulate_command_handler(messenger)
-                should_run = await simulate_handler.send_acknowledgement(command)
-                if should_run:
-                    background_tasks.add_task(simulate_handler.deliver_result, command)
-                return {"ok": True}
-            case ImpactCommand():
-                await container.build_impact_command_handler(messenger).handle(command)
-                return {"ok": True}
-            case ChatMessage():
-                await container.build_chat_message_handler(messenger).handle(command)
-                return {"ok": True}
-            case UnknownCommand():
-                await messenger.send_text(command.chat_id, format_unknown_command_reply())
-                return {"ok": True}
-            case _:
-                return {"ok": True}
-    except Exception:
-        logger.exception(
-            "Unhandled error handling Telegram command for bot_id=%s, chat_id=%s",
-            bot_id,
-            command.chat_id,
+    if messenger is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Telegram is not configured on this backend (TELEGRAM_BOT_TOKEN is unset).",
         )
-        return {"ok": False}
+
+    events = await news_provider.fetch_latest_news()
+    if not events:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No news events are available to send right now.",
+        )
+
+    enriched = await use_case.execute(random.choice(events))
+    text = format_event_alert(enriched)
+
+    # Same per-recipient guard as `/event-intelligence/demo`'s broadcast: one chat failing
+    # (blocked bot, deleted chat) must never abort delivery to everyone after it.
+    for link in await link_repository.list_all():
+        try:
+            await messenger.send_text(link.chat_id, text, parse_mode="HTML")
+        except Exception:
+            logger.exception(
+                "Failed to send test news alert to chat %s (requested by user %s)",
+                link.chat_id,
+                user.id,
+            )
+
+    return SendTestNewsResponse(status="sent", event_title=enriched.original.title)
 
 
 def _verify_telegram_secret(request: Request, settings: Settings) -> None:

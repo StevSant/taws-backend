@@ -8,7 +8,6 @@ from app.api.v1.dependencies.get_analyze_pending_news_use_case import (
     get_analyze_pending_news_use_case,
 )
 from app.api.v1.dependencies.get_analyze_sentiment_use_case import get_analyze_sentiment_use_case
-from app.api.v1.dependencies.get_bot_registration import get_bot_registration
 from app.api.v1.dependencies.get_briefing_command_handler import get_briefing_command_handler
 from app.api.v1.dependencies.get_briefing_document_renderer import get_briefing_document_renderer
 from app.api.v1.dependencies.get_briefing_repository import get_briefing_repository
@@ -17,6 +16,7 @@ from app.api.v1.dependencies.get_coingecko_search_provider import get_coingecko_
 from app.api.v1.dependencies.get_conversation_repository import get_conversation_repository
 from app.api.v1.dependencies.get_email_sender import get_email_sender
 from app.api.v1.dependencies.get_embedding_provider import get_embedding_provider
+from app.api.v1.dependencies.get_event_news_provider import get_event_news_provider
 from app.api.v1.dependencies.get_fast_llm_provider import get_fast_llm_provider
 from app.api.v1.dependencies.get_fear_greed_provider import get_fear_greed_provider
 from app.api.v1.dependencies.get_force_analyze_news_item_use_case import (
@@ -81,7 +81,6 @@ from app.api.v1.dependencies.get_telegram_link_token_repository import (
 )
 from app.api.v1.dependencies.get_telegram_messenger import get_telegram_messenger
 from app.api.v1.dependencies.get_tts_provider import get_tts_provider
-from app.api.v1.dependencies.get_user_bot_repository import get_user_bot_repository
 from app.api.v1.dependencies.get_vector_store import get_vector_store
 from app.api.v1.dependencies.get_watchlist_repository import get_watchlist_repository
 from app.api.v1.dependencies.jwks_client import get_jwks_client
@@ -108,6 +107,7 @@ __all__ = [
     "get_conversation_repository",
     "get_email_sender",
     "get_embedding_provider",
+    "get_event_news_provider",
     "get_fundamentals_provider",
     "get_generate_consequence_chain_use_case",
     "get_generate_conversation_title_use_case",
@@ -144,10 +144,8 @@ __all__ = [
     "get_signal_repository",
     "get_simulate_command_handler",
     "get_stt_provider",
-    "get_bot_registration",
     "get_telegram_link_repository",
     "get_telegram_link_token_repository",
-    "get_user_bot_repository",
     "get_telegram_messenger",
     "get_tts_provider",
     "get_vector_store",
