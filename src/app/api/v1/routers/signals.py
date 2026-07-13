@@ -3,22 +3,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.v1.dependencies import (
-    get_embedding_provider,
-    get_instrument_universe,
-    get_llm_provider,
-    get_market_data_provider,
-    get_news_provider,
+    get_generate_signal_use_case,
     get_signal_repository,
-    get_vector_store,
 )
 from app.api.v1.schemas import GenerateSignalRequest, SignalResponse
-from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
 from app.application.compliance import ComplianceViolationError
 from app.application.signals import InsufficientEvidenceError, UnknownInstrumentError
 from app.application.signals.use_cases import GenerateSignal
 from app.core.config import Settings, get_settings
-from app.domain.agents.ports import EmbeddingProvider, LLMProvider, VectorStore
-from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, NewsProvider
 from app.domain.signals.ports import SignalRepository
 
 router = APIRouter(prefix="/signals", tags=["signals"])
@@ -42,39 +34,25 @@ async def list_signals(
 @router.post("/generate", status_code=status.HTTP_201_CREATED)
 async def generate_signal(
     payload: GenerateSignalRequest,
-    news_provider: Annotated[NewsProvider, Depends(get_news_provider)],
-    market_data_provider: Annotated[MarketDataProvider, Depends(get_market_data_provider)],
-    instrument_universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
-    signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
-    llm_provider: Annotated[LLMProvider, Depends(get_llm_provider)],
-    embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
-    vector_store: Annotated[VectorStore, Depends(get_vector_store)],
+    use_case: Annotated[GenerateSignal, Depends(get_generate_signal_use_case)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> SignalResponse:
-    """Trigger the Analyst pipeline on-demand for one instrument (HU1/HU2).
+    """Ensure a fresh Analyst signal exists for one instrument, and return it (HU1/HU2).
+
+    Freshness-gated since issue #29: this endpoint now means "ensure fresh", not "always
+    recompute". If a signal for `(instrument, locale)` is still within its asset class's TTL,
+    it is returned as-is — no LLM run, no duplicate row. A `Signal` is shared, non-personalized
+    analysis, so N clients asking about AAPL inside the TTL window should cost one LLM call.
+
+    There is deliberately NO `force` query param: this endpoint is unauthenticated, and a
+    client that could set `force=true` could trivially bust the cache and reintroduce exactly
+    the cost the gate removes. Forcing is internal only (the background refresh job, and the
+    per-article "Analizar ahora" button — see `ForceAnalyzeNewsItem`).
 
     Not user-scoped (no `require_current_user`): a `Signal` is an Analyst-produced market
     observation about an instrument, not per-user data — same visibility model as
     `GET /api/v1/news` and `GET /api/v1/instruments`.
     """
-    use_case = GenerateSignal(
-        news_provider=news_provider,
-        market_data_provider=market_data_provider,
-        instrument_universe=instrument_universe,
-        signal_repository=signal_repository,
-        llm_provider=llm_provider,
-        find_historical_analogs=FindHistoricalAnalogs(
-            embedding_provider=embedding_provider,
-            vector_store=vector_store,
-            top_k=settings.historical_analogs_top_k,
-        ),
-        index_signal_analog=IndexSignalAnalog(
-            embedding_provider=embedding_provider, vector_store=vector_store
-        ),
-        min_distinct_sources=settings.min_distinct_news_sources,
-        retry_max_attempts=settings.signal_classification_retry_max_attempts,
-        retry_backoff_base_seconds=settings.signal_classification_retry_backoff_base_seconds,
-    )
     try:
         locale = payload.locale or settings.default_locale
         signal = await use_case.execute(payload.instrument_symbol.upper(), locale)

@@ -1,10 +1,12 @@
 import logging
+from datetime import timedelta
 from functools import lru_cache
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 
 from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
+from app.application.analysis.use_cases import RefreshTrackedAnalysis
 from app.application.charts.use_cases import (
     BuildComparisonChart,
     BuildDistributionChart,
@@ -27,7 +29,7 @@ from app.application.scenario.use_cases import (
 )
 from app.application.sentiment.use_cases import AnalyzeSentiment
 from app.application.signals import NewsPrefilterPolicy
-from app.application.signals.use_cases import GenerateSignal
+from app.application.signals.use_cases import AnalyzePendingNews, ForceAnalyzeNewsItem, GenerateSignal
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.application.watchdog import AlertedSignalTracker
 from app.application.watchlist.use_cases import ReorderWatchlists
@@ -50,7 +52,8 @@ from app.domain.event_intelligence.ports import (
     EventRepositoryPort,
     NewsProviderPort,
 )
-from app.domain.market.entities import MacroIndicator
+from app.domain.freshness import FreshnessPolicy
+from app.domain.market.entities import AssetClass, MacroIndicator
 from app.domain.market.ports import (
     FundamentalsProvider,
     InstrumentUniverse,
@@ -62,7 +65,7 @@ from app.domain.market.ports import (
 from app.domain.notes.ports import NoteRepository
 from app.domain.notification.ports import EmailSender, NotificationChannel
 from app.domain.scenario.ports import ScenarioRepository
-from app.domain.sentiment.ports import FearGreedProvider
+from app.domain.sentiment.ports import FearGreedProvider, SentimentRepository
 from app.domain.signals.ports import SignalRepository
 from app.domain.telegram.ports import (
     BotRegistrationPort,
@@ -134,6 +137,7 @@ from app.infrastructure.persistence import (
     SupabaseNewsItemRepository,
     SupabaseNoteRepository,
     SupabaseScenarioRepository,
+    SupabaseSentimentRepository,
     SupabaseSignalRepository,
     SupabaseTelegramLinkRepository,
     SupabaseTelegramLinkTokenRepository,
@@ -178,7 +182,12 @@ class Container:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._llm_provider: LLMProvider | None = None
+        # Two LLM provider instances, one per tier (issue #28) — see `get_fast_llm_provider`.
+        self._fast_llm_provider: LLMProvider | None = None
+        self._reasoning_llm_provider: LLMProvider | None = None
+        self._freshness_policy: FreshnessPolicy | None = None
+        self._sentiment_repository: SentimentRepository | None = None
+        self._refresh_tracked_analysis_use_case: RefreshTrackedAnalysis | None = None
         self._tts_provider: TTSProvider | None = None
         self._stt_provider: STTProvider | None = None
         self._embedding_provider: EmbeddingProvider | None = None
@@ -196,7 +205,9 @@ class Container:
         self._market_data_provider: MarketDataProvider | None = None
         self._macro_data_provider: MacroDataProvider | None = None
         self._fundamentals_provider: FundamentalsProvider | None = None
-        self._chat_model: BaseChatModel | None = None
+        # Two chat models: cheap router, stronger specialists (issue #28).
+        self._router_chat_model: BaseChatModel | None = None
+        self._specialist_chat_model: BaseChatModel | None = None
         self._chat_graph: Any | None = None
         self._agent_runner: AgentRunner | None = None
         self._realtime_session_provider: RealtimeSessionProvider | None = None
@@ -235,12 +246,72 @@ class Container:
         self._build_sentiment_gauge_use_case: BuildSentimentGauge | None = None
         self._render_chart_use_case: RenderChart | None = None
 
-    def get_llm_provider(self) -> LLMProvider:
-        if self._llm_provider is None:
-            self._llm_provider = OpenAIProvider(
+    def get_fast_llm_provider(self) -> LLMProvider:
+        """Return the cached FAST-tier `LLMProvider` (`settings.openai_model`) — issue #28.
+
+        Backs the call sites that are structured, tiny, and already correct on a cheap model:
+        conversation titling, sentiment tone scoring, scenario intake extraction, and news
+        blurb localization. There is no generic `get_llm_provider()` any more, on purpose: an
+        un-suffixed accessor is exactly how a reasoning-tier call site silently drifts onto the
+        cheap model (or the reverse, quietly multiplying its bill). Every caller now has to
+        state which tier it wants, and pyright catches anyone who forgets.
+        """
+        if self._fast_llm_provider is None:
+            self._fast_llm_provider = OpenAIProvider(
                 api_key=self._settings.openai_api_key, model=self._settings.openai_model
             )
-        return self._llm_provider
+        return self._fast_llm_provider
+
+    def get_reasoning_llm_provider(self) -> LLMProvider:
+        """Return the cached REASONING-tier `LLMProvider` (`settings.reasoning_model`) — #28.
+
+        Backs the multi-step analytical calls that are the product's actual value and the ones
+        most likely to be under-served by `mini`: impact signals, pending-news batch analysis,
+        scenario synthesis, causal consequence chains, macro event interpretation, and
+        watchlist briefings.
+
+        `settings.reasoning_model` falls back to `openai_model` when `OPENAI_MODEL_REASONING`
+        is unset, so this is a SEPARATE INSTANCE but the SAME model until an operator configures
+        a stronger one — i.e. the tiering wiring changes no behavior on its own. The no-API-key
+        guard is unchanged: `OpenAIProvider` still degrades to its placeholder on both tiers.
+        """
+        if self._reasoning_llm_provider is None:
+            self._reasoning_llm_provider = OpenAIProvider(
+                api_key=self._settings.openai_api_key, model=self._settings.reasoning_model
+            )
+        return self._reasoning_llm_provider
+
+    def get_freshness_policy(self) -> FreshnessPolicy:
+        """Return the cached `FreshnessPolicy` — how long shared analysis stays cacheable (#29).
+
+        THE place the asset-class TTL map is assembled from `Settings`. `CREDIT` and `COMMODITY`
+        deliberately get no dedicated bucket and fall through to `default_ttl`, as does any
+        analysis with no instrument behind it (a preset scenario run).
+        """
+        if self._freshness_policy is None:
+            self._freshness_policy = FreshnessPolicy(
+                ttl_by_asset_class={
+                    AssetClass.CRYPTO: timedelta(
+                        minutes=self._settings.analysis_ttl_crypto_minutes
+                    ),
+                    AssetClass.STOCK: timedelta(
+                        minutes=self._settings.analysis_ttl_equity_minutes
+                    ),
+                    AssetClass.FOREX: timedelta(minutes=self._settings.analysis_ttl_fx_minutes),
+                },
+                default_ttl=timedelta(minutes=self._settings.analysis_ttl_default_minutes),
+            )
+        return self._freshness_policy
+
+    def get_sentiment_repository(self) -> SentimentRepository:
+        if self._sentiment_repository is None:
+            self._sentiment_repository = SupabaseSentimentRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
+            )
+        return self._sentiment_repository
 
     def get_tts_provider(self) -> TTSProvider | None:
         """Return the cached `TTSProvider`, or `None` when TTS isn't both enabled AND
@@ -834,7 +905,9 @@ class Container:
         """
         if self._generate_consequence_chain_use_case is None:
             self._generate_consequence_chain_use_case = GenerateConsequenceChain(
-                llm_provider=self.get_llm_provider()
+                # Reasoning tier (#28): a causal X->Y->Z chain with per-edge mechanisms is
+                # multi-step reasoning, not extraction.
+                llm_provider=self.get_reasoning_llm_provider()
             )
         return self._generate_consequence_chain_use_case
 
@@ -847,7 +920,8 @@ class Container:
         """
         if self._generate_conversation_title_use_case is None:
             self._generate_conversation_title_use_case = GenerateConversationTitle(
-                llm_provider=self.get_llm_provider(),
+                # Fast tier (#28): summarizing a turn into a few words.
+                llm_provider=self.get_fast_llm_provider(),
                 voice_preamble=MIDAS_PERSONA,
             )
         return self._generate_conversation_title_use_case
@@ -915,7 +989,10 @@ class Container:
         if self._interpret_macro_event_use_case is None:
             self._interpret_macro_event_use_case = InterpretMacroEvent(
                 macro_data_provider=self.get_macro_data_provider(),
-                llm_provider=self.get_llm_provider(),
+                # Reasoning tier (#28). Borderline — it's one structured call over pre-fetched
+                # numbers — but it reasons causally about direction/magnitude PER ASSET CLASS,
+                # so it defaults up. Cheap to move down to fast if cost matters.
+                llm_provider=self.get_reasoning_llm_provider(),
             )
         return self._interpret_macro_event_use_case
 
@@ -1002,7 +1079,14 @@ class Container:
                 news_provider=self.get_news_provider(),
                 fear_greed_provider=self.get_fear_greed_provider(),
                 instrument_universe=self.get_instrument_universe(),
-                llm_provider=self.get_llm_provider(),
+                # Fast tier (#28): bucketing coverage into a -1..1 tone score is a
+                # classification call, not analysis — `mini` is already right for it.
+                llm_provider=self.get_fast_llm_provider(),
+                # Persisted + freshness-cached since #29 (it used to be recomputed every call
+                # and thrown away).
+                sentiment_repository=self.get_sentiment_repository(),
+                freshness_policy=self.get_freshness_policy(),
+                retention_keep=self._settings.analysis_retention_keep,
                 bullish_threshold=self._settings.sentiment_bullish_threshold,
                 bearish_threshold=self._settings.sentiment_bearish_threshold,
             )
@@ -1056,7 +1140,8 @@ class Container:
         if self._scenario_simulation_runner is None:
             preset_rows = load_preset_scenarios_seed(self._settings.preset_scenarios_seed_path)
             normalize_intake = NormalizeScenarioIntake(
-                llm_provider=self.get_llm_provider(),
+                # Fast tier (#28): free text -> a `ScenarioSpec`. Extraction, not reasoning.
+                llm_provider=self.get_fast_llm_provider(),
                 instrument_universe=self.get_instrument_universe(),
                 preset_rows=preset_rows,
             )
@@ -1076,7 +1161,9 @@ class Container:
                 instrument_universe=self.get_instrument_universe(),
             )
             synthesize_result = SynthesizeScenarioResult(
-                llm_provider=self.get_llm_provider(),
+                # Reasoning tier (#28): spec + causal chain + evidence -> a quantified
+                # per-asset-class impact map. The heaviest call in the scenario graph.
+                llm_provider=self.get_reasoning_llm_provider(),
                 instrument_universe=self.get_instrument_universe(),
                 max_synthesis_attempts=self._settings.scenario_synthesis_max_attempts,
             )
@@ -1088,7 +1175,14 @@ class Container:
                 synthesize_scenario_result=synthesize_result,
                 scenario_repository=self.get_scenario_repository(),
             )
-            self._scenario_simulation_runner = ScenarioSimulationRunner(graph=graph)
+            self._scenario_simulation_runner = ScenarioSimulationRunner(
+                graph=graph,
+                # Freshness gate + retention for PRESET runs (#29); free-form runs have no
+                # stable cache key and always execute the graph.
+                scenario_repository=self.get_scenario_repository(),
+                freshness_policy=self.get_freshness_policy(),
+                retention_keep=self._settings.analysis_retention_keep,
+            )
         return self._scenario_simulation_runner
 
     def get_agent_runner(self) -> AgentRunner:
@@ -1107,17 +1201,24 @@ class Container:
         """Build the Analyst `GenerateSignal` pipeline from its ports.
 
         NOT cached: `GenerateSignal` composes several ports (news/market/universe/signal
-        repo/LLM + the analog RAG pair) exactly as `api/v1/routers/signals.py` builds it
-        per-request — the collaborators it depends on are themselves cached singletons, so
-        the only per-call cost is wiring a thin orchestrator. Shared by the signals router
-        and the `generate_signal` realtime tool so both run the identical pipeline.
+        repo/LLM + the analog RAG pair) — the collaborators it depends on are themselves cached
+        singletons, so the only per-call cost is wiring a thin orchestrator.
+
+        THE single construction site (issue #29). The signals router, the news router's
+        analyze-pending / force-analyze endpoints, the scheduler's ticks, and the realtime tool
+        all resolve the pipeline from here, so the freshness gate, the retention count, and the
+        retry policy can't drift between "the endpoint" and "the scheduled job" — which is
+        exactly what was starting to happen while several call sites each hand-assembled their
+        own `GenerateSignal` with a different subset of the settings.
         """
         return GenerateSignal(
             news_provider=self.get_news_provider(),
             market_data_provider=self.get_market_data_provider(),
             instrument_universe=self.get_instrument_universe(),
             signal_repository=self.get_signal_repository(),
-            llm_provider=self.get_llm_provider(),
+            # Reasoning tier (#28): news + price + analogs -> a thesis with drivers and risks.
+            # The flagship analytical call in the product.
+            llm_provider=self.get_reasoning_llm_provider(),
             find_historical_analogs=FindHistoricalAnalogs(
                 embedding_provider=self.get_embedding_provider(),
                 vector_store=self.get_vector_store(),
@@ -1128,7 +1229,75 @@ class Container:
                 vector_store=self.get_vector_store(),
             ),
             min_distinct_sources=self._settings.min_distinct_news_sources,
+            freshness_policy=self.get_freshness_policy(),
+            retention_keep=self._settings.analysis_retention_keep,
+            retry_max_attempts=self._settings.signal_classification_retry_max_attempts,
+            retry_backoff_base_seconds=(
+                self._settings.signal_classification_retry_backoff_base_seconds
+            ),
         )
+
+    def get_analyze_pending_news_use_case(self) -> AnalyzePendingNews:
+        """Build the pending-news batch analysis pipeline (issue #2).
+
+        NOT cached, same rationale as `get_generate_signal_use_case`. Shared by
+        `POST /api/v1/news/analyze-pending` and the scheduler's `analyze-pending-news` tick, so
+        the gate settings can never differ between the manual trigger and the background one.
+        """
+        return AnalyzePendingNews(
+            news_item_repository=self.get_news_item_repository(),
+            instrument_universe=self.get_instrument_universe(),
+            market_data_provider=self.get_market_data_provider(),
+            news_provider=self.get_news_provider(),
+            signal_repository=self.get_signal_repository(),
+            # Reasoning tier (#28): this batch pass fans out `GenerateSignal`-shaped
+            # classifications, so it belongs on the same tier as the single-signal pipeline.
+            llm_provider=self.get_reasoning_llm_provider(),
+            find_historical_analogs=FindHistoricalAnalogs(
+                embedding_provider=self.get_embedding_provider(),
+                vector_store=self.get_vector_store(),
+                top_k=self._settings.historical_analogs_top_k,
+            ),
+            index_signal_analog=IndexSignalAnalog(
+                embedding_provider=self.get_embedding_provider(),
+                vector_store=self.get_vector_store(),
+            ),
+            prefilter_policy=self.get_news_prefilter_policy(),
+            min_distinct_sources=self._settings.min_distinct_news_sources,
+            max_concurrency=self._settings.news_analysis_max_concurrency,
+            batch_limit=self._settings.news_analysis_batch_limit,
+        )
+
+    def get_force_analyze_news_item_use_case(self) -> ForceAnalyzeNewsItem:
+        """Build the manual "Analizar ahora" per-item pipeline (issue #27).
+
+        Wraps the SAME `GenerateSignal` every other surface uses — and calls it with
+        `force=True`, so the button genuinely re-analyzes instead of being handed the cached
+        signal the freshness gate would otherwise return (issue #29).
+        """
+        return ForceAnalyzeNewsItem(
+            news_item_repository=self.get_news_item_repository(),
+            generate_signal=self.get_generate_signal_use_case(),
+        )
+
+    def get_refresh_tracked_analysis_use_case(self) -> RefreshTrackedAnalysis:
+        """Return the cached background-refresh use case (issue #29).
+
+        Cached (unlike the pipelines above) because it holds no per-request state and is
+        resolved on every scheduler tick. Shared by that tick, by
+        `POST /api/v1/analysis/refresh`, and by the watchlist-add seed — one code path, so a
+        manual refresh and a scheduled one behave identically (the same "on-demand endpoint
+        runs the exact scheduled-job use case" pattern `POST /api/v1/watchdog/scan` set).
+        """
+        if self._refresh_tracked_analysis_use_case is None:
+            self._refresh_tracked_analysis_use_case = RefreshTrackedAnalysis(
+                watchlist_repository=self.get_watchlist_repository(),
+                generate_signal=self.get_generate_signal_use_case(),
+                analyze_sentiment=self.get_analyze_sentiment_use_case(),
+                locales=self._settings.analysis_refresh_locales,
+                max_concurrency=self._settings.analysis_refresh_concurrency,
+            )
+        return self._refresh_tracked_analysis_use_case
 
     def get_realtime_session_provider(self) -> RealtimeSessionProvider | None:
         """Return the cached `RealtimeSessionProvider`, or `None` when Realtime is off.
@@ -1153,18 +1322,36 @@ class Container:
         self._realtime_session_provider = OpenAIRealtimeSessionProvider(api_key=api_key)
         return self._realtime_session_provider
 
-    def _get_chat_model(self) -> BaseChatModel:
-        """Build/cache the LangChain chat model used ONLY by the chat/SSE agent graph
-        below. The Analyst signal / Advisor briefing pipelines do NOT use this — they
-        depend on the `LLMProvider` port (`get_llm_provider()`) instead, per the
-        hexagonal rule that `application/` never imports a vendor/framework package
-        directly (see `application/signals/use_cases/generate_signal.py`'s docstring).
-        Kept private for that reason: nothing outside `_get_chat_graph` should reach for
-        a raw `BaseChatModel`.
+    def _get_router_chat_model(self) -> BaseChatModel:
+        """Build/cache the FAST chat model backing the supervisor's routing node (issue #28).
+
+        Picking 1 of 6 specialists is a pure structured-output classification — the cheapest
+        model in the config is already correct at it, and it runs on every single chat turn.
+
+        Used ONLY by the chat/SSE agent graph below. The Analyst signal / Advisor briefing
+        pipelines do NOT use this — they depend on the `LLMProvider` port
+        (`get_fast_llm_provider()` / `get_reasoning_llm_provider()`) instead, per the hexagonal
+        rule that `application/` never imports a vendor/framework package directly (see
+        `application/signals/use_cases/generate_signal.py`'s docstring). Kept private for that
+        reason: nothing outside `_get_chat_graph` should reach for a raw `BaseChatModel`.
         """
-        if self._chat_model is None:
-            self._chat_model = build_chat_model(self._settings)
-        return self._chat_model
+        if self._router_chat_model is None:
+            self._router_chat_model = build_chat_model(self._settings, self._settings.openai_model)
+        return self._router_chat_model
+
+    def _get_specialist_chat_model(self) -> BaseChatModel:
+        """Build/cache the REASONING chat model backing all 6 specialist nodes (issue #28).
+
+        The specialists run a multi-turn tool-calling loop over real analytical work (the heavy
+        math lives in the injected tools, but the interpretation doesn't), so they're the half
+        of the graph that actually benefits from a stronger model. Same privacy rationale as
+        `_get_router_chat_model`.
+        """
+        if self._specialist_chat_model is None:
+            self._specialist_chat_model = build_chat_model(
+                self._settings, self._settings.reasoning_model
+            )
+        return self._specialist_chat_model
 
     def _get_chat_graph(self) -> Any:
         if self._chat_graph is None:
@@ -1204,7 +1391,10 @@ class Container:
             # `macro`/`sentiment` tools (issue #21): both public, non-per-user data — same
             # "safe for the unauthenticated chat route" rationale as `quant_tools` above.
             macro_tools = build_macro_tools(use_case=self.get_interpret_macro_event_use_case())
-            sentiment_tools = build_sentiment_tools(use_case=self.get_analyze_sentiment_use_case())
+            sentiment_tools = build_sentiment_tools(
+                use_case=self.get_analyze_sentiment_use_case(),
+                default_locale=self._settings.default_locale,
+            )
             analyst_tools = build_analyst_grounding_tools(
                 news_provider=self.get_news_provider(),
                 generate_signal=self.get_generate_signal_use_case(),
@@ -1264,7 +1454,8 @@ class Container:
                     ),
                 ]
             self._chat_graph = build_supervisor_graph(
-                self._get_chat_model(),
+                self._get_router_chat_model(),
+                self._get_specialist_chat_model(),
                 checkpointer,
                 advisor_tools=advisor_tools,
                 analyst_tools=analyst_tools,

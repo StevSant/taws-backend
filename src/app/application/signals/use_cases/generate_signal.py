@@ -13,6 +13,7 @@ from app.domain.agents import LLMProviderUnavailableError
 from app.domain.agents.entities import Message, MessageRole
 from app.domain.agents.ports import LLMProvider
 from app.domain.compliance import NOT_PERSONALIZED_ADVICE_DISCLAIMER
+from app.domain.freshness import FreshnessPolicy
 from app.domain.market.entities import Instrument, NewsItem
 from app.domain.market.ports import InstrumentUniverse, MarketDataProvider, NewsProvider
 from app.domain.signals.entities import ImpactClass, Signal, SignalEvidence
@@ -108,6 +109,8 @@ class GenerateSignal:
         find_historical_analogs: FindHistoricalAnalogs,
         index_signal_analog: IndexSignalAnalog,
         min_distinct_sources: int,
+        freshness_policy: FreshnessPolicy,
+        retention_keep: int,
         retry_max_attempts: int = 2,
         retry_backoff_base_seconds: float = 0.5,
     ) -> None:
@@ -119,6 +122,10 @@ class GenerateSignal:
         self._find_historical_analogs = find_historical_analogs
         self._index_signal_analog = index_signal_analog
         self._min_distinct_sources = min_distinct_sources
+        # Freshness cache + retention (issue #29). Both come from `Settings` via the DI
+        # container — no TTL or retention count is hardcoded here.
+        self._freshness_policy = freshness_policy
+        self._retention_keep = retention_keep
         # Bounded retry around the transient-failure path of `_classify_impact` before it
         # degrades to the honest fallback (issue #55). Defaults mirror `Settings`' own
         # defaults so a caller that doesn't wire them (e.g. the batch pipeline) still
@@ -130,10 +137,36 @@ class GenerateSignal:
         # swap, and routers don't need to resolve/pass it via `Depends`.
         self._compliance_reviewer = ReviewCompliance()
 
-    async def execute(self, instrument_symbol: str, locale: str) -> Signal:
+    async def execute(self, instrument_symbol: str, locale: str, *, force: bool = False) -> Signal:
+        """Ensure a fresh `Signal` exists for `(instrument_symbol, locale)` and return it.
+
+        Freshness-gated since issue #29: a `Signal` is shared, non-personalized analysis, so
+        N users asking about AAPL within the TTL window should cost ONE LLM run, not N. Unless
+        `force`, a cached signal that is still within its asset class's TTL is returned as-is —
+        no LLM call, no new row.
+
+        `force` is INTERNAL ONLY. It is for the background refresh job and for
+        `ForceAnalyzeNewsItem` (the manual "Analizar ahora" button, which must genuinely
+        re-analyze or the button looks broken). It is deliberately NOT exposed as a query
+        param on the public `POST /api/v1/signals/generate` — a client that can set
+        `force=true` can trivially bust the cache and reintroduce the exact cost this gate
+        exists to remove. The public endpoint's contract is now "ensure fresh", not "always
+        recompute".
+        """
         instrument = self._instrument_universe.by_symbol(instrument_symbol)
         if instrument is None:
             raise UnknownInstrumentError(instrument_symbol)
+
+        # Fetched even under `force`, because it also backs the degraded-write guard below.
+        cached = await self._latest_signal(instrument.symbol, locale)
+        if not force and cached is not None and self._is_reusable(cached, instrument):
+            logger.info(
+                "Signal for %s (%s) served from cache (created_at=%s); skipping LLM run.",
+                instrument.symbol,
+                locale,
+                cached.created_at.isoformat(),
+            )
+            return cached
 
         news_items = await self._gather_news(instrument)
         if not news_items:
@@ -168,11 +201,27 @@ class GenerateSignal:
 
         evidence = [_to_evidence(item) for item in news_items] + analogs
 
+        # Degraded-write guard (issue #29): if classification fell back (no LLM key, exhausted
+        # retries) but a real analysis already exists for this key, do NOT persist the empty
+        # one. It would become `latest` and hide the last good thesis behind an "análisis no
+        # disponible" card — a strictly worse answer than the one we already have. Applies even
+        # under `force`: forcing means "try to refresh", never "overwrite good with garbage".
+        if not analysis_available and cached is not None and cached.analysis_available:
+            logger.warning(
+                "Signal classification for %s (%s) degraded; keeping the last good analysis "
+                "(created_at=%s) rather than persisting an empty one.",
+                instrument.symbol,
+                locale,
+                cached.created_at.isoformat(),
+            )
+            return cached
+
         signal = Signal(
             id=str(uuid.uuid4()),
             instrument_symbol=instrument.symbol,
             impact_class=classification.impact_class,
             confidence=classification.confidence,
+            locale=locale,
             thesis=classification.thesis,
             key_drivers=classification.key_drivers,
             risk_factors=classification.risk_factors,
@@ -201,7 +250,51 @@ class GenerateSignal:
         # effect run after persistence, so a RAG-indexing failure never loses the signal.
         await self._index_signal_analog.execute(persisted, analog_summary)
 
+        await self._prune(instrument.symbol, locale)
+
         return persisted
+
+    async def _latest_signal(self, symbol: str, locale: str) -> Signal | None:
+        """The newest persisted signal for this cache key, or `None`.
+
+        A cache lookup must never be the reason a generation fails: a store blip degrades to
+        "no cache" (recompute) rather than raising, which is the pre-#29 behavior anyway.
+        """
+        try:
+            return await self._signal_repository.get_latest_for_instrument(symbol, locale)
+        except Exception:
+            logger.warning(
+                "Cache lookup failed for %s (%s); regenerating.", symbol, locale, exc_info=True
+            )
+            return None
+
+    def _is_reusable(self, signal: Signal, instrument: Instrument) -> bool:
+        """Whether a cached signal can be served instead of running the pipeline.
+
+        Fresh AND a real analysis. The `analysis_available` half matters: a degraded row
+        (persisted before this guard existed, or written when no good row existed to fall back
+        on) must not pin the cache for a whole TTL window — otherwise a single LLM outage
+        would suppress every retry until it expired.
+        """
+        return signal.analysis_available and self._freshness_policy.is_fresh(
+            signal.created_at, instrument.asset_class
+        )
+
+    async def _prune(self, symbol: str, locale: str) -> None:
+        """Trim this cache key's history to the configured retention (issue #29).
+
+        Best-effort and post-persistence: retention is housekeeping, and failing the caller's
+        request because cleanup of OLD rows failed would trade a real answer for a tidy table.
+        """
+        try:
+            deleted = await self._signal_repository.prune_for_instrument(
+                symbol, locale, self._retention_keep
+            )
+        except Exception:
+            logger.warning("Signal retention prune failed for %s (%s).", symbol, locale, exc_info=True)
+            return
+        if deleted:
+            logger.info("Pruned %d stale signal(s) for %s (%s).", deleted, symbol, locale)
 
     async def _gather_news(self, instrument: Instrument) -> list[NewsItem]:
         """Fetch instrument-specific news, broadening to asset-class context if too thin.

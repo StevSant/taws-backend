@@ -21,6 +21,11 @@ class ScenarioResult:
     than referencing it by id: `ConsequenceChain` is deliberately never persisted on its
     own (see its docstring — "chains are generated on demand"), so a `ScenarioResult` is
     the only place a specific run's causal chain is durably recorded.
+
+    `locale` is the language `title`/`narrative`/`recommended_actions` were written in, and
+    is part of the freshness cache key for PRESET runs — `(spec.preset_id, locale)`, issue
+    #29. Free-form runs have no `preset_id` and are therefore never cached (a free-text
+    scenario has no stable key to cache under); they still record their locale.
     """
 
     id: str
@@ -31,4 +36,5 @@ class ScenarioResult:
     consequence_chain: ConsequenceChain
     recommended_actions: list[str]
     disclaimer: str
+    locale: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))

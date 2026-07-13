@@ -3,15 +3,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.v1.dependencies import (
-    get_embedding_provider,
-    get_instrument_universe,
-    get_llm_provider,
-    get_market_data_provider,
+    get_analyze_pending_news_use_case,
+    get_fast_llm_provider,
+    get_force_analyze_news_item_use_case,
     get_news_item_repository,
-    get_news_prefilter_policy,
     get_news_provider,
     get_signal_repository,
-    get_vector_store,
 )
 from app.api.v1.schemas import AnalyzePendingNewsResponse, NewsItemResponse, NewsListResponse
 from app.api.v1.schemas.localize_news_blurbs import (
@@ -19,31 +16,17 @@ from app.api.v1.schemas.localize_news_blurbs import (
     LocalizeNewsBlurbsResponse,
     NewsBlurbResponse,
 )
-from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
 from app.application.market.use_cases import IngestNews
 from app.application.market.use_cases.localize_news_blurbs import (
     LocalizeNewsBlurbs,
     NewsBlurbSource,
 )
-from app.application.signals import (
-    NewsItemNotAnalyzableError,
-    NewsItemNotFoundError,
-    NewsPrefilterPolicy,
-)
-from app.application.signals.use_cases import (
-    AnalyzePendingNews,
-    ForceAnalyzeNewsItem,
-    GenerateSignal,
-)
+from app.application.signals import NewsItemNotAnalyzableError, NewsItemNotFoundError
+from app.application.signals.use_cases import AnalyzePendingNews, ForceAnalyzeNewsItem
 from app.core.config import Settings, get_settings
-from app.domain.agents.ports import EmbeddingProvider, LLMProvider, VectorStore
+from app.domain.agents.ports import LLMProvider
 from app.domain.market.entities import AssetClass
-from app.domain.market.ports import (
-    InstrumentUniverse,
-    MarketDataProvider,
-    NewsItemRepository,
-    NewsProvider,
-)
+from app.domain.market.ports import NewsItemRepository, NewsProvider
 from app.domain.signals.ports import SignalRepository
 
 router = APIRouter(prefix="/news", tags=["news"])
@@ -103,12 +86,16 @@ async def list_news(
 @router.post("/blurbs")
 async def localize_news_blurbs(
     body: LocalizeNewsBlurbsRequest,
-    llm_provider: Annotated[LLMProvider, Depends(get_llm_provider)],
+    llm_provider: Annotated[LLMProvider, Depends(get_fast_llm_provider)],
 ) -> LocalizeNewsBlurbsResponse:
     """Return short locale-aware blurbs for timeline cards (title stays original).
 
     Used by the Radar news timeline when the UI locale is Spanish and upstream
     headlines/summaries arrive in English. Cached in-process per news id.
+
+    Fast tier (issue #28): shortening and translating a headline is the cheapest kind of LLM
+    call in the codebase, and it fans out per news item — exactly the wrong place to spend
+    reasoning-tier tokens.
     """
     use_case = LocalizeNewsBlurbs(llm_provider)
     blurbs = await use_case.execute(
@@ -143,15 +130,7 @@ async def get_news_item(
 
 @router.post("/analyze-pending", status_code=status.HTTP_200_OK)
 async def analyze_pending_news(
-    news_item_repository: Annotated[NewsItemRepository, Depends(get_news_item_repository)],
-    instrument_universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
-    market_data_provider: Annotated[MarketDataProvider, Depends(get_market_data_provider)],
-    news_provider: Annotated[NewsProvider, Depends(get_news_provider)],
-    signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
-    llm_provider: Annotated[LLMProvider, Depends(get_llm_provider)],
-    embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
-    vector_store: Annotated[VectorStore, Depends(get_vector_store)],
-    prefilter_policy: Annotated[NewsPrefilterPolicy, Depends(get_news_prefilter_policy)],
+    use_case: Annotated[AnalyzePendingNews, Depends(get_analyze_pending_news_use_case)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AnalyzePendingNewsResponse:
     """Analyze every persisted news item still `pending`, server-side (issue #2).
@@ -168,26 +147,6 @@ async def analyze_pending_news(
     rather than the only way analysis ever happens. The response's `skipped_by_reason` /
     `failed_by_reason` breakdowns are the fastest way to see whether the gate is tuned right.
     """
-    use_case = AnalyzePendingNews(
-        news_item_repository=news_item_repository,
-        instrument_universe=instrument_universe,
-        market_data_provider=market_data_provider,
-        news_provider=news_provider,
-        signal_repository=signal_repository,
-        llm_provider=llm_provider,
-        find_historical_analogs=FindHistoricalAnalogs(
-            embedding_provider=embedding_provider,
-            vector_store=vector_store,
-            top_k=settings.historical_analogs_top_k,
-        ),
-        index_signal_analog=IndexSignalAnalog(
-            embedding_provider=embedding_provider, vector_store=vector_store
-        ),
-        prefilter_policy=prefilter_policy,
-        min_distinct_sources=settings.min_distinct_news_sources,
-        max_concurrency=settings.news_analysis_max_concurrency,
-        batch_limit=settings.news_analysis_batch_limit,
-    )
     result = await use_case.execute(locale=settings.default_locale)
     return AnalyzePendingNewsResponse.model_validate(result)
 
@@ -195,14 +154,7 @@ async def analyze_pending_news(
 @router.post("/{news_id}/analyze", status_code=status.HTTP_200_OK)
 async def force_analyze_news_item(
     news_id: str,
-    news_item_repository: Annotated[NewsItemRepository, Depends(get_news_item_repository)],
-    instrument_universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
-    market_data_provider: Annotated[MarketDataProvider, Depends(get_market_data_provider)],
-    news_provider: Annotated[NewsProvider, Depends(get_news_provider)],
-    signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
-    llm_provider: Annotated[LLMProvider, Depends(get_llm_provider)],
-    embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
-    vector_store: Annotated[VectorStore, Depends(get_vector_store)],
+    use_case: Annotated[ForceAnalyzeNewsItem, Depends(get_force_analyze_news_item_use_case)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> NewsItemResponse:
     """Force-classify ONE news item, bypassing the pre-filter — the "Analizar ahora" button
@@ -214,34 +166,17 @@ async def force_analyze_news_item(
     linked instrument, links the resulting signal, and updates `analysis_status` — returning
     the refreshed item so the detail page can render the new signal in place.
 
-    Bypassing `_prefilter` is the whole point; the evidence floor and the compliance gate still
-    apply (they're correctness guarantees, not cost optimizations). Every non-success outcome
-    is a 422 whose `detail.skip_reason` is the machine-readable `NewsSkipReason` just persisted
-    on the item, so the frontend can explain it rather than showing an opaque failure.
+    Bypasses BOTH gates, and only these two: the pre-filter (issue #27) and, since issue #29,
+    the freshness cache (`force=True`). Skipping the cache is essential here — a user pressing
+    "Analizar ahora" on an article that was passed over must get a real analysis of it, not a
+    signal generated ten minutes ago from different news. The evidence floor and the compliance
+    gate still apply: those are correctness guarantees, not cost optimizations. Every
+    non-success outcome is a 422 whose `detail.skip_reason` is the machine-readable
+    `NewsSkipReason` just persisted on the item, so the frontend can explain it rather than
+    showing an opaque failure.
 
     Not user-scoped — same visibility model as the rest of this router.
     """
-    use_case = ForceAnalyzeNewsItem(
-        news_item_repository=news_item_repository,
-        generate_signal=GenerateSignal(
-            news_provider=news_provider,
-            market_data_provider=market_data_provider,
-            instrument_universe=instrument_universe,
-            signal_repository=signal_repository,
-            llm_provider=llm_provider,
-            find_historical_analogs=FindHistoricalAnalogs(
-                embedding_provider=embedding_provider,
-                vector_store=vector_store,
-                top_k=settings.historical_analogs_top_k,
-            ),
-            index_signal_analog=IndexSignalAnalog(
-                embedding_provider=embedding_provider, vector_store=vector_store
-            ),
-            min_distinct_sources=settings.min_distinct_news_sources,
-            retry_max_attempts=settings.signal_classification_retry_max_attempts,
-            retry_backoff_base_seconds=settings.signal_classification_retry_backoff_base_seconds,
-        ),
-    )
     try:
         item = await use_case.execute(news_id, locale=settings.default_locale)
     except NewsItemNotFoundError as exc:

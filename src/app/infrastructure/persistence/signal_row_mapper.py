@@ -18,6 +18,7 @@ def signal_from_row(row: Any) -> Signal:
         confidence=row["confidence"],
         evidence=[_evidence_from_row(item) for item in row.get("evidence") or []],
         disclaimer=row["disclaimer"],
+        locale=row.get("locale") or "",
         thesis=row.get("thesis") or "",
         key_drivers=list(row.get("key_drivers") or []),
         risk_factors=list(row.get("risk_factors") or []),

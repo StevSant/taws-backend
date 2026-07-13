@@ -35,6 +35,7 @@ def scenario_to_row(result: ScenarioResult) -> dict[str, Any]:
         "consequence_chain": _consequence_chain_to_row(result.consequence_chain),
         "recommended_actions": result.recommended_actions,
         "disclaimer": result.disclaimer,
+        "locale": result.locale,
         "created_at": result.created_at.isoformat(),
     }
 
@@ -55,6 +56,7 @@ def scenario_from_row(row: Any) -> ScenarioResult:
         consequence_chain=_consequence_chain_from_row(row["consequence_chain"]),
         recommended_actions=row.get("recommended_actions") or [],
         disclaimer=row["disclaimer"],
+        locale=row.get("locale") or "",
         created_at=parse_supabase_timestamp(row["created_at"]),
     )
 

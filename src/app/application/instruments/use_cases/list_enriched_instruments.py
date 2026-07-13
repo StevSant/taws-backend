@@ -33,9 +33,15 @@ class ListEnrichedInstruments:
     `total` count stay stable as the user pages.
 
     Reuses `ComputeMarketStats` for the price/change/volatility/candle math (single source of
-    that logic) and `SignalRepository.list_for_instrument` for the latest AI signal. Every
-    per-instrument enrichment degrades gracefully: a market-data or signal-store failure for
-    one row leaves that row's derived fields `None`/empty instead of failing the whole page.
+    that logic) and `SignalRepository.get_latest_for_instrument` for the latest AI signal.
+    Every per-instrument enrichment degrades gracefully: a market-data or signal-store failure
+    for one row leaves that row's derived fields `None`/empty instead of failing the whole page.
+
+    Read-only (issue #29): this page NEVER triggers an inline LLM run. It serves whatever the
+    background refresh job (`RefreshTrackedAnalysis`) has already cached, so a user opening the
+    explorer never waits on generation. The signal read is now a single indexed
+    `order by created_at desc limit 1` per row, rather than pulling every historical signal
+    for a symbol over the wire just to `max()` it down to one.
     """
 
     def __init__(
@@ -53,6 +59,7 @@ class ListEnrichedInstruments:
     async def execute(
         self,
         *,
+        locale: str,
         asset_class: AssetClass | None = None,
         search: str | None = None,
         sort_by: InstrumentSortField = InstrumentSortField.NAME,
@@ -64,7 +71,10 @@ class ListEnrichedInstruments:
     ) -> InstrumentPage:
         instruments = self._filter(asset_class, search)
         enriched = await asyncio.gather(
-            *(self._enrich(instrument, window_days, sparkline_points) for instrument in instruments)
+            *(
+                self._enrich(instrument, locale, window_days, sparkline_points)
+                for instrument in instruments
+            )
         )
 
         ordered = _sort(enriched, sort_by, sort_dir)
@@ -95,7 +105,7 @@ class ListEnrichedInstruments:
         ]
 
     async def _enrich(
-        self, instrument: Instrument, window_days: int, sparkline_points: int
+        self, instrument: Instrument, locale: str, window_days: int, sparkline_points: int
     ) -> EnrichedInstrument:
         stats = await self._market_stats.execute(instrument.symbol, window_days)
         return EnrichedInstrument(
@@ -108,18 +118,15 @@ class ListEnrichedInstruments:
             volatility_pct=stats.volatility_pct,
             volatility_regime=stats.volatility_regime,
             sparkline=_downsample_closes(stats.candles, sparkline_points),
-            latest_signal=await self._latest_signal(instrument.symbol),
+            latest_signal=await self._latest_signal(instrument.symbol, locale),
         )
 
-    async def _latest_signal(self, symbol: str) -> Signal | None:
+    async def _latest_signal(self, symbol: str, locale: str) -> Signal | None:
         try:
-            signals = await self._signal_repository.list_for_instrument(symbol)
+            return await self._signal_repository.get_latest_for_instrument(symbol, locale)
         except Exception:
             logger.warning("Signal lookup failed for %s; row omits signal.", symbol, exc_info=True)
             return None
-        if not signals:
-            return None
-        return max(signals, key=lambda signal: signal.created_at)
 
 
 def _downsample_closes(candles: list[PriceCandle], points: int) -> list[float]:

@@ -96,6 +96,56 @@ class SupabaseSignalRepository(SignalRepository):
         )
         return [signal_from_row(row) for row in response.data]
 
+    async def get_latest_for_instrument(self, symbol: str, locale: str) -> Signal | None:
+        """Single newest row for `(symbol, locale)` — covered by the composite index
+        `signals_symbol_locale_created_idx` (migration `0015`)."""
+        client = await self._clients.get()
+        response = await self._retry(
+            lambda: (
+                client.table(_SIGNALS_TABLE)
+                .select("*")
+                .eq("instrument_symbol", symbol)
+                .eq("locale", locale)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+        )
+        return signal_from_row(response.data[0]) if response.data else None
+
+    async def prune_for_instrument(self, symbol: str, locale: str, keep: int) -> int:
+        """Delete all but the `keep` newest rows for `(symbol, locale)`.
+
+        Two round trips (select the ids to drop, then delete them by id) rather than one
+        `delete ... where id not in (select ... limit)`: PostgREST has no subquery syntax, and
+        the alternative — a `created_at < <cutoff>` delete — would race with a concurrent
+        insert of an older-timestamped row. Selecting only `id` keeps the first hop cheap even
+        for a symbol with a long history, and both hops are covered by the same composite index
+        as `get_latest_for_instrument`.
+        """
+        stale_ids = await self._stale_ids(_SIGNALS_TABLE, symbol, locale, keep)
+        if not stale_ids:
+            return 0
+        client = await self._clients.get()
+        await self._retry(
+            lambda: client.table(_SIGNALS_TABLE).delete().in_("id", stale_ids).execute()
+        )
+        return len(stale_ids)
+
+    async def _stale_ids(self, table: str, symbol: str, locale: str, keep: int) -> list[str]:
+        client = await self._clients.get()
+        response = await self._retry(
+            lambda: (
+                client.table(table)
+                .select("id")
+                .eq("instrument_symbol", symbol)
+                .eq("locale", locale)
+                .order("created_at", desc=True)
+                .execute()
+            )
+        )
+        return [row["id"] for row in response.data[max(keep, 0) :]]
+
     async def save_review_state(self, review_state: ReviewState) -> ReviewState:
         """Persist a reviewer decision, or raise `IllegalReviewTransitionError`.
 
@@ -143,6 +193,7 @@ def _signal_to_row(signal: Signal) -> dict[str, Any]:
         "confidence": signal.confidence,
         "evidence": signal_to_evidence_column(signal.evidence),
         "disclaimer": signal.disclaimer,
+        "locale": signal.locale,
         "thesis": signal.thesis,
         "key_drivers": signal.key_drivers,
         "risk_factors": signal.risk_factors,

@@ -43,6 +43,24 @@ class ScenarioRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_latest_for_preset(self, preset_id: str, locale: str) -> ScenarioResult | None:
+        """Return the newest result for `(preset_id, locale)`, or `None` if there is none.
+
+        The freshness-cache lookup for PRESET scenario runs (issue #29). Free-form runs are
+        deliberately not covered: they have no stable key to cache under (two users' free
+        text is never identical), so `ScenarioSimulationRunner` only consults this when a
+        `preset_id` was supplied. `locale` is part of the key — see `ScenarioResult.locale`.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def prune_for_preset(self, preset_id: str, locale: str, keep: int) -> int:
+        """Delete all but the `keep` newest results for `(preset_id, locale)`; return how
+        many rows were deleted. Retention counterpart of
+        `SignalRepository.prune_for_instrument` — same bounded-growth rationale."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def arm_monitor(self, monitor: ScenarioMonitor) -> ScenarioMonitor:
         """Create or replace (upsert by `id`) an armed `ScenarioMonitor` row.
 

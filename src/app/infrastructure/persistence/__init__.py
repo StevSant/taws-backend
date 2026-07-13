@@ -11,6 +11,9 @@ from app.infrastructure.persistence.supabase_note_repository import SupabaseNote
 from app.infrastructure.persistence.supabase_scenario_repository import (
     SupabaseScenarioRepository,
 )
+from app.infrastructure.persistence.supabase_sentiment_repository import (
+    SupabaseSentimentRepository,
+)
 from app.infrastructure.persistence.supabase_signal_repository import SupabaseSignalRepository
 from app.infrastructure.persistence.supabase_telegram_link_repository import (
     SupabaseTelegramLinkRepository,
@@ -29,6 +32,7 @@ __all__ = [
     "SupabaseNewsItemRepository",
     "SupabaseNoteRepository",
     "SupabaseScenarioRepository",
+    "SupabaseSentimentRepository",
     "SupabaseSignalRepository",
     "SupabaseTelegramLinkRepository",
     "SupabaseTelegramLinkTokenRepository",
