@@ -1,19 +1,44 @@
+import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.v1.dependencies import (
+    get_instrument_metadata_provider,
     get_instrument_universe,
     get_market_data_provider,
+    get_register_instrument_use_case,
+    get_search_coins_use_case,
     get_signal_repository,
+    get_watchlist_repository,
+    require_current_user,
 )
-from app.api.v1.schemas import InstrumentPageResponse, InstrumentResponse
+from app.api.v1.schemas import (
+    CoinCandidateResponse,
+    CurrentUser,
+    InstrumentPageResponse,
+    InstrumentResponse,
+    InstrumentSearchResponse,
+    RegisterInstrumentRequest,
+    RegisterInstrumentResponse,
+)
 from app.application.instruments import InstrumentSortField, SortDirection
-from app.application.instruments.use_cases import ListEnrichedInstruments
+from app.application.instruments.errors import SymbolCollisionError
+from app.application.instruments.use_cases import (
+    ListEnrichedInstruments,
+    RegisterInstrument,
+    SearchCoins,
+)
 from app.core.config import Settings, get_settings
-from app.domain.market.entities import AssetClass
-from app.domain.market.ports import InstrumentUniverse, MarketDataProvider
+from app.domain.market.entities import AssetClass, CoinCandidate
+from app.domain.market.ports import (
+    InstrumentMetadataProvider,
+    InstrumentUniverse,
+    MarketDataProvider,
+)
 from app.domain.signals.ports import SignalRepository
+from app.domain.watchlist.entities import Watchlist
+from app.domain.watchlist.ports import WatchlistRepository
 
 router = APIRouter(prefix="/instruments", tags=["instruments"])
 
@@ -23,6 +48,7 @@ _MAX_PAGE_SIZE = 100
 _DEFAULT_WINDOW_DAYS = 30
 _MAX_WINDOW_DAYS = 365
 _SEARCH_MAX_LEN = 40
+_DEFAULT_WATCHLIST_NAME = "My Watchlist"
 
 
 @router.get("")
@@ -45,6 +71,9 @@ async def list_enriched_instruments(
     universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
     market_data_provider: Annotated[MarketDataProvider, Depends(get_market_data_provider)],
     signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
+    instrument_metadata_provider: Annotated[
+        InstrumentMetadataProvider, Depends(get_instrument_metadata_provider)
+    ],
     settings: Annotated[Settings, Depends(get_settings)],
     asset_class: Annotated[AssetClass | None, Query()] = None,
     search: Annotated[str | None, Query(max_length=_SEARCH_MAX_LEN)] = None,
@@ -67,6 +96,7 @@ async def list_enriched_instruments(
         instrument_universe=universe,
         market_data_provider=market_data_provider,
         signal_repository=signal_repository,
+        instrument_metadata_provider=instrument_metadata_provider,
     )
     page_result = await use_case.execute(
         # `locale` selects which localized signal to show per row (issue #29): signals are
@@ -81,3 +111,87 @@ async def list_enriched_instruments(
         window_days=window_days,
     )
     return InstrumentPageResponse.model_validate(page_result)
+
+
+@router.get("/search")
+async def search_instruments(
+    search_coins: Annotated[SearchCoins, Depends(get_search_coins_use_case)],
+    q: Annotated[str, Query(min_length=1, max_length=_SEARCH_MAX_LEN)],
+) -> InstrumentSearchResponse:
+    """Resolve arbitrary crypto name/ticker queries against CoinGecko (issue #60).
+
+    Ranked candidates the user can pick from before calling `POST /instruments` to
+    register one. Returns `[]` on no hits or a soft CoinGecko failure (search never
+    errors the request — instrument-search spec's "fails soft").
+    """
+    candidates = await search_coins.execute(q)
+    return [CoinCandidateResponse.model_validate(candidate) for candidate in candidates]
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def register_instrument(
+    payload: RegisterInstrumentRequest,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    register_instrument_use_case: Annotated[
+        RegisterInstrument, Depends(get_register_instrument_use_case)
+    ],
+    watchlist_repository: Annotated[WatchlistRepository, Depends(get_watchlist_repository)],
+) -> RegisterInstrumentResponse:
+    """Turn a resolved CoinGecko candidate into a real, globally visible instrument
+    and add it to the caller's own watchlist in one action (issue #60).
+
+    Outcomes (design's FIX #5): **201** full success; **409** the resolved symbol
+    already exists under a different asset class (e.g. `COIN` the stock) — no write,
+    body carries the untouched existing instrument; **502** the catalog/universe
+    writes succeeded but the subsequent watchlist add failed — body carries the
+    persisted instrument with `watchlisted: false` (the client can retry via the
+    existing `POST /watchlists/{id}/items`).
+    """
+    candidate = CoinCandidate(
+        id=payload.coingecko_id,
+        symbol=payload.symbol,
+        name=payload.name,
+        market_cap_rank=None,
+        thumb="",
+    )
+    watchlist_id = await _resolve_owned_watchlist_id(user, watchlist_repository)
+
+    try:
+        result = await register_instrument_use_case.execute(
+            candidate=candidate, watchlist_id=watchlist_id
+        )
+    except SymbolCollisionError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": f"Symbol {error.symbol!r} already exists as a different asset class",
+                "instrument": InstrumentResponse.model_validate(
+                    error.existing_instrument
+                ).model_dump(mode="json"),
+            },
+        ) from error
+
+    response = RegisterInstrumentResponse.model_validate(result)
+    if not result.watchlisted:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=response.model_dump(mode="json"),
+        )
+    return response
+
+
+async def _resolve_owned_watchlist_id(
+    user: CurrentUser, watchlist_repository: WatchlistRepository
+) -> str:
+    """Return the id of the calling user's watchlist, creating a default one on
+    first use — mirrors the frontend's existing "Agregar instrumento" fallback
+    (`AddInstrumentStore.ensureWatchlistId`): every user is assumed to track one
+    watchlist for this quick-register flow.
+    """
+    existing = await watchlist_repository.list_for_user(user.id)
+    if existing:
+        return existing[0].id
+    created = await watchlist_repository.create(
+        Watchlist(id=str(uuid.uuid4()), user_id=user.id, name=_DEFAULT_WATCHLIST_NAME)
+    )
+    return created.id

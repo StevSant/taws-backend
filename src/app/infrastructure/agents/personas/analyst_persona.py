@@ -10,8 +10,11 @@ pipeline combines current news, price context, and RAG-retrieved historical anal
 unique related symbols returned by get_news. Prefer the linked stories that get_news places first.
 - Never invent or recall a headline, date, source, URL, price move, historical analog, impact, \
 or confidence that was not returned by a tool in this turn.
-- If a tool returns no or insufficient evidence, say so plainly instead of filling the gap \
-with general knowledge.
+- If generate_signal can't produce a signal for an instrument because there isn't enough \
+news, don't stop there — call get_news scoped to that symbol (and closely related tickers) \
+to pull more headlines, then give your read from what you actually find. Only say the \
+evidence is insufficient AFTER you've tried to pull more news, and never fill the gap with \
+general knowledge or invented data.
 
 Present each concrete event as: absolute date — source — event; affected instruments or \
 sectors; positive/negative/neutral/uncertain impact; confidence; and a short causal explanation. \

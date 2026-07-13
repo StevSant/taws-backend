@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from datetime import date
 
 from app.domain.market.entities import AnalysisStatus, NewsItem, NewsSkipReason
 
@@ -32,6 +33,33 @@ class NewsItemRepository(ABC):
     async def list_pending(self, limit: int) -> list[NewsItem]:
         """Return up to `limit` persisted items with `analysis_status = pending`,
         most-recent first."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_related(self, item: NewsItem, limit: int) -> list[NewsItem]:
+        """Return up to `limit` other persisted items related to `item`, most-recent first.
+
+        Backs the "related news" section of `GET /api/v1/news/{id}` (issue #57). Relatedness
+        is a fallback chain, strongest signal first, because keying it purely off shared
+        instruments left every article the linker couldn't map to a symbol — a large share of
+        the RSS/Yahoo feed — with a permanently empty section:
+
+        1. items sharing at least one `related_symbols` entry with `item`;
+        2. items from the same `source`, when (1) returned fewer than `limit`;
+        3. the most recent items overall, when (1) + (2) still returned fewer than `limit`.
+
+        `item` itself is never included, and no item is returned twice.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_for_symbol_in_range(
+        self, symbol: str, from_date: date, to_date: date, limit: int
+    ) -> list[NewsItem]:
+        """Return persisted items whose `related_symbols` include `symbol` and whose
+        `published_at` falls within [from_date, to_date] (inclusive), most-recent first,
+        up to `limit`. Backs date-windowed chat grounding — "why did this asset move in
+        this period?" (issue #73 follow-up)."""
         raise NotImplementedError
 
     @abstractmethod

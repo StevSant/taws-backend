@@ -1,3 +1,3 @@
-from app.infrastructure.universe.json_instrument_universe import JsonInstrumentUniverse
+from app.infrastructure.universe.supabase_instrument_universe import SupabaseInstrumentUniverse
 
-__all__ = ["JsonInstrumentUniverse"]
+__all__ = ["SupabaseInstrumentUniverse"]

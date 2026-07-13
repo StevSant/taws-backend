@@ -336,6 +336,18 @@ class Settings(BaseSettings):
     # same APScheduler infra as the Watchdog jobs (`infrastructure/scheduling`).
     news_analysis_poll_interval_minutes: int = 15
 
+    # --- News detail payload (issue #57: GET /api/v1/news/{id}, via `BuildNewsDetail`) ---
+    # Caps how many of an article's `related_symbols` get a live price lookup, since each one
+    # costs a `ComputeMarketStats` call (an upstream market-data fetch). An article tagged with
+    # 30 tickers is a linker artifact, not 30 chips worth rendering.
+    news_detail_max_affected_instruments: int = 8
+    # How many related articles the detail page's "related news" list carries. Paginated client
+    # side, so this is the whole list, not a page.
+    news_detail_related_limit: int = 12
+    # Lookback for the affected-instrument chips' % change. Matches `ComputeMarketStats`'s own
+    # default window, so a chip and the asset page it links to never disagree on the number.
+    news_detail_price_window_days: int = 30
+
     # --- Historical analogs RAG (behind the VectorStore port, pgvector-backed) ---
     historical_analogs_top_k: int = 3
 
