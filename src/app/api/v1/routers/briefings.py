@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.api.v1.dependencies import (
     get_briefing_repository,
     get_reasoning_llm_provider,
+    get_resolve_locale_use_case,
     get_signal_repository,
     get_watchlist_repository,
     require_current_user,
@@ -13,7 +14,7 @@ from app.api.v1.schemas import BriefingResponse, CurrentUser, GenerateBriefingRe
 from app.application.briefing import EmptyWatchlistError
 from app.application.briefing.use_cases import GenerateBriefing
 from app.application.compliance import ComplianceViolationError
-from app.core.config import Settings, get_settings
+from app.application.profile.use_cases import ResolveLocale
 from app.domain.agents.ports import LLMProvider
 from app.domain.briefing.ports import BriefingRepository
 from app.domain.signals.ports import SignalRepository
@@ -48,11 +49,15 @@ async def generate_briefing(
     # Reasoning tier (#28): composing a briefing synthesizes many signals across a watchlist
     # into one narrative — the Advisor's flagship analytical call.
     llm_provider: Annotated[LLMProvider, Depends(get_reasoning_llm_provider)],
-    settings: Annotated[Settings, Depends(get_settings)],
+    resolve_locale: Annotated[ResolveLocale, Depends(get_resolve_locale_use_case)],
 ) -> BriefingResponse:
     """Trigger the Advisor briefing pipeline on-demand for a watchlist (HU3).
 
     Button-style trigger; scheduling a recurring briefing is a separate T1 issue.
+
+    The briefing is written in the locale `ResolveLocale` picks (issue #67): `payload.locale`
+    when the UI sends one, else the owner's stored `preferred_locale`, else
+    `Settings.default_locale`.
     """
     await _require_owned_watchlist(watchlist_id, user, watchlist_repository)
     use_case = GenerateBriefing(
@@ -61,7 +66,7 @@ async def generate_briefing(
         briefing_repository=briefing_repository,
         llm_provider=llm_provider,
     )
-    locale = payload.locale or settings.default_locale
+    locale = await resolve_locale.execute(user_id=user.id, requested_locale=payload.locale)
     try:
         briefing = await use_case.execute(watchlist_id, locale=locale)
     except EmptyWatchlistError as exc:

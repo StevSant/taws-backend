@@ -226,6 +226,7 @@ async def get_news_item(
 async def analyze_pending_news(
     use_case: Annotated[AnalyzePendingNews, Depends(get_analyze_pending_news_use_case)],
     settings: Annotated[Settings, Depends(get_settings)],
+    locale: Annotated[str | None, Query(min_length=2, max_length=35)] = None,
 ) -> AnalyzePendingNewsResponse:
     """Analyze every persisted news item still `pending`, server-side (issue #2).
 
@@ -240,8 +241,13 @@ async def analyze_pending_news(
     `NEWS_ANALYSIS_ENABLED`), so this endpoint is a "don't wait for the next tick" trigger
     rather than the only way analysis ever happens. The response's `skipped_by_reason` /
     `failed_by_reason` breakdowns are the fastest way to see whether the gate is tuned right.
+
+    `locale` picks the language the resulting signals are written in (issue #67). Not
+    user-scoped, so there is no `preferred_locale` to fall back to: an omitted `locale` means
+    `Settings.default_locale`, and a caller that wants another language says so — the same
+    contract as `GET /instruments/enriched` and `POST /signals/generate`.
     """
-    result = await use_case.execute(locale=settings.default_locale)
+    result = await use_case.execute(locale=locale or settings.default_locale)
     return AnalyzePendingNewsResponse.model_validate(result)
 
 
@@ -250,6 +256,7 @@ async def force_analyze_news_item(
     news_id: str,
     use_case: Annotated[ForceAnalyzeNewsItem, Depends(get_force_analyze_news_item_use_case)],
     settings: Annotated[Settings, Depends(get_settings)],
+    locale: Annotated[str | None, Query(min_length=2, max_length=35)] = None,
 ) -> NewsItemResponse:
     """Force-classify ONE news item, bypassing the pre-filter — the "Analizar ahora" button
     (issue #27).
@@ -269,10 +276,12 @@ async def force_analyze_news_item(
     `NewsSkipReason` just persisted on the item, so the frontend can explain it rather than
     showing an opaque failure.
 
-    Not user-scoped — same visibility model as the rest of this router.
+    Not user-scoped — same visibility model as the rest of this router. `locale` therefore
+    works exactly as it does on `POST /news/analyze-pending`: the UI sends the language it is
+    displaying, and an omitted value means `Settings.default_locale` (issue #67).
     """
     try:
-        item = await use_case.execute(news_id, locale=settings.default_locale)
+        item = await use_case.execute(news_id, locale=locale or settings.default_locale)
     except NewsItemNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="News item not found"

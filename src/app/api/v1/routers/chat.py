@@ -11,6 +11,7 @@ from app.api.v1.dependencies import (
     get_agent_runner,
     get_generate_conversation_title_use_case,
     get_realtime_session_provider,
+    get_resolve_locale_use_case,
     get_stt_provider,
     get_tts_provider,
     require_current_user,
@@ -27,6 +28,7 @@ from app.api.v1.schemas import (
     TranscriptionResponse,
 )
 from app.application.chat.use_cases import GenerateConversationTitle, StreamReply
+from app.application.profile.use_cases import ResolveLocale
 from app.core.config import Settings, get_settings
 from app.core.di import Container, get_container
 from app.domain.agents.entities import (
@@ -117,6 +119,7 @@ async def stream_chat(
     payload: ChatRequest,
     user: Annotated[CurrentUser, Depends(require_current_user)],
     agent_runner: Annotated[AgentRunner, Depends(get_agent_runner)],
+    resolve_locale: Annotated[ResolveLocale, Depends(get_resolve_locale_use_case)],
 ) -> StreamingResponse:
     """Stream an assistant reply over Server-Sent Events (SSE protocol v2).
 
@@ -127,12 +130,18 @@ async def stream_chat(
     kept by the graph's checkpointer, keyed by `payload.thread_id`. Requires an
     authenticated user (see `require_current_user`); `user.id` is threaded through to
     the agent graph's config for future per-tenant tool access.
+
+    The reply's language is resolved BEFORE the stream opens (issue #67) — `payload.locale`,
+    else the user's stored `preferred_locale`, else `Settings.default_locale` — because once
+    `StreamingResponse` starts emitting frames there is no longer a way to fail a profile
+    lookup cleanly. `ResolveLocale` swallows its own errors for the same reason.
     """
     use_case = StreamReply(agent_runner=agent_runner)
     thread_id = payload.thread_id or _DEFAULT_THREAD_ID
     message = Message(role=MessageRole.USER, content=payload.message)
+    locale = await resolve_locale.execute(user_id=user.id, requested_locale=payload.locale)
 
-    event_stream = use_case.execute(thread_id, message, user.id)
+    event_stream = use_case.execute(thread_id, message, user.id, locale)
     return StreamingResponse(_to_sse(event_stream), media_type="text/event-stream")
 
 

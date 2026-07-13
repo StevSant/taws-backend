@@ -60,6 +60,7 @@ from app.api.v1.dependencies.get_render_chart_use_case import get_render_chart_u
 from app.api.v1.dependencies.get_reorder_watchlists_use_case import (
     get_reorder_watchlists_use_case,
 )
+from app.api.v1.dependencies.get_resolve_locale_use_case import get_resolve_locale_use_case
 from app.api.v1.dependencies.get_scenario_repository import get_scenario_repository
 from app.api.v1.dependencies.get_scenario_simulation_runner import get_scenario_simulation_runner
 from app.api.v1.dependencies.get_sentiment_repository import get_sentiment_repository
@@ -74,6 +75,7 @@ from app.api.v1.dependencies.get_telegram_link_token_repository import (
 from app.api.v1.dependencies.get_telegram_messenger import get_telegram_messenger
 from app.api.v1.dependencies.get_tts_provider import get_tts_provider
 from app.api.v1.dependencies.get_user_bot_repository import get_user_bot_repository
+from app.api.v1.dependencies.get_user_profile_repository import get_user_profile_repository
 from app.api.v1.dependencies.get_vector_store import get_vector_store
 from app.api.v1.dependencies.get_watchlist_repository import get_watchlist_repository
 from app.api.v1.dependencies.jwks_client import get_jwks_client
@@ -125,6 +127,7 @@ __all__ = [
     "get_process_incoming_event_use_case",
     "get_realtime_session_provider",
     "get_render_chart_use_case",
+    "get_resolve_locale_use_case",
     "get_reorder_watchlists_use_case",
     "get_scenario_repository",
     "get_scenario_simulation_runner",
@@ -136,6 +139,7 @@ __all__ = [
     "get_telegram_link_repository",
     "get_telegram_link_token_repository",
     "get_user_bot_repository",
+    "get_user_profile_repository",
     "get_telegram_messenger",
     "get_tts_provider",
     "get_vector_store",

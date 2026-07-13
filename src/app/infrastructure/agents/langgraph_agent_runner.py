@@ -47,10 +47,13 @@ class LangGraphAgentRunner(AgentRunner):
         self._graph = graph
 
     async def stream(
-        self, thread_id: str, message: Message, user_id: str
+        self, thread_id: str, message: Message, user_id: str, locale: str
     ) -> AsyncIterator[AgentStreamEvent]:
         config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
-        input_state = {"messages": [HumanMessage(content=message.content)]}
+        # `locale` is re-sent on every turn (issue #67): a user who switches language
+        # mid-thread must be answered in the new one, and the checkpointed state's
+        # last-value-wins reducer makes the newest turn's locale the effective one.
+        input_state = {"messages": [HumanMessage(content=message.content)], "locale": locale}
 
         try:
             async for mode, payload in self._graph.astream(

@@ -5,6 +5,7 @@ from langchain_core.messages import SystemMessage
 from langchain_core.tools import BaseTool
 from langgraph.config import get_stream_writer
 
+from app.application.common import build_locale_instruction
 from app.domain.agents.entities import AgentTraceEvent
 from app.infrastructure.agents.invoke_with_bound_tools import invoke_with_bound_tools
 from app.infrastructure.agents.personas import MIDAS_PERSONA, RESPONSE_FORMAT_GUIDANCE
@@ -31,6 +32,13 @@ def build_specialist_node(
     Emits a `START` trace before invoking the model and a `DONE` trace after, via
     `get_stream_writer()`.
 
+    Every persona above is authored in English, so without a locale instruction the model
+    simply answers in English no matter what the UI is set to (issue #67). `state["locale"]`
+    — resolved per turn and written into the state by `LangGraphAgentRunner.stream` — is
+    appended LAST, after the personas, so it overrides the language they're written in for
+    all six specialists at once. It's the same `build_locale_instruction` the signal/
+    briefing/scenario pipelines already use, so chat can't drift to a different phrasing.
+
     `tools`: optional, additive, defaults to `None` (unchanged behavior — a single plain
     `model.ainvoke`). When given (today only the `advisor` route, see
     `supervisor_graph.py` / `core/di/container.py`), the node runs a bounded tool-calling
@@ -48,10 +56,12 @@ def build_specialist_node(
         writer = get_stream_writer()
         writer({"agent": agent_name, "event": AgentTraceEvent.START.value, "detail": None})
 
+        locale = state.get("locale")
         messages = [
             SystemMessage(content=MIDAS_PERSONA),
             SystemMessage(content=RESPONSE_FORMAT_GUIDANCE),
             SystemMessage(content=persona),
+            *([SystemMessage(content=build_locale_instruction(locale))] if locale else []),
             *state["messages"],
         ]
         response = (

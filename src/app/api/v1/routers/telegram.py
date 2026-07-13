@@ -248,6 +248,7 @@ async def telegram_webhook_for_bot(
     background_tasks: BackgroundTasks,
     bot_repository: Annotated[UserBotRepository, Depends(get_user_bot_repository)],
     container: Annotated[Container, Depends(get_container)],
+    settings: Annotated[Settings, Depends(get_settings)],
     briefing_handler: Annotated[
         BriefingCommandHandler | None, Depends(get_briefing_command_handler)
     ],
@@ -303,6 +304,7 @@ async def telegram_webhook_for_bot(
                 handler = chat_handler or ChatMessageHandler(
                     agent_runner=container.get_agent_runner(),
                     messenger=messenger,
+                    default_locale=settings.default_locale,
                 )
                 await handler.handle(command)
                 return {"ok": True}
