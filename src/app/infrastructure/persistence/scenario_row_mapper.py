@@ -4,7 +4,11 @@ from app.domain.consequence.entities import ConsequenceChain, ConsequenceEdge, C
 from app.domain.market.entities import AssetClass
 from app.domain.scenario.entities import (
     EvidenceType,
+    ScenarioAgentContribution,
+    ScenarioAgentId,
     ScenarioAssetClassImpact,
+    ScenarioConsensus,
+    ScenarioContributionStatus,
     ScenarioDirection,
     ScenarioEvidence,
     ScenarioHorizon,
@@ -34,6 +38,10 @@ def scenario_to_row(result: ScenarioResult) -> dict[str, Any]:
         "impact_map": [_impact_to_row(impact) for impact in result.impact_map],
         "consequence_chain": _consequence_chain_to_row(result.consequence_chain),
         "recommended_actions": result.recommended_actions,
+        "agent_contributions": [
+            _contribution_to_row(item) for item in result.agent_contributions
+        ],
+        "consensus": _consensus_to_row(result.consensus) if result.consensus else None,
         "disclaimer": result.disclaimer,
         "locale": result.locale,
         "created_at": result.created_at.isoformat(),
@@ -57,7 +65,63 @@ def scenario_from_row(row: Any) -> ScenarioResult:
         recommended_actions=row.get("recommended_actions") or [],
         disclaimer=row["disclaimer"],
         locale=row.get("locale") or "",
+        agent_contributions=[
+            _contribution_from_row(item) for item in row.get("agent_contributions") or []
+        ],
+        consensus=_consensus_from_row(row["consensus"]) if row.get("consensus") else None,
         created_at=parse_supabase_timestamp(row["created_at"]),
+    )
+
+
+def _contribution_to_row(item: ScenarioAgentContribution) -> dict[str, Any]:
+    return {
+        "agent_id": item.agent_id.value,
+        "status": item.status.value,
+        "thesis": item.thesis,
+        "confidence": item.confidence,
+        "key_findings": item.key_findings,
+        "evidence_refs": item.evidence_refs,
+        "risks": item.risks,
+        "recommendation": item.recommendation,
+        "uncertainty": item.uncertainty,
+        "failure_reason": item.failure_reason,
+    }
+
+
+def _contribution_from_row(data: dict[str, Any]) -> ScenarioAgentContribution:
+    return ScenarioAgentContribution(
+        agent_id=ScenarioAgentId(data["agent_id"]),
+        status=ScenarioContributionStatus(data.get("status") or "completed"),
+        thesis=data.get("thesis") or "",
+        confidence=data.get("confidence") or 0.0,
+        key_findings=data.get("key_findings") or [],
+        evidence_refs=data.get("evidence_refs") or [],
+        risks=data.get("risks") or [],
+        recommendation=data.get("recommendation") or "",
+        uncertainty=data.get("uncertainty") or "",
+        failure_reason=data.get("failure_reason"),
+    )
+
+
+def _consensus_to_row(item: ScenarioConsensus) -> dict[str, Any]:
+    return {
+        "summary": item.summary,
+        "conclusion": item.conclusion,
+        "agreements": item.agreements,
+        "disagreements": item.disagreements,
+        "uncertainties": item.uncertainties,
+        "confidence": item.confidence,
+    }
+
+
+def _consensus_from_row(data: dict[str, Any]) -> ScenarioConsensus:
+    return ScenarioConsensus(
+        summary=data.get("summary") or "",
+        conclusion=data.get("conclusion") or "",
+        agreements=data.get("agreements") or [],
+        disagreements=data.get("disagreements") or [],
+        uncertainties=data.get("uncertainties") or [],
+        confidence=data.get("confidence") or 0.0,
     )
 
 

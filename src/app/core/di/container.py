@@ -25,6 +25,7 @@ from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStat
 from app.application.scenario.use_cases import (
     ComputeScenarioQuantification,
     GatherScenarioContext,
+    GenerateScenarioAgentContributions,
     NormalizeScenarioIntake,
     SynthesizeScenarioResult,
 )
@@ -72,6 +73,7 @@ from app.domain.market.ports import (
 )
 from app.domain.notes.ports import NoteRepository
 from app.domain.notification.ports import EmailSender, NotificationChannel
+from app.domain.scenario.entities import ScenarioAgentId
 from app.domain.scenario.ports import ScenarioRepository
 from app.domain.sentiment.ports import FearGreedProvider, SentimentRepository
 from app.domain.signals.ports import SignalRepository
@@ -84,7 +86,15 @@ from app.domain.telegram.ports import (
 )
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
-from app.infrastructure.agents.personas import MIDAS_PERSONA
+from app.infrastructure.agents.personas import (
+    ADVISOR_PERSONA,
+    ANALYST_PERSONA,
+    CONSEQUENCE_PERSONA,
+    MACRO_PERSONA,
+    MIDAS_PERSONA,
+    QUANT_PERSONA,
+    SENTIMENT_PERSONA,
+)
 from app.infrastructure.agents.scenario import ScenarioSimulationRunner, build_scenario_graph
 from app.infrastructure.agents.tools import (
     build_advisor_grounding_tools,
@@ -142,6 +152,7 @@ from app.infrastructure.notification import (
     TelegramNotificationChannel,
 )
 from app.infrastructure.persistence import (
+    InMemoryNoteRepository,
     SupabaseBriefingRepository,
     SupabaseConversationRepository,
     SupabaseInstrumentCatalogRepository,
@@ -426,15 +437,23 @@ class Container:
         return self._reorder_watchlists_use_case
 
     def get_note_repository(self) -> NoteRepository:
-        """Return the cached per-user NoteRepository (issue #62), Supabase-backed with the
-        same retry/config wiring as the other per-user repositories."""
+        """Return Supabase notes, with process-local storage for unconfigured development."""
         if self._note_repository is None:
-            self._note_repository = SupabaseNoteRepository(
-                supabase_url=self._settings.supabase_url,
-                supabase_key=self._settings.supabase_key,
-                retry_max_attempts=self._settings.supabase_retry_max_attempts,
-                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
+            supabase_configured = bool(
+                self._settings.supabase_url and self._settings.supabase_key
             )
+            if self._settings.app_env == "development" and not supabase_configured:
+                logging.getLogger(__name__).warning(
+                    "Supabase notes are not configured; using process-local development storage."
+                )
+                self._note_repository = InMemoryNoteRepository()
+            else:
+                self._note_repository = SupabaseNoteRepository(
+                    supabase_url=self._settings.supabase_url,
+                    supabase_key=self._settings.supabase_key,
+                    retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                    retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
+                )
         return self._note_repository
 
     def get_signal_repository(self) -> SignalRepository:
@@ -1304,11 +1323,28 @@ class Container:
                 instrument_universe=self.get_instrument_universe(),
                 max_synthesis_attempts=self._settings.scenario_synthesis_max_attempts,
             )
+            generate_contributions = GenerateScenarioAgentContributions(
+                # Reasoning tier (#28): six independent grounded specialists produce
+                # judgments that the final synthesis must reconcile.
+                llm_provider=self.get_reasoning_llm_provider(),
+                midas_persona=MIDAS_PERSONA,
+                specialist_personas={
+                    ScenarioAgentId.ANALYST: ANALYST_PERSONA,
+                    ScenarioAgentId.QUANT: QUANT_PERSONA,
+                    ScenarioAgentId.MACRO: MACRO_PERSONA,
+                    ScenarioAgentId.SENTIMENT: SENTIMENT_PERSONA,
+                    ScenarioAgentId.CONSEQUENCE: CONSEQUENCE_PERSONA,
+                    ScenarioAgentId.ADVISOR: ADVISOR_PERSONA,
+                },
+                max_concurrency=self._settings.scenario_agent_panel_max_concurrency,
+                max_attempts=self._settings.scenario_agent_panel_max_attempts,
+            )
             graph = build_scenario_graph(
                 normalize_scenario_intake=normalize_intake,
                 gather_scenario_context=gather_context,
                 generate_consequence_chain=self.get_generate_consequence_chain_use_case(),
                 compute_scenario_quantification=compute_quantification,
+                generate_agent_contributions=generate_contributions,
                 synthesize_scenario_result=synthesize_result,
                 scenario_repository=self.get_scenario_repository(),
             )

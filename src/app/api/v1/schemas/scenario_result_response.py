@@ -1,10 +1,14 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.v1.schemas.consequence_chain_response import ConsequenceChainResponse
 from app.api.v1.schemas.scenario_asset_class_impact_response import (
     ScenarioAssetClassImpactResponse,
+)
+from app.api.v1.schemas.scenario_consensus_response import (
+    ScenarioAgentContributionResponse,
+    ScenarioConsensusResponse,
 )
 from app.api.v1.schemas.scenario_spec_response import ScenarioSpecResponse
 
@@ -26,5 +30,7 @@ class ScenarioResultResponse(BaseModel):
     impact_map: list[ScenarioAssetClassImpactResponse]
     consequence_chain: ConsequenceChainResponse
     recommended_actions: list[str]
+    agent_contributions: list[ScenarioAgentContributionResponse] = Field(default_factory=list)
+    consensus: ScenarioConsensusResponse | None = None
     disclaimer: str
     created_at: datetime

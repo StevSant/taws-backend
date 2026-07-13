@@ -430,6 +430,10 @@ class Settings(BaseSettings):
     # surfaces an honest "analysis unavailable" error state, instead of degrading to a
     # zero-confidence pseudo-result with internal fallback markers.
     scenario_synthesis_max_attempts: int = 2
+    # Six specialist calls fan out in one panel; keep provider pressure bounded while
+    # retaining true parallel execution. Each failure is isolated and recorded.
+    scenario_agent_panel_max_concurrency: int = 6
+    scenario_agent_panel_max_attempts: int = 2
 
     # --- Scenario Monitors (arm a saved ScenarioResult as a Watchdog rule, issue #18) ---
     # How long an armed monitor stays active before auto-expiring with no match. Product

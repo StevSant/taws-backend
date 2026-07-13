@@ -3,6 +3,10 @@ from datetime import UTC, datetime
 
 from app.domain.consequence.entities import ConsequenceChain
 from app.domain.scenario.entities.scenario_asset_class_impact import ScenarioAssetClassImpact
+from app.domain.scenario.entities.scenario_consensus import (
+    ScenarioAgentContribution,
+    ScenarioConsensus,
+)
 from app.domain.scenario.entities.scenario_spec import ScenarioSpec
 
 
@@ -37,4 +41,6 @@ class ScenarioResult:
     recommended_actions: list[str]
     disclaimer: str
     locale: str = ""
+    agent_contributions: list[ScenarioAgentContribution] = field(default_factory=list)
+    consensus: ScenarioConsensus | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
