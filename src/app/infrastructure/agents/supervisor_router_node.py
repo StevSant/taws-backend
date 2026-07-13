@@ -4,6 +4,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage
 from langgraph.config import get_stream_writer
 
+from app.application.common import build_locale_instruction
 from app.domain.agents.entities import AgentTraceEvent
 from app.infrastructure.agents.route_decision import RouteDecision
 from app.infrastructure.agents.supervisor_route import SupervisorRoute
@@ -50,14 +51,22 @@ def build_supervisor_router_node(model: BaseChatModel) -> Any:
     `LangGraphAgentRunner.stream` can recognize and skip its chunks in the
     `stream_mode="messages"` branch — otherwise the raw routing JSON would leak into the
     SSE token stream ahead of the chosen specialist's real answer text.
+
+    The router's `reason` is not internal-only: it's surfaced to the user as the `detail` of
+    the `ROUTING` trace the chat UI renders. So the turn's `state["locale"]` (issue #67) is
+    appended to this English prompt too — otherwise a Spanish session would still see an
+    English routing rationale above an otherwise-Spanish reply. The route *label* itself is
+    an enum value and stays language-independent.
     """
 
     async def supervisor_node(state: SupervisorState) -> dict[str, Any]:
         writer = get_stream_writer()
+        locale = state.get("locale")
+        system_prompt = _ROUTER_SYSTEM_PROMPT + (build_locale_instruction(locale) if locale else "")
         try:
             structured_model = model.with_structured_output(RouteDecision)
             decision = await structured_model.ainvoke(
-                [SystemMessage(content=_ROUTER_SYSTEM_PROMPT), *state["messages"]],
+                [SystemMessage(content=system_prompt), *state["messages"]],
                 config={"tags": [SUPERVISOR_ROUTING_TAG]},
             )
             if not isinstance(decision, RouteDecision):

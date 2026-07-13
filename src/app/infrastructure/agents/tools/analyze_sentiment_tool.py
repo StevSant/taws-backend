@@ -13,20 +13,26 @@ class _AnalyzeSentimentArgs(BaseModel):
     )
 
 
-def build_analyze_sentiment_tool(use_case: AnalyzeSentiment) -> StructuredTool:
+def build_analyze_sentiment_tool(use_case: AnalyzeSentiment, default_locale: str) -> StructuredTool:
     """Build a LangChain tool wrapping `AnalyzeSentiment` for the `sentiment` specialist
     node — thin wrapper, same shape as `generate_consequence_chain_tool.py`.
 
     Bound only to the `sentiment` specialist node (see `specialist_node_factory.py` /
     `supervisor_graph.py`). The wrapped use case is the same reusable
-    `AnalyzeSentiment.execute(instrument_symbol)` also called directly by
+    `AnalyzeSentiment.execute(instrument_symbol, locale)` also called directly by
     `POST /api/v1/sentiment/{symbol}/analyze`, so a reading generated through chat and
-    one generated through the REST endpoint always come from the same code path.
+    one generated through the REST endpoint always come from the same code path — and, since
+    issue #29, hit the same `(symbol, locale)` cache.
+
+    `default_locale` is injected (from `Settings`, via the DI container) rather than defaulted
+    here — same pattern as `build_scenario_tools`. The chat graph has no per-turn locale to
+    thread through a tool call, so the configured default is what a chat-initiated reading is
+    cached under.
     """
 
     async def _run(instrument_symbol: str) -> str:
         try:
-            reading = await use_case.execute(instrument_symbol.upper())
+            reading = await use_case.execute(instrument_symbol.upper(), default_locale)
         except UnknownInstrumentError as exc:
             return str(exc)
         return _format_reading(reading)

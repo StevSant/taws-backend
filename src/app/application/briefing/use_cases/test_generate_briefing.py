@@ -92,6 +92,12 @@ class _FakeSignalRepository(SignalRepository):
     async def list_for_instrument(self, symbol: str) -> list[Signal]:
         raise NotImplementedError
 
+    async def get_latest_for_instrument(self, symbol: str, locale: str) -> Signal | None:
+        raise NotImplementedError
+
+    async def prune_for_instrument(self, symbol: str, locale: str, keep: int) -> int:
+        raise NotImplementedError
+
     async def save_review_state(self, review_state: ReviewState) -> ReviewState:
         raise NotImplementedError
 

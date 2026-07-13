@@ -1,3 +1,4 @@
+from app.api.v1.routers.analysis import router as analysis_router
 from app.api.v1.routers.briefing_export import router as briefing_export_router
 from app.api.v1.routers.briefings import router as briefings_router
 from app.api.v1.routers.charts import router as charts_router
@@ -10,6 +11,7 @@ from app.api.v1.routers.instruments import router as instruments_router
 from app.api.v1.routers.macro import router as macro_router
 from app.api.v1.routers.news import router as news_router
 from app.api.v1.routers.notes import router as notes_router
+from app.api.v1.routers.profile import router as profile_router
 from app.api.v1.routers.quant import router as quant_router
 from app.api.v1.routers.realtime_ws import router as realtime_ws_router
 from app.api.v1.routers.reviews import router as reviews_router
@@ -21,6 +23,7 @@ from app.api.v1.routers.watchdog import router as watchdog_router
 from app.api.v1.routers.watchlists import router as watchlists_router
 
 __all__ = [
+    "analysis_router",
     "briefing_export_router",
     "briefings_router",
     "charts_router",
@@ -33,6 +36,7 @@ __all__ = [
     "macro_router",
     "news_router",
     "notes_router",
+    "profile_router",
     "quant_router",
     "realtime_ws_router",
     "reviews_router",

@@ -29,13 +29,24 @@ class Settings(BaseSettings):
         "compliance@midas.demo": "compliance",
     }
 
-    # Locale used for LLM-generated content (signals/briefings/scenarios) when a caller
-    # doesn't supply one — e.g. a scheduled job, a chat tool call, or a request that omits
-    # the `locale` field. BCP-47-ish tag, e.g. "en", "es", "es-MX".
-    default_locale: str = "en"
+    # Locale used for LLM-generated content (chat/signals/briefings/scenarios) when neither
+    # the request nor the authenticated user's `preferred_locale` supplies one — e.g. a
+    # scheduled job, an anonymous visitor, or a request that omits the `locale` field.
+    # BCP-47-ish tag, e.g. "en", "es", "es-MX". `es` matches the frontend's default locale
+    # (`core/i18n/translation-service.ts`); the two sides must agree (issue #67).
+    default_locale: str = "es"
 
     openai_api_key: str | None = None
+    # --- Tiered LLM models (issue #28) ---
+    # Fast/default tier: routing, titling, tone scoring, scenario intake, news localization —
+    # structured, low-reasoning calls where a cheap model is already correct.
     openai_model: str = "gpt-4o-mini"
+    # Reasoning tier: impact signals, pending-news batch analysis, scenario synthesis, causal
+    # chains, macro interpretation, watchlist briefings, and the 6 chat specialists. Left unset
+    # ON PURPOSE: `reasoning_model` below falls back to `openai_model`, so behavior is identical
+    # to today until an operator actually configures a stronger model. Never read this field
+    # directly — read `reasoning_model`.
+    openai_model_reasoning: str | None = None
     openai_embedding_model: str = "text-embedding-3-small"
 
     # --- OpenAI Realtime voice agent (ephemeral-session mint + server-side tool dispatch) ---
@@ -258,13 +269,84 @@ class Settings(BaseSettings):
     signal_classification_retry_max_attempts: int = 2
     signal_classification_retry_backoff_base_seconds: float = 0.5
 
-    # --- Pending news pre-filter (issue #3): cheap-relevance floor (see
-    # `compute_news_relevance_score`) below which a pending news item is skipped
-    # (analysis_status -> skipped) without an LLM call. ---
+    # --- Pending news pre-filter (issues #3 + #26): the gate `AnalyzePendingNews._prefilter`
+    # applies before spending an LLM classification call. Assembled into a
+    # `NewsPrefilterPolicy` by `Container.get_news_prefilter_policy()` — the single place
+    # these are read, so the HTTP endpoint and the scheduled tick can't drift apart. ---
+    # Floor (0-1) below which a pending news item is skipped (analysis_status -> skipped,
+    # skip_reason -> gated_low_relevance) without an LLM call. NOTE: since #26 this gates the
+    # COMBINED relevance+materiality score below, not symbol-relevance alone.
     news_relevance_skip_threshold: float = 0.35
+    # How the two components of that combined score are weighted (normalized by their sum, so
+    # only their ratio matters). Materiality is what lets a genuinely important article that
+    # never spells out a watchlist ticker survive the gate.
+    news_prefilter_relevance_weight: float = 0.6
+    news_prefilter_materiality_weight: float = 0.4
+    # Relevance credited when an article is linked to an instrument by company/fund NAME
+    # rather than by its ticker ("Apple unveils…" -> AAPL). Weaker evidence than an explicit
+    # ticker, hence < 1.0 — but these used to score 0.0 and be gated out wholesale, which is
+    # what made essentially every item show as "Sin clasificar" (issue #68).
+    news_relevance_name_match_score: float = 0.6
+
+    # --- News materiality signal (issue #26): the cheap, non-LLM "is this important enough to
+    # be worth a token?" half of the pre-filter. See `compute_news_materiality_score`. ---
+    # Market-moving event terms; the share of these found in an item's title+summary is the
+    # score's main component. Whole-word matched, case-insensitive; multi-word entries allowed.
+    news_materiality_keywords: list[str] = [
+        "acquisition",
+        "bankruptcy",
+        "central bank",
+        "default",
+        "downgrade",
+        "earnings",
+        "fed",
+        "guidance",
+        "inflation",
+        "interest rate",
+        "ipo",
+        "lawsuit",
+        "layoffs",
+        "merger",
+        "rate cut",
+        "rate hike",
+        "recession",
+        "reform",
+        "regulation",
+        "sanctions",
+        "selloff",
+        "stimulus",
+        "tariff",
+        "upgrade",
+    ]
+    # Publishers whose choosing to cover an event is itself evidence that it matters. Matched
+    # against `NewsItem.source` (the article's own outlet), case-insensitively.
+    news_materiality_high_impact_sources: list[str] = [
+        "Bloomberg",
+        "CNBC",
+        "Financial Times",
+        "Reuters",
+        "The Wall Street Journal",
+        "Yahoo Finance",
+    ]
+    # Relative weights of the four materiality components (normalized by their sum, so zeroing
+    # one out reweights the others rather than shrinking the score's range).
+    news_materiality_keyword_weight: float = 0.5
+    news_materiality_source_weight: float = 0.2
+    news_materiality_sentiment_weight: float = 0.15
+    news_materiality_recency_weight: float = 0.15
+    # Recency decays by half every this many hours since publication.
+    news_materiality_recency_half_life_hours: float = 24.0
+    # Keyword hits at or above this count saturate the keyword component at 1.0, so a
+    # keyword-stuffed headline can't outscore a genuinely material one.
+    news_materiality_keyword_saturation_count: int = 3
 
     # --- Pending news analysis batch pipeline (issue #2: POST /api/v1/news/analyze-pending
     # and its scheduled tick) ---
+    # Master switch for the SCHEDULED tick only. Turning it off stops the background analysis
+    # job from being registered at all (so no LLM spend happens unattended); the on-demand
+    # `POST /api/v1/news/analyze-pending` and the manual per-item `POST /news/{id}/analyze`
+    # keep working either way.
+    news_analysis_enabled: bool = True
     # Bounds concurrent `GenerateSignal` calls fanned out by `AnalyzePendingNews`, so a
     # large pending backlog can't fire unbounded concurrent LLM requests.
     news_analysis_max_concurrency: int = 5
@@ -274,6 +356,30 @@ class Settings(BaseSettings):
     # so newly-ingested news gets analyzed even while no user is on the page. Reuses the
     # same APScheduler infra as the Watchdog jobs (`infrastructure/scheduling`).
     news_analysis_poll_interval_minutes: int = 15
+
+    # --- News detail payload (issue #57: GET /api/v1/news/{id}, via `BuildNewsDetail`) ---
+    # Caps how many of an article's `related_symbols` get a live price lookup, since each one
+    # costs a `ComputeMarketStats` call (an upstream market-data fetch). An article tagged with
+    # 30 tickers is a linker artifact, not 30 chips worth rendering.
+    news_detail_max_affected_instruments: int = 8
+    # How many related articles the detail page's "related news" list carries. Paginated client
+    # side, so this is the whole list, not a page.
+    news_detail_related_limit: int = 12
+    # Lookback for the affected-instrument chips' % change. Matches `ComputeMarketStats`'s own
+    # default window, so a chip and the asset page it links to never disagree on the number.
+    news_detail_price_window_days: int = 30
+
+    # --- News browse page (issue #70: GET /api/v1/news/browse, the DB-backed archive with
+    # numbered pagination — distinct from the live provider-fed GET /api/v1/news) ---
+    # Page size used when the caller doesn't pass one, and the ceiling it's clamped to, so a
+    # crafted `page_size` can't ask the store for an unbounded page.
+    news_browse_default_page_size: int = 20
+    news_browse_max_page_size: int = 100
+    # abs(sentiment_score) at or below which a news item counts as *neutral* in the browse
+    # sentiment filter; above it, positive/negative. Deliberately mirrors the frontend's
+    # `classifyNewsSentiment` threshold — if the two drift, a card badged "positivo" could
+    # disappear from the "positive" filter.
+    news_sentiment_neutral_threshold: float = 0.15
 
     # --- Historical analogs RAG (behind the VectorStore port, pgvector-backed) ---
     historical_analogs_top_k: int = 3
@@ -345,6 +451,10 @@ class Settings(BaseSettings):
     # surfaces an honest "analysis unavailable" error state, instead of degrading to a
     # zero-confidence pseudo-result with internal fallback markers.
     scenario_synthesis_max_attempts: int = 2
+    # Six specialist calls fan out in one panel; keep provider pressure bounded while
+    # retaining true parallel execution. Each failure is isolated and recorded.
+    scenario_agent_panel_max_concurrency: int = 6
+    scenario_agent_panel_max_attempts: int = 2
 
     # --- Scenario Monitors (arm a saved ScenarioResult as a Watchdog rule, issue #18) ---
     # How long an armed monitor stays active before auto-expiring with no match. Product
@@ -360,6 +470,47 @@ class Settings(BaseSettings):
     # from `ComputeMarketStats`, so a monitor armed a long time ago doesn't trigger an
     # unbounded history fetch on every scan.
     scenario_monitor_price_window_max_days: int = 30
+
+    # --- Shared asset-analysis caching (issue #29) — see
+    # `docs/specs/2026-07-12-shared-asset-analysis-caching-design.md`. Analysis is shared, not
+    # per-user, so one LLM run per (instrument, locale) per TTL window is enough; these back the
+    # `FreshnessPolicy` value object built by `Container.get_freshness_policy()`. ---
+    # Freshness TTL per asset class: how long a persisted analysis counts as still current
+    # before a generate call is allowed to spend another LLM run. Crypto moves fastest,
+    # equities slowest; `default` covers the asset classes without a dedicated bucket
+    # (credit, commodity) and any analysis with no instrument (preset scenarios).
+    analysis_ttl_crypto_minutes: int = 15
+    analysis_ttl_equity_minutes: int = 360
+    analysis_ttl_fx_minutes: int = 60
+    analysis_ttl_default_minutes: int = 180
+    # Rows kept per `(instrument_symbol, locale)` after each write — a short audit trail that
+    # stops `signals`/`scenarios`/`sentiment_readings` growing without bound. Older rows are
+    # pruned; `historical_analogs` is a separately-indexed copy, so pruning sources is safe.
+    analysis_retention_keep: int = 5
+    # Master switch for the SCHEDULED refresh tick only (same rationale as
+    # `news_analysis_enabled`): it is the job that spends LLM tokens unattended. Turning it off
+    # leaves `POST /api/v1/analysis/refresh` and the on-demand generate endpoints working.
+    analysis_refresh_enabled: bool = True
+    # Cadence (minutes) of the background `RefreshTrackedAnalysis` tick that keeps every
+    # watchlisted instrument's analysis warm, so user reads never pay for an inline LLM run.
+    # One tick; the TTLs above decide staleness.
+    analysis_refresh_poll_interval_minutes: int = 5
+    # Locales the background job keeps warm. Analysis content is localized and `locale` is part
+    # of the cache key, so a symbol is refreshed once per locale in this set.
+    analysis_refresh_locales: list[str] = ["en", "es"]
+    # Bounds concurrent generations inside one refresh tick, so a large watchlist union can't
+    # fire unbounded concurrent LLM requests (same guard as `news_analysis_max_concurrency`).
+    analysis_refresh_concurrency: int = 4
+
+    @property
+    def reasoning_model(self) -> str:
+        """The model used by the reasoning-tier call sites (issue #28).
+
+        Falls back to `openai_model` when `OPENAI_MODEL_REASONING` is unset, so the tiering
+        is a no-op until a stronger model is actually configured. This property is the ONLY
+        place that fallback lives — no call site reads `openai_model_reasoning` directly.
+        """
+        return self.openai_model_reasoning or self.openai_model
 
 
 @lru_cache

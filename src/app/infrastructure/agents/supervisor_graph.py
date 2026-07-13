@@ -22,7 +22,8 @@ _SUPERVISOR_NODE = "supervisor"
 
 
 def build_supervisor_graph(
-    model: BaseChatModel,
+    router_model: BaseChatModel,
+    specialist_model: BaseChatModel,
     checkpointer: Any,
     advisor_tools: list[BaseTool] | None = None,
     analyst_tools: list[BaseTool] | None = None,
@@ -38,6 +39,16 @@ def build_supervisor_graph(
     Uses `SupervisorState` (`MessagesState` + `route`) so the conditional edge out of
     `supervisor` can read the chosen route (`select_specialist_route`) and dispatch to
     the matching node.
+
+    Two models, not one (issue #28). `router_model` backs the supervisor node only: picking
+    1 of 6 route labels is a pure structured-output classification, exactly the kind of call
+    a cheap model is already correct at. `specialist_model` backs all 6 specialist nodes,
+    which run a multi-turn tool-calling loop over real analytical work and are the calls most
+    likely to be under-served by the cheap tier. Both are built by
+    `infrastructure/llm/chat_model_factory.build_chat_model` from a `Settings`-supplied model
+    name; the nodes themselves still only depend on `BaseChatModel`, so
+    `specialist_node_factory.py` and `supervisor_router_node.py` are unchanged. Passing the
+    same model for both arguments reproduces the pre-#28 behavior exactly.
 
     `advisor_tools`/`analyst_tools`/`consequence_tools`/`macro_tools`/`quant_tools`/
     `sentiment_tools`: optional, additive, default to `None` (reproduces the prior
@@ -69,30 +80,34 @@ def build_supervisor_graph(
     """
     graph = StateGraph(SupervisorState)
 
-    graph.add_node(_SUPERVISOR_NODE, build_supervisor_router_node(model))
+    graph.add_node(_SUPERVISOR_NODE, build_supervisor_router_node(router_model))
     graph.add_node(
         SupervisorRoute.ANALYST.value,
-        build_specialist_node("analyst", ANALYST_PERSONA, model, tools=analyst_tools),
+        build_specialist_node("analyst", ANALYST_PERSONA, specialist_model, tools=analyst_tools),
     )
     graph.add_node(
         SupervisorRoute.QUANT.value,
-        build_specialist_node("quant", QUANT_PERSONA, model, tools=quant_tools),
+        build_specialist_node("quant", QUANT_PERSONA, specialist_model, tools=quant_tools),
     )
     graph.add_node(
         SupervisorRoute.ADVISOR.value,
-        build_specialist_node("advisor", ADVISOR_PERSONA, model, tools=advisor_tools),
+        build_specialist_node("advisor", ADVISOR_PERSONA, specialist_model, tools=advisor_tools),
     )
     graph.add_node(
         SupervisorRoute.CONSEQUENCE.value,
-        build_specialist_node("consequence", CONSEQUENCE_PERSONA, model, tools=consequence_tools),
+        build_specialist_node(
+            "consequence", CONSEQUENCE_PERSONA, specialist_model, tools=consequence_tools
+        ),
     )
     graph.add_node(
         SupervisorRoute.MACRO.value,
-        build_specialist_node("macro", MACRO_PERSONA, model, tools=macro_tools),
+        build_specialist_node("macro", MACRO_PERSONA, specialist_model, tools=macro_tools),
     )
     graph.add_node(
         SupervisorRoute.SENTIMENT.value,
-        build_specialist_node("sentiment", SENTIMENT_PERSONA, model, tools=sentiment_tools),
+        build_specialist_node(
+            "sentiment", SENTIMENT_PERSONA, specialist_model, tools=sentiment_tools
+        ),
     )
 
     graph.set_entry_point(_SUPERVISOR_NODE)

@@ -1,15 +1,20 @@
+import logging
 import uuid
 
+from app.application.common import build_locale_instruction
 from app.application.sentiment.sentiment_classification import SentimentClassification
 from app.application.sentiment.unknown_instrument_error import UnknownInstrumentError
 from app.domain.agents.entities import Message, MessageRole
 from app.domain.agents.ports import LLMProvider
 from app.domain.compliance import NOT_PERSONALIZED_ADVICE_DISCLAIMER
+from app.domain.freshness import FreshnessPolicy
 from app.domain.market.entities import Instrument, NewsItem
 from app.domain.market.ports import InstrumentUniverse, NewsProvider
 from app.domain.sentiment.entities import SentimentLabel, SentimentReading
-from app.domain.sentiment.ports import FearGreedProvider
+from app.domain.sentiment.ports import FearGreedProvider, SentimentRepository
 from app.domain.signals.entities import SignalEvidence
+
+logger = logging.getLogger(__name__)
 
 _CLASSIFICATION_SCHEMA_NAME = "sentiment_classification"
 
@@ -71,6 +76,9 @@ class AnalyzeSentiment:
         fear_greed_provider: FearGreedProvider,
         instrument_universe: InstrumentUniverse,
         llm_provider: LLMProvider,
+        sentiment_repository: SentimentRepository,
+        freshness_policy: FreshnessPolicy,
+        retention_keep: int,
         bullish_threshold: float,
         bearish_threshold: float,
     ) -> None:
@@ -78,22 +86,49 @@ class AnalyzeSentiment:
         self._fear_greed_provider = fear_greed_provider
         self._instrument_universe = instrument_universe
         self._llm_provider = llm_provider
+        self._sentiment_repository = sentiment_repository
+        self._freshness_policy = freshness_policy
+        self._retention_keep = retention_keep
         self._bullish_threshold = bullish_threshold
         self._bearish_threshold = bearish_threshold
 
-    async def execute(self, instrument_symbol: str) -> SentimentReading:
+    async def execute(
+        self, instrument_symbol: str, locale: str, *, force: bool = False
+    ) -> SentimentReading:
+        """Ensure a fresh `SentimentReading` exists for `(symbol, locale)` and return it.
+
+        Persisted and freshness-gated since issue #29. Before that, this use case recomputed
+        a tone score on every single call and threw the result away — the purest recompute
+        waste in the codebase, since a tone score is shared, non-personalized analysis. Now a
+        reading still within its asset class's TTL is returned as-is: no LLM call, no new row.
+
+        `force` is internal only (background refresh / manual trigger), for the same reason as
+        `GenerateSignal.execute` — see that method's docstring.
+        """
         instrument = self._instrument_universe.by_symbol(instrument_symbol)
         if instrument is None:
             raise UnknownInstrumentError(instrument_symbol)
 
+        if not force:
+            cached = await self._latest_reading(instrument.symbol, locale)
+            if cached is not None and self._freshness_policy.is_fresh(
+                cached.created_at, instrument.asset_class
+            ):
+                logger.info(
+                    "Sentiment for %s (%s) served from cache; skipping LLM run.",
+                    instrument.symbol,
+                    locale,
+                )
+                return cached
+
         news_items = await self._gather_news(instrument)
         fear_greed = await self._fear_greed_provider.get_fear_greed_index()
-        classification = await self._classify_tone(instrument, news_items)
+        classification = await self._classify_tone(instrument, news_items, locale)
         tone_label = _bucket_tone_label(
             classification.tone_score, self._bullish_threshold, self._bearish_threshold
         )
 
-        return SentimentReading(
+        reading = SentimentReading(
             id=str(uuid.uuid4()),
             instrument_symbol=instrument.symbol,
             tone_score=classification.tone_score,
@@ -102,16 +137,66 @@ class AnalyzeSentiment:
             evidence=[_to_evidence(item) for item in news_items],
             rationale=classification.reasoning,
             disclaimer=NOT_PERSONALIZED_ADVICE_DISCLAIMER,
+            locale=locale,
         )
+        return await self._persist(reading, locale)
+
+    async def _latest_reading(self, symbol: str, locale: str) -> SentimentReading | None:
+        """Cache lookup; a store blip degrades to "no cache" (recompute) rather than raising —
+        same guard as `GenerateSignal._latest_signal`."""
+        try:
+            return await self._sentiment_repository.get_latest_for_instrument(symbol, locale)
+        except Exception:
+            logger.warning(
+                "Sentiment cache lookup failed for %s (%s); recomputing.",
+                symbol,
+                locale,
+                exc_info=True,
+            )
+            return None
+
+    async def _persist(self, reading: SentimentReading, locale: str) -> SentimentReading:
+        """Persist the reading and prune old ones, degrading to the in-memory reading if the
+        store is unavailable.
+
+        Never raises: this use case's contract has always been "degrade, don't crash the
+        caller" (see the class docstring), and it is reached from a chat tool as well as a REST
+        endpoint. Losing the *cache write* is strictly better than losing the answer we just
+        paid an LLM call for.
+        """
+        try:
+            persisted = await self._sentiment_repository.create(reading)
+        except Exception:
+            logger.warning(
+                "Persisting sentiment for %s (%s) failed; returning the unsaved reading.",
+                reading.instrument_symbol,
+                locale,
+                exc_info=True,
+            )
+            return reading
+        try:
+            await self._sentiment_repository.prune_for_instrument(
+                reading.instrument_symbol, locale, self._retention_keep
+            )
+        except Exception:
+            logger.warning(
+                "Sentiment retention prune failed for %s (%s).",
+                reading.instrument_symbol,
+                locale,
+                exc_info=True,
+            )
+        return persisted
 
     async def _gather_news(self, instrument: Instrument) -> list[NewsItem]:
         """Fetch instrument-specific news, broadening to asset-class context if there's none.
 
-        Simpler than `GenerateSignal._gather_news`'s "≥2 distinct sources" broadening rule
-        (that rule exists to satisfy a *persisted Signal's* HU1 acceptance criterion; a
-        `SentimentReading` is never persisted) — broadens only when the direct fetch is
-        completely empty, so the tone score is never computed from zero evidence when
-        asset-class-level context is available.
+        Simpler than `GenerateSignal._gather_news`'s "≥2 distinct sources" broadening rule:
+        that floor exists to satisfy HU1's acceptance criterion for a `Signal` specifically,
+        and is a hard error there. A tone score has no such contract — it degrades to a
+        neutral 0.0 rather than failing — so this broadens only when the direct fetch is
+        completely empty, keeping the score from being computed against zero evidence when
+        asset-class-level context is available. (`SentimentReading` IS persisted since issue
+        #29; that changed the caching, not this sourcing rule.)
         """
         direct = await self._news_provider.fetch_news(symbols=[instrument.symbol])
         if direct:
@@ -119,12 +204,22 @@ class AnalyzeSentiment:
         return await self._news_provider.fetch_news(asset_class=instrument.asset_class)
 
     async def _classify_tone(
-        self, instrument: Instrument, news_items: list[NewsItem]
+        self, instrument: Instrument, news_items: list[NewsItem], locale: str
     ) -> SentimentClassification:
+        """Score the tone, writing `reasoning` in `locale`.
+
+        The locale instruction is new with issue #29: `locale` is now part of this reading's
+        cache key, so a reading stored under `es` must actually *be* in Spanish — otherwise the
+        cache would serve a correctly-keyed row whose prose is in the wrong language. Same
+        `build_locale_instruction` helper every other LLM-authored pipeline already uses.
+        """
         try:
             raw = await self._llm_provider.complete_structured(
                 messages=[
-                    Message(role=MessageRole.SYSTEM, content=_CLASSIFICATION_SYSTEM_PROMPT),
+                    Message(
+                        role=MessageRole.SYSTEM,
+                        content=_CLASSIFICATION_SYSTEM_PROMPT + build_locale_instruction(locale),
+                    ),
                     Message(
                         role=MessageRole.USER,
                         content=_format_news_context(instrument, news_items),

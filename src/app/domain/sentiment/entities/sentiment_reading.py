@@ -21,6 +21,10 @@ class SentimentReading:
     sourced news" shape the Analyst pipeline already uses, rather than inventing a
     parallel evidence type. No trading/execution fields exist; `disclaimer` is the same
     product invariant every other specialist output carries.
+
+    Persisted since issue #29 (`sentiment_readings`; it used to be recomputed and thrown
+    away on every call). `locale` is the language `rationale` was written in and is part of
+    the freshness cache key `(instrument_symbol, locale)` — same rationale as `Signal.locale`.
     """
 
     id: str
@@ -31,4 +35,5 @@ class SentimentReading:
     evidence: list[SignalEvidence]
     rationale: str
     disclaimer: str
+    locale: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))

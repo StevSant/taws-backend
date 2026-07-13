@@ -1,31 +1,53 @@
 from app.domain.market.entities.analysis_status import AnalysisStatus
 from app.domain.market.entities.asset_class import AssetClass
+from app.domain.market.entities.coin_candidate import CoinCandidate
 from app.domain.market.entities.earnings_calendar_entry import EarningsCalendarEntry
 from app.domain.market.entities.instrument import Instrument
 from app.domain.market.entities.instrument_fundamentals import InstrumentFundamentals
+from app.domain.market.entities.instrument_metadata import InstrumentMetadata
+from app.domain.market.entities.instrument_row import InstrumentRow
 from app.domain.market.entities.macro_indicator import MacroIndicator
 from app.domain.market.entities.macro_observation import MacroObservation
 from app.domain.market.entities.macro_series import MacroSeries
+from app.domain.market.entities.news_browse_query import NewsBrowseQuery
+from app.domain.market.entities.news_category import NewsCategory
 from app.domain.market.entities.news_entity import NewsEntity
+from app.domain.market.entities.news_facets import NewsFacets
 from app.domain.market.entities.news_item import NewsItem
+from app.domain.market.entities.news_skip_reason import NewsSkipReason
+from app.domain.market.entities.news_sort_field import NewsSortField
+from app.domain.market.entities.paginated_news_items import PaginatedNewsItems
 from app.domain.market.entities.price_candle import PriceCandle
 from app.domain.market.entities.price_series import PriceSeries
+from app.domain.market.entities.sentiment_filter import SentimentFilter
+from app.domain.market.entities.sort_direction import SortDirection
 from app.domain.market.entities.volatility_level import VolatilityLevel
 from app.domain.market.entities.volatility_regime import VolatilityRegime
 
 __all__ = [
     "AnalysisStatus",
     "AssetClass",
+    "CoinCandidate",
     "EarningsCalendarEntry",
     "Instrument",
     "InstrumentFundamentals",
+    "InstrumentMetadata",
+    "InstrumentRow",
     "MacroIndicator",
     "MacroObservation",
     "MacroSeries",
+    "NewsBrowseQuery",
+    "NewsCategory",
     "NewsEntity",
+    "NewsFacets",
     "NewsItem",
+    "NewsSkipReason",
+    "NewsSortField",
+    "PaginatedNewsItems",
     "PriceCandle",
     "PriceSeries",
+    "SentimentFilter",
+    "SortDirection",
     "VolatilityLevel",
     "VolatilityRegime",
 ]

@@ -5,6 +5,15 @@ from app.application.scenario.scenario_asset_class_synthesis_draft import (
 )
 
 
+class ScenarioConsensusExtraction(BaseModel):
+    summary: str = Field(description="Short synthesis of the specialist panel.")
+    conclusion: str = Field(description="Midas' grounded final conclusion.")
+    agreements: list[str] = Field(default_factory=list, max_length=6)
+    disagreements: list[str] = Field(default_factory=list, max_length=6)
+    uncertainties: list[str] = Field(default_factory=list, max_length=6)
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
 class ScenarioSynthesisExtraction(BaseModel):
     """Structured-output schema the Synthesis step asks the chat model to fill in —
     mirrors `ConsequenceChainExtraction`'s role for the Consequence Chain Analyst
@@ -34,4 +43,10 @@ class ScenarioSynthesisExtraction(BaseModel):
             "Research/monitoring actions only, e.g. 'Watch NVDA's next earnings call', "
             "'Set an alert on TLT volatility' — never buy/sell/order/execution instructions."
         ),
+    )
+    consensus: ScenarioConsensusExtraction = Field(
+        description=(
+            "Consensus synthesized from the supplied real specialist contributions. "
+            "It is not a vote; preserve material disagreement and uncertainty."
+        )
     )

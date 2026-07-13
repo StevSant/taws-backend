@@ -4,9 +4,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
 from app.application.briefing.use_cases import GenerateBriefing
-from app.application.signals.use_cases import AnalyzePendingNews
 from app.application.watchdog.use_cases import (
     EvaluateScenarioMonitors,
     RunDailyBriefings,
@@ -21,6 +19,7 @@ _SCAN_JOB_ID = "watchdog-scan"
 _DAILY_BRIEFINGS_JOB_ID = "watchdog-daily-briefings"
 _EVALUATE_SCENARIO_MONITORS_JOB_ID = "watchdog-evaluate-scenario-monitors"
 _ANALYZE_PENDING_NEWS_JOB_ID = "analyze-pending-news"
+_REFRESH_ANALYSIS_JOB_ID = "refresh-tracked-analysis"
 
 
 async def _run_scan_job(container: Container, settings: Settings) -> None:
@@ -50,7 +49,9 @@ async def _run_daily_briefings_job(container: Container, settings: Settings) -> 
         watchlist_repository=container.get_watchlist_repository(),
         signal_repository=container.get_signal_repository(),
         briefing_repository=container.get_briefing_repository(),
-        llm_provider=container.get_llm_provider(),
+        # Reasoning tier (#28) — matches what `POST /api/v1/briefings` uses, so a scheduled
+        # briefing and a manually-triggered one are composed by the same model.
+        llm_provider=container.get_reasoning_llm_provider(),
     )
     use_case = RunDailyBriefings(
         watchlist_repository=container.get_watchlist_repository(),
@@ -96,37 +97,48 @@ async def _run_analyze_pending_news_job(container: Container, settings: Settings
     case `POST /api/v1/news/analyze-pending` triggers on demand (see
     `api/v1/routers/news.py`), so news ingested while nobody is on the page still gets
     classified instead of sitting `pending` until a user happens to click "analyze"."""
-    use_case = AnalyzePendingNews(
-        news_item_repository=container.get_news_item_repository(),
-        instrument_universe=container.get_instrument_universe(),
-        market_data_provider=container.get_market_data_provider(),
-        news_provider=container.get_news_provider(),
-        signal_repository=container.get_signal_repository(),
-        llm_provider=container.get_llm_provider(),
-        find_historical_analogs=FindHistoricalAnalogs(
-            embedding_provider=container.get_embedding_provider(),
-            vector_store=container.get_vector_store(),
-            top_k=settings.historical_analogs_top_k,
-        ),
-        index_signal_analog=IndexSignalAnalog(
-            embedding_provider=container.get_embedding_provider(),
-            vector_store=container.get_vector_store(),
-        ),
-        min_distinct_sources=settings.min_distinct_news_sources,
-        relevance_skip_threshold=settings.news_relevance_skip_threshold,
-        max_concurrency=settings.news_analysis_max_concurrency,
-        batch_limit=settings.news_analysis_batch_limit,
-    )
+    use_case = container.get_analyze_pending_news_use_case()
     try:
         result = await use_case.execute(locale=settings.default_locale)
         logger.info(
-            "analyze-pending-news tick complete: %d analyzed, %d skipped, %d failed",
+            "analyze-pending-news tick complete: %d analyzed, %d skipped, %d failed. "
+            "Skipped by reason: %s. Failed by reason: %s.",
             result.analyzed_count,
             result.skipped_count,
             result.failed_count,
+            result.skipped_by_reason or "none",
+            result.failed_by_reason or "none",
         )
     except Exception:  # noqa: BLE001 — same resilience guarantee as the other scheduled jobs
         logger.exception("analyze-pending-news job failed")
+
+
+async def _run_refresh_tracked_analysis_job(container: Container, settings: Settings) -> None:
+    """Periodic shared-analysis refresh tick (issue #29) — the SAME `RefreshTrackedAnalysis`
+    use case `POST /api/v1/analysis/refresh` triggers on demand.
+
+    This is what makes the freshness cache a *cache* rather than a lottery: without it, the
+    unlucky user who happens to make the first request after a TTL expires pays the full
+    pipeline latency inline. With it, analysis is refreshed before anyone asks, and user reads
+    only ever serve cached rows.
+
+    Calls the generate use cases with `force=False`, so a tick over still-fresh instruments
+    costs a handful of indexed SELECTs and zero LLM calls — which is why the cadence and the
+    TTLs don't have to be kept in sync. One tick; the TTL decides staleness.
+    """
+    use_case = container.get_refresh_tracked_analysis_use_case()
+    try:
+        result = await use_case.execute()
+        logger.info(
+            "analysis refresh tick complete: %d symbol(s) x %d locale(s) -> %d refreshed, "
+            "%d failed",
+            result.symbols,
+            result.locales,
+            result.refreshed,
+            result.failed,
+        )
+    except Exception:  # noqa: BLE001 — same resilience guarantee as the other scheduled jobs
+        logger.exception("analysis refresh job failed")
 
 
 def build_watchdog_scheduler(container: Container, settings: Settings) -> AsyncIOScheduler:
@@ -135,7 +147,7 @@ def build_watchdog_scheduler(container: Container, settings: Settings) -> AsyncI
     than standing up a second one — see the module docstring-equivalent note on
     `_run_analyze_pending_news_job`).
 
-    Four config-driven jobs, all reusing the SAME application use cases as their
+    Five config-driven jobs, all reusing the SAME application use cases as their
     on-demand HTTP counterparts — no duplicated scan/briefing/evaluation/analysis logic:
 
     - `watchdog-scan` (`RunWatchdogScan`, every `settings.watchdog_poll_interval_minutes`
@@ -148,7 +160,20 @@ def build_watchdog_scheduler(container: Container, settings: Settings) -> AsyncI
       `ScenarioMonitor` for a materializing signal/price-move match.
     - `analyze-pending-news` (`AnalyzePendingNews`, issue #2, every
       `settings.news_analysis_poll_interval_minutes` minutes): the same batch pass
-      `POST /api/v1/news/analyze-pending` triggers manually.
+      `POST /api/v1/news/analyze-pending` triggers manually. This is the ONLY job behind an
+      enable/disable switch (`settings.news_analysis_enabled`, issue #68): it's the one that
+      spends money unattended — each tick can fan out up to `news_analysis_max_concurrency`
+      LLM classification calls — so an operator needs to be able to stop the background spend
+      without also losing the Watchdog's alerting. Disabling it doesn't disable analysis
+      itself: `POST /api/v1/news/analyze-pending` and the per-item `POST /news/{id}/analyze`
+      ("Analizar ahora", issue #27) both keep working on demand.
+    - `refresh-tracked-analysis` (`RefreshTrackedAnalysis`, issue #29, every
+      `settings.analysis_refresh_poll_interval_minutes` minutes): keeps every watchlisted
+      instrument's signal + sentiment warm per configured locale, so user reads never trigger
+      an inline LLM run. Gated by `settings.analysis_refresh_enabled` for the same reason as
+      the job above — it spends tokens unattended. Note the freshness gate lives inside the
+      generate use cases, so a tick over already-fresh instruments costs zero LLM calls; the
+      TTLs decide staleness, not this cadence.
 
     `AsyncIOScheduler` (not a background thread pool) integrates directly with FastAPI's
     asyncio event loop; `max_instances=1` on each job prevents a slow run from overlapping
@@ -184,12 +209,42 @@ def build_watchdog_scheduler(container: Container, settings: Settings) -> AsyncI
         replace_existing=True,
         max_instances=1,
     )
-    scheduler.add_job(
-        _run_analyze_pending_news_job,
-        trigger=IntervalTrigger(minutes=settings.news_analysis_poll_interval_minutes),
-        args=(container, settings),
-        id=_ANALYZE_PENDING_NEWS_JOB_ID,
-        replace_existing=True,
-        max_instances=1,
-    )
+    if settings.news_analysis_enabled:
+        scheduler.add_job(
+            _run_analyze_pending_news_job,
+            trigger=IntervalTrigger(minutes=settings.news_analysis_poll_interval_minutes),
+            args=(container, settings),
+            id=_ANALYZE_PENDING_NEWS_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+        )
+        logger.info(
+            "analyze-pending-news job scheduled every %d minute(s)",
+            settings.news_analysis_poll_interval_minutes,
+        )
+    else:
+        logger.warning(
+            "analyze-pending-news job is DISABLED (NEWS_ANALYSIS_ENABLED=false): ingested news "
+            "will stay 'pending' until POST /api/v1/news/analyze-pending is called on demand."
+        )
+    if settings.analysis_refresh_enabled:
+        scheduler.add_job(
+            _run_refresh_tracked_analysis_job,
+            trigger=IntervalTrigger(minutes=settings.analysis_refresh_poll_interval_minutes),
+            args=(container, settings),
+            id=_REFRESH_ANALYSIS_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+        )
+        logger.info(
+            "analysis-refresh job scheduled every %d minute(s) for locales %s",
+            settings.analysis_refresh_poll_interval_minutes,
+            settings.analysis_refresh_locales,
+        )
+    else:
+        logger.warning(
+            "analysis-refresh job is DISABLED (ANALYSIS_REFRESH_ENABLED=false): shared analysis "
+            "will only be regenerated when a user request finds it stale, so that request pays "
+            "the full pipeline latency inline."
+        )
     return scheduler

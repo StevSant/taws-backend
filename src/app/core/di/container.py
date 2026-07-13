@@ -1,10 +1,12 @@
 import logging
+from datetime import timedelta
 from functools import lru_cache
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 
 from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
+from app.application.analysis.use_cases import RefreshTrackedAnalysis
 from app.application.charts.use_cases import (
     BuildComparisonChart,
     BuildDistributionChart,
@@ -17,18 +19,26 @@ from app.application.charts.use_cases import (
 from app.application.chat.use_cases import GenerateConversationTitle
 from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.event_intelligence.use_cases import AnalyzeEventImpact, ProcessIncomingEvent
+from app.application.instruments.use_cases import RegisterInstrument, SearchCoins
 from app.application.macro.use_cases import InterpretMacroEvent
 from app.application.market import NewsFeedRefresher
 from app.application.market.use_cases import IngestNews
+from app.application.profile.use_cases import ResolveLocale
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
 from app.application.scenario.use_cases import (
     ComputeScenarioQuantification,
     GatherScenarioContext,
+    GenerateScenarioAgentContributions,
     NormalizeScenarioIntake,
     SynthesizeScenarioResult,
 )
 from app.application.sentiment.use_cases import AnalyzeSentiment
-from app.application.signals.use_cases import GenerateSignal
+from app.application.signals import NewsPrefilterPolicy
+from app.application.signals.use_cases import (
+    AnalyzePendingNews,
+    ForceAnalyzeNewsItem,
+    GenerateSignal,
+)
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.application.watchdog import AlertedSignalTracker
 from app.application.watchlist.use_cases import ReorderWatchlists
@@ -51,9 +61,13 @@ from app.domain.event_intelligence.ports import (
     EventRepositoryPort,
     NewsProviderPort,
 )
-from app.domain.market.entities import MacroIndicator
+from app.domain.freshness import FreshnessPolicy
+from app.domain.market.entities import AssetClass, MacroIndicator
 from app.domain.market.ports import (
+    CoinGeckoSearchProvider,
     FundamentalsProvider,
+    InstrumentCatalogRepository,
+    InstrumentMetadataProvider,
     InstrumentUniverse,
     MacroDataProvider,
     MarketDataProvider,
@@ -62,8 +76,10 @@ from app.domain.market.ports import (
 )
 from app.domain.notes.ports import NoteRepository
 from app.domain.notification.ports import EmailSender, NotificationChannel
+from app.domain.profile.ports import UserProfileRepository
+from app.domain.scenario.entities import ScenarioAgentId
 from app.domain.scenario.ports import ScenarioRepository
-from app.domain.sentiment.ports import FearGreedProvider
+from app.domain.sentiment.ports import FearGreedProvider, SentimentRepository
 from app.domain.signals.ports import SignalRepository
 from app.domain.telegram.ports import (
     BotRegistrationPort,
@@ -74,7 +90,15 @@ from app.domain.telegram.ports import (
 )
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
-from app.infrastructure.agents.personas import MIDAS_PERSONA
+from app.infrastructure.agents.personas import (
+    ADVISOR_PERSONA,
+    ANALYST_PERSONA,
+    CONSEQUENCE_PERSONA,
+    MACRO_PERSONA,
+    MIDAS_PERSONA,
+    QUANT_PERSONA,
+    SENTIMENT_PERSONA,
+)
 from app.infrastructure.agents.scenario import ScenarioSimulationRunner, build_scenario_graph
 from app.infrastructure.agents.tools import (
     build_advisor_grounding_tools,
@@ -109,6 +133,8 @@ from app.infrastructure.macro import (
     RoutingMacroDataProvider,
 )
 from app.infrastructure.marketdata import (
+    CoinGeckoCoinSearchProvider,
+    CoinGeckoInstrumentMetadataProvider,
     CoinGeckoMarketDataProvider,
     FixtureMarketDataProvider,
     RoutingMarketDataProvider,
@@ -130,19 +156,23 @@ from app.infrastructure.notification import (
     TelegramNotificationChannel,
 )
 from app.infrastructure.persistence import (
+    InMemoryNoteRepository,
     SupabaseBriefingRepository,
     SupabaseConversationRepository,
+    SupabaseInstrumentCatalogRepository,
     SupabaseNewsItemRepository,
     SupabaseNoteRepository,
     SupabaseScenarioRepository,
+    SupabaseSentimentRepository,
     SupabaseSignalRepository,
     SupabaseTelegramLinkRepository,
     SupabaseTelegramLinkTokenRepository,
     SupabaseUserBotRepository,
+    SupabaseUserProfileRepository,
     SupabaseWatchlistRepository,
 )
 from app.infrastructure.realtime import OpenAIRealtimeSessionProvider
-from app.infrastructure.seeds import load_preset_scenarios_seed, load_universe_seed
+from app.infrastructure.seeds import load_preset_scenarios_seed
 from app.infrastructure.sentiment import (
     AlternativeMeFearGreedProvider,
     FixtureFearGreedProvider,
@@ -159,7 +189,7 @@ from app.infrastructure.telegram import (
     TelegramBotRegistration,
 )
 from app.infrastructure.tts import OpenAITTSProvider
-from app.infrastructure.universe import JsonInstrumentUniverse
+from app.infrastructure.universe import SupabaseInstrumentUniverse
 from app.infrastructure.vectorstore import PgvectorStore
 
 
@@ -179,7 +209,12 @@ class Container:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._llm_provider: LLMProvider | None = None
+        # Two LLM provider instances, one per tier (issue #28) — see `get_fast_llm_provider`.
+        self._fast_llm_provider: LLMProvider | None = None
+        self._reasoning_llm_provider: LLMProvider | None = None
+        self._freshness_policy: FreshnessPolicy | None = None
+        self._sentiment_repository: SentimentRepository | None = None
+        self._refresh_tracked_analysis_use_case: RefreshTrackedAnalysis | None = None
         self._tts_provider: TTSProvider | None = None
         self._stt_provider: STTProvider | None = None
         self._embedding_provider: EmbeddingProvider | None = None
@@ -189,15 +224,24 @@ class Container:
         self._watchlist_repository: WatchlistRepository | None = None
         self._reorder_watchlists_use_case: ReorderWatchlists | None = None
         self._note_repository: NoteRepository | None = None
+        self._user_profile_repository: UserProfileRepository | None = None
+        self._resolve_locale_use_case: ResolveLocale | None = None
         self._signal_repository: SignalRepository | None = None
         self._briefing_repository: BriefingRepository | None = None
         self._news_provider: NewsProvider | None = None
         self._news_item_repository: NewsItemRepository | None = None
-        self._instrument_universe: InstrumentUniverse | None = None
+        self._instrument_catalog_repository: InstrumentCatalogRepository | None = None
+        self._instrument_universe: SupabaseInstrumentUniverse | None = None
+        self._coingecko_search_provider: CoinGeckoSearchProvider | None = None
+        self._search_coins_use_case: SearchCoins | None = None
+        self._register_instrument_use_case: RegisterInstrument | None = None
+        self._instrument_metadata_provider: InstrumentMetadataProvider | None = None
         self._market_data_provider: MarketDataProvider | None = None
         self._macro_data_provider: MacroDataProvider | None = None
         self._fundamentals_provider: FundamentalsProvider | None = None
-        self._chat_model: BaseChatModel | None = None
+        # Two chat models: cheap router, stronger specialists (issue #28).
+        self._router_chat_model: BaseChatModel | None = None
+        self._specialist_chat_model: BaseChatModel | None = None
         self._chat_graph: Any | None = None
         self._agent_runner: AgentRunner | None = None
         self._realtime_session_provider: RealtimeSessionProvider | None = None
@@ -237,12 +281,70 @@ class Container:
         self._build_sentiment_gauge_use_case: BuildSentimentGauge | None = None
         self._render_chart_use_case: RenderChart | None = None
 
-    def get_llm_provider(self) -> LLMProvider:
-        if self._llm_provider is None:
-            self._llm_provider = OpenAIProvider(
+    def get_fast_llm_provider(self) -> LLMProvider:
+        """Return the cached FAST-tier `LLMProvider` (`settings.openai_model`) — issue #28.
+
+        Backs the call sites that are structured, tiny, and already correct on a cheap model:
+        conversation titling, sentiment tone scoring, scenario intake extraction, and news
+        blurb localization. There is no generic `get_llm_provider()` any more, on purpose: an
+        un-suffixed accessor is exactly how a reasoning-tier call site silently drifts onto the
+        cheap model (or the reverse, quietly multiplying its bill). Every caller now has to
+        state which tier it wants, and pyright catches anyone who forgets.
+        """
+        if self._fast_llm_provider is None:
+            self._fast_llm_provider = OpenAIProvider(
                 api_key=self._settings.openai_api_key, model=self._settings.openai_model
             )
-        return self._llm_provider
+        return self._fast_llm_provider
+
+    def get_reasoning_llm_provider(self) -> LLMProvider:
+        """Return the cached REASONING-tier `LLMProvider` (`settings.reasoning_model`) — #28.
+
+        Backs the multi-step analytical calls that are the product's actual value and the ones
+        most likely to be under-served by `mini`: impact signals, pending-news batch analysis,
+        scenario synthesis, causal consequence chains, macro event interpretation, and
+        watchlist briefings.
+
+        `settings.reasoning_model` falls back to `openai_model` when `OPENAI_MODEL_REASONING`
+        is unset, so this is a SEPARATE INSTANCE but the SAME model until an operator configures
+        a stronger one — i.e. the tiering wiring changes no behavior on its own. The no-API-key
+        guard is unchanged: `OpenAIProvider` still degrades to its placeholder on both tiers.
+        """
+        if self._reasoning_llm_provider is None:
+            self._reasoning_llm_provider = OpenAIProvider(
+                api_key=self._settings.openai_api_key, model=self._settings.reasoning_model
+            )
+        return self._reasoning_llm_provider
+
+    def get_freshness_policy(self) -> FreshnessPolicy:
+        """Return the cached `FreshnessPolicy` — how long shared analysis stays cacheable (#29).
+
+        THE place the asset-class TTL map is assembled from `Settings`. `CREDIT` and `COMMODITY`
+        deliberately get no dedicated bucket and fall through to `default_ttl`, as does any
+        analysis with no instrument behind it (a preset scenario run).
+        """
+        if self._freshness_policy is None:
+            self._freshness_policy = FreshnessPolicy(
+                ttl_by_asset_class={
+                    AssetClass.CRYPTO: timedelta(
+                        minutes=self._settings.analysis_ttl_crypto_minutes
+                    ),
+                    AssetClass.STOCK: timedelta(minutes=self._settings.analysis_ttl_equity_minutes),
+                    AssetClass.FOREX: timedelta(minutes=self._settings.analysis_ttl_fx_minutes),
+                },
+                default_ttl=timedelta(minutes=self._settings.analysis_ttl_default_minutes),
+            )
+        return self._freshness_policy
+
+    def get_sentiment_repository(self) -> SentimentRepository:
+        if self._sentiment_repository is None:
+            self._sentiment_repository = SupabaseSentimentRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
+            )
+        return self._sentiment_repository
 
     def get_tts_provider(self) -> TTSProvider | None:
         """Return the cached `TTSProvider`, or `None` when TTS isn't both enabled AND
@@ -343,16 +445,49 @@ class Container:
         return self._reorder_watchlists_use_case
 
     def get_note_repository(self) -> NoteRepository:
-        """Return the cached per-user NoteRepository (issue #62), Supabase-backed with the
-        same retry/config wiring as the other per-user repositories."""
+        """Return Supabase notes, with process-local storage for unconfigured development."""
         if self._note_repository is None:
-            self._note_repository = SupabaseNoteRepository(
+            supabase_configured = bool(self._settings.supabase_url and self._settings.supabase_key)
+            if self._settings.app_env == "development" and not supabase_configured:
+                logging.getLogger(__name__).warning(
+                    "Supabase notes are not configured; using process-local development storage."
+                )
+                self._note_repository = InMemoryNoteRepository()
+            else:
+                self._note_repository = SupabaseNoteRepository(
+                    supabase_url=self._settings.supabase_url,
+                    supabase_key=self._settings.supabase_key,
+                    retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                    retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
+                )
+        return self._note_repository
+
+    def get_user_profile_repository(self) -> UserProfileRepository:
+        """Return the cached per-user UserProfileRepository (issue #67), Supabase-backed with
+        the same retry/config wiring as the other per-user repositories."""
+        if self._user_profile_repository is None:
+            self._user_profile_repository = SupabaseUserProfileRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
                 retry_max_attempts=self._settings.supabase_retry_max_attempts,
                 retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
-        return self._note_repository
+        return self._user_profile_repository
+
+    def get_resolve_locale_use_case(self) -> ResolveLocale:
+        """Return the cached `ResolveLocale` use case (issue #67).
+
+        The single place that answers "what language does this reply go out in":
+        request locale -> the user's stored `preferred_locale` -> `Settings.default_locale`.
+        Only depends on one repository plus a settings value, so caching one instance is
+        safe — same shape as the other single-port use cases wired here.
+        """
+        if self._resolve_locale_use_case is None:
+            self._resolve_locale_use_case = ResolveLocale(
+                user_profile_repository=self.get_user_profile_repository(),
+                default_locale=self._settings.default_locale,
+            )
+        return self._resolve_locale_use_case
 
     def get_signal_repository(self) -> SignalRepository:
         if self._signal_repository is None:
@@ -370,6 +505,7 @@ class Container:
             self._news_item_repository = SupabaseNewsItemRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                sentiment_neutral_threshold=self._settings.news_sentiment_neutral_threshold,
             )
         return self._news_item_repository
 
@@ -529,8 +665,82 @@ class Container:
             )
         return self._bot_registration
 
+    # -- Telegram inbound-command handlers -------------------------------------------------
+    #
+    # Each handler comes in two flavours, and the split is load-bearing:
+    #
+    # `build_*_command_handler(messenger)` -- NOT cached. Builds a handler that replies
+    # through the messenger you pass. A user-registered bot's webhook
+    # (`/telegram/webhook/{bot_id}`) MUST use these, with a `TelegramBotClient` for that
+    # bot's own token: a handler answers via `messenger.send_text(...)`, so the messenger it
+    # holds IS the identity the user sees the reply come from. Building them is cheap --
+    # every expensive collaborator they take (repositories, agent runner, simulation runner)
+    # is still a cached singleton.
+    #
+    # `get_*_command_handler()` -- cached, bound to the main `.env` bot's messenger. ONLY the
+    # main `/telegram/webhook` route may use these. Handing them to a user-registered bot's
+    # webhook (which is what this `Container` used to do) made every registered bot reply
+    # with the main bot's token; because a private-chat `chat_id` is the user's account ID
+    # and is identical across bots, those replies were delivered -- into the *other* bot's
+    # conversation.
+
+    def build_briefing_command_handler(
+        self, messenger: TelegramMessenger
+    ) -> BriefingCommandHandler:
+        """A `/briefing` handler replying through `messenger`. See the note above."""
+        return BriefingCommandHandler(
+            link_repository=self.get_telegram_link_repository(),
+            watchlist_repository=self.get_watchlist_repository(),
+            briefing_repository=self.get_briefing_repository(),
+            messenger=messenger,
+            frontend_base_url=self._settings.frontend_base_url,
+        )
+
+    def build_signal_command_handler(self, messenger: TelegramMessenger) -> SignalCommandHandler:
+        """A `/signal <TICKER>` handler replying through `messenger`. See the note above."""
+        return SignalCommandHandler(
+            link_repository=self.get_telegram_link_repository(),
+            instrument_universe=self.get_instrument_universe(),
+            signal_repository=self.get_signal_repository(),
+            messenger=messenger,
+        )
+
+    def build_simulate_command_handler(
+        self, messenger: TelegramMessenger
+    ) -> SimulateCommandHandler:
+        """A `/simular <text>` handler replying through `messenger`. Reuses the same cached
+        `ScenarioSimulationRunner` as `POST /api/v1/scenarios/generate` and the
+        `run_scenario_simulation` chat tool — see `get_scenario_simulation_runner`."""
+        return SimulateCommandHandler(
+            link_repository=self.get_telegram_link_repository(),
+            scenario_simulation_runner=self.get_scenario_simulation_runner(),
+            messenger=messenger,
+            frontend_base_url=self._settings.frontend_base_url,
+            default_locale=self._settings.default_locale,
+        )
+
+    def build_impact_command_handler(self, messenger: TelegramMessenger) -> ImpactCommandHandler:
+        """An `/impact <sector>` handler replying through `messenger`. See the note above."""
+        return ImpactCommandHandler(
+            event_repository=self.get_event_repository(),
+            analyze_event_impact=AnalyzeEventImpact(analyzer=self.get_event_analyzer()),
+            messenger=messenger,
+        )
+
+    def build_chat_message_handler(self, messenger: TelegramMessenger) -> ChatMessageHandler:
+        """A conversational handler replying through `messenger`. See the note above.
+
+        Telegram has no per-user language preference of its own, so the handler answers in
+        `Settings.default_locale` (issue #67) rather than defaulting to the personas' English.
+        """
+        return ChatMessageHandler(
+            agent_runner=self.get_agent_runner(),
+            messenger=messenger,
+            default_locale=self._settings.default_locale,
+        )
+
     def get_briefing_command_handler(self) -> BriefingCommandHandler | None:
-        """Return the cached `/briefing` command handler, or `None` when Telegram isn't
+        """Return the main bot's cached `/briefing` handler, or `None` when Telegram isn't
         configured — same unconfigured-integration fallback shape as
         `get_link_telegram_account_use_case` (issue #19).
         """
@@ -538,76 +748,47 @@ class Container:
         if messenger is None:
             return None
         if self._briefing_command_handler is None:
-            self._briefing_command_handler = BriefingCommandHandler(
-                link_repository=self.get_telegram_link_repository(),
-                watchlist_repository=self.get_watchlist_repository(),
-                briefing_repository=self.get_briefing_repository(),
-                messenger=messenger,
-                frontend_base_url=self._settings.frontend_base_url,
-            )
+            self._briefing_command_handler = self.build_briefing_command_handler(messenger)
         return self._briefing_command_handler
 
     def get_signal_command_handler(self) -> SignalCommandHandler | None:
-        """Return the cached `/signal <TICKER>` command handler, or `None` when
+        """Return the main bot's cached `/signal <TICKER>` handler, or `None` when
         Telegram isn't configured (issue #19)."""
         messenger = self.get_telegram_messenger()
         if messenger is None:
             return None
         if self._signal_command_handler is None:
-            self._signal_command_handler = SignalCommandHandler(
-                link_repository=self.get_telegram_link_repository(),
-                instrument_universe=self.get_instrument_universe(),
-                signal_repository=self.get_signal_repository(),
-                messenger=messenger,
-            )
+            self._signal_command_handler = self.build_signal_command_handler(messenger)
         return self._signal_command_handler
 
     def get_simulate_command_handler(self) -> SimulateCommandHandler | None:
-        """Return the cached `/simular <text>` command handler, or `None` when
-        Telegram isn't configured (issue #19). Reuses the same cached
-        `ScenarioSimulationRunner` as `POST /api/v1/scenarios/generate` and the
-        `run_scenario_simulation` chat tool — see `get_scenario_simulation_runner`.
-        """
+        """Return the main bot's cached `/simular <text>` handler, or `None` when
+        Telegram isn't configured (issue #19)."""
         messenger = self.get_telegram_messenger()
         if messenger is None:
             return None
         if self._simulate_command_handler is None:
-            self._simulate_command_handler = SimulateCommandHandler(
-                link_repository=self.get_telegram_link_repository(),
-                scenario_simulation_runner=self.get_scenario_simulation_runner(),
-                messenger=messenger,
-                frontend_base_url=self._settings.frontend_base_url,
-                default_locale=self._settings.default_locale,
-            )
+            self._simulate_command_handler = self.build_simulate_command_handler(messenger)
         return self._simulate_command_handler
 
     def get_impact_command_handler(self) -> ImpactCommandHandler | None:
-        """Return the cached `/impact <sector>` command handler, or `None` when
+        """Return the main bot's cached `/impact <sector>` handler, or `None` when
         Telegram isn't configured — same pattern as `get_briefing_command_handler`."""
         messenger = self.get_telegram_messenger()
         if messenger is None:
             return None
         if self._impact_command_handler is None:
-            self._impact_command_handler = ImpactCommandHandler(
-                event_repository=self.get_event_repository(),
-                analyze_event_impact=AnalyzeEventImpact(
-                    analyzer=self.get_event_analyzer(),
-                ),
-                messenger=messenger,
-            )
+            self._impact_command_handler = self.build_impact_command_handler(messenger)
         return self._impact_command_handler
 
     def get_chat_message_handler(self) -> ChatMessageHandler | None:
-        """Return the cached conversational chat handler, or `None` when Telegram
+        """Return the main bot's cached conversational handler, or `None` when Telegram
         isn't configured — same pattern as `get_briefing_command_handler`."""
         messenger = self.get_telegram_messenger()
         if messenger is None:
             return None
         if self._chat_message_handler is None:
-            self._chat_message_handler = ChatMessageHandler(
-                agent_runner=self.get_agent_runner(),
-                messenger=messenger,
-            )
+            self._chat_message_handler = self.build_chat_message_handler(messenger)
         return self._chat_message_handler
 
     def get_news_provider(self) -> NewsProvider:
@@ -694,32 +875,121 @@ class Container:
             )
         return self._news_provider
 
+    def get_instrument_catalog_repository(self) -> InstrumentCatalogRepository:
+        if self._instrument_catalog_repository is None:
+            self._instrument_catalog_repository = SupabaseInstrumentCatalogRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
+            )
+        return self._instrument_catalog_repository
+
+    async def build_instrument_universe(self) -> InstrumentUniverse:
+        """Load `public.instruments` once and cache the resulting universe singleton.
+
+        MUST be awaited during app startup (`main.py`'s `_lifespan`, before other
+        warmup) — `get_instrument_universe()` only returns the already-built
+        instance and never constructs it lazily itself (design decision #1: the
+        `InstrumentUniverse` port stays sync, so the one async DB read happens here,
+        not on the request path).
+        """
+        repo = self.get_instrument_catalog_repository()
+        self._instrument_universe = await SupabaseInstrumentUniverse.create(repo)
+        return self._instrument_universe
+
     def get_instrument_universe(self) -> InstrumentUniverse:
         if self._instrument_universe is None:
-            self._instrument_universe = JsonInstrumentUniverse(
-                seed_path=self._settings.universe_seed_path
+            raise RuntimeError(
+                "InstrumentUniverse was not built yet — `build_instrument_universe()` "
+                "must be awaited during app startup before this accessor is used."
             )
         return self._instrument_universe
+
+    def get_coingecko_search_provider(self) -> CoinGeckoSearchProvider:
+        """Return the cached CoinGecko `/search` adapter (issue #60 candidate resolution).
+
+        Reuses the same base URL, API key, and cooldown settings as
+        `get_market_data_provider`'s `CoinGeckoMarketDataProvider` — same vendor, same
+        graceful rate-limit degradation (429/timeout -> `[]`, see
+        `CoinGeckoCoinSearchProvider`'s docstring), just a different endpoint.
+        """
+        if self._coingecko_search_provider is None:
+            self._coingecko_search_provider = CoinGeckoCoinSearchProvider(
+                base_url=self._settings.coingecko_base_url,
+                api_key=self._settings.coingecko_api_key,
+                cooldown_seconds=self._settings.coingecko_cooldown_seconds,
+            )
+        return self._coingecko_search_provider
+
+    def get_search_coins_use_case(self) -> SearchCoins:
+        """Return the cached `SearchCoins` use case backing `GET /instruments/search`."""
+        if self._search_coins_use_case is None:
+            self._search_coins_use_case = SearchCoins(
+                search_provider=self.get_coingecko_search_provider()
+            )
+        return self._search_coins_use_case
+
+    def get_register_instrument_use_case(self) -> RegisterInstrument:
+        """Return the cached `RegisterInstrument` use case backing `POST /instruments`.
+
+        Depends on the domain `MutableInstrumentUniverse` protocol (design's FIX #6)
+        via the same `InstrumentUniverse` singleton every other pipeline uses —
+        `SupabaseInstrumentUniverse.add()` satisfies it structurally.
+        """
+        if self._register_instrument_use_case is None:
+            self._register_instrument_use_case = RegisterInstrument(
+                catalog_repository=self.get_instrument_catalog_repository(),
+                universe=self.get_instrument_universe(),
+                watchlist_repository=self.get_watchlist_repository(),
+            )
+        return self._register_instrument_use_case
+
+    def get_news_prefilter_policy(self) -> NewsPrefilterPolicy:
+        """Return the Analyst pre-filter's gate tuning (issue #26), assembled from `Settings`.
+
+        The single place these `news_*` settings are read. Both callers of
+        `AnalyzePendingNews` — `POST /api/v1/news/analyze-pending` and the scheduled tick —
+        resolve the policy from here, so an operator retuning the gate can't end up with the
+        endpoint and the background job disagreeing about what gets classified.
+        """
+        settings = self._settings
+        return NewsPrefilterPolicy(
+            skip_threshold=settings.news_relevance_skip_threshold,
+            relevance_weight=settings.news_prefilter_relevance_weight,
+            materiality_weight=settings.news_prefilter_materiality_weight,
+            name_match_score=settings.news_relevance_name_match_score,
+            materiality_keywords=tuple(settings.news_materiality_keywords),
+            materiality_high_impact_sources=tuple(settings.news_materiality_high_impact_sources),
+            materiality_keyword_weight=settings.news_materiality_keyword_weight,
+            materiality_source_weight=settings.news_materiality_source_weight,
+            materiality_sentiment_weight=settings.news_materiality_sentiment_weight,
+            materiality_recency_weight=settings.news_materiality_recency_weight,
+            materiality_recency_half_life_hours=(settings.news_materiality_recency_half_life_hours),
+            materiality_keyword_saturation_count=(
+                settings.news_materiality_keyword_saturation_count
+            ),
+        )
 
     def get_market_data_provider(self) -> MarketDataProvider:
         """Return the routing MarketDataProvider (CoinGecko/yfinance + fixture fallback).
 
-        `yfinance`/CoinGecko symbol overrides come straight from the universe
-        seed's optional `yfinance_symbol` / `coingecko_id` rows — those vendor
-        details never touch the pure `Instrument` entity.
+        `yfinance`/CoinGecko symbol overrides come from the prebuilt instrument
+        universe's LIVE `coingecko_id_overrides()`/`yfinance_symbol_overrides()`
+        dicts (CRITICAL fix, post-hoc adversarial review) — NOT a one-time
+        snapshot comprehension over `all_rows()`. The previous snapshot approach
+        meant a coin registered via `POST /instruments` after this provider was
+        first built would never resolve a live price until process restart,
+        because `CoinGeckoMarketDataProvider` holds `self._overrides` as a
+        reference and the snapshot dict was never updated. Passing the SAME
+        dict objects the universe mutates in `add_row()` makes every subsequent
+        registration visible immediately, with no rebuild.
         """
         if self._market_data_provider is None:
-            universe_rows = load_universe_seed(self._settings.universe_seed_path)
-            yfinance_overrides = {
-                row["symbol"]: row["yfinance_symbol"]
-                for row in universe_rows
-                if row.get("yfinance_symbol")
-            }
-            coingecko_overrides = {
-                row["symbol"]: row["coingecko_id"]
-                for row in universe_rows
-                if row.get("coingecko_id")
-            }
+            self.get_instrument_universe()  # raises if the universe wasn't built yet
+            assert self._instrument_universe is not None
+            coingecko_overrides = self._instrument_universe.coingecko_id_overrides()
+            yfinance_overrides = self._instrument_universe.yfinance_symbol_overrides()
             fixture_provider = FixtureMarketDataProvider()
             self._market_data_provider = RoutingMarketDataProvider(
                 yfinance_provider=YFinanceMarketDataProvider(symbol_overrides=yfinance_overrides),
@@ -733,6 +1003,28 @@ class Container:
                 fixture_provider=fixture_provider,
             )
         return self._market_data_provider
+
+    def get_instrument_metadata_provider(self) -> InstrumentMetadataProvider:
+        """Return the cached CoinGecko `/coins/markets` batch metadata adapter.
+
+        Backs `GET /instruments/enriched`'s additive `market_cap`/`volume_24h`/
+        `change_7d_pct` fields (instrument-enrichment spec). Resolves symbol ->
+        CoinGecko id from the prebuilt instrument universe's LIVE
+        `coingecko_id_overrides()` dict — the SAME source
+        `get_market_data_provider` uses for its own CoinGecko id resolution — so a
+        coin registered via `POST /instruments` after this provider was first
+        built still resolves without a container rebuild.
+        """
+        if self._instrument_metadata_provider is None:
+            self.get_instrument_universe()  # raises if the universe wasn't built yet
+            assert self._instrument_universe is not None
+            self._instrument_metadata_provider = CoinGeckoInstrumentMetadataProvider(
+                base_url=self._settings.coingecko_base_url,
+                coingecko_id_overrides=self._instrument_universe.coingecko_id_overrides(),
+                api_key=self._settings.coingecko_api_key,
+                cooldown_seconds=self._settings.coingecko_cooldown_seconds,
+            )
+        return self._instrument_metadata_provider
 
     def get_chart_config(self) -> ChartConfig:
         """Return the cached ChartConfig built from Settings (single source for chart limits)."""
@@ -829,7 +1121,9 @@ class Container:
         """
         if self._generate_consequence_chain_use_case is None:
             self._generate_consequence_chain_use_case = GenerateConsequenceChain(
-                llm_provider=self.get_llm_provider()
+                # Reasoning tier (#28): a causal X->Y->Z chain with per-edge mechanisms is
+                # multi-step reasoning, not extraction.
+                llm_provider=self.get_reasoning_llm_provider()
             )
         return self._generate_consequence_chain_use_case
 
@@ -842,7 +1136,8 @@ class Container:
         """
         if self._generate_conversation_title_use_case is None:
             self._generate_conversation_title_use_case = GenerateConversationTitle(
-                llm_provider=self.get_llm_provider(),
+                # Fast tier (#28): summarizing a turn into a few words.
+                llm_provider=self.get_fast_llm_provider(),
                 voice_preamble=MIDAS_PERSONA,
             )
         return self._generate_conversation_title_use_case
@@ -910,7 +1205,10 @@ class Container:
         if self._interpret_macro_event_use_case is None:
             self._interpret_macro_event_use_case = InterpretMacroEvent(
                 macro_data_provider=self.get_macro_data_provider(),
-                llm_provider=self.get_llm_provider(),
+                # Reasoning tier (#28). Borderline — it's one structured call over pre-fetched
+                # numbers — but it reasons causally about direction/magnitude PER ASSET CLASS,
+                # so it defaults up. Cheap to move down to fast if cost matters.
+                llm_provider=self.get_reasoning_llm_provider(),
             )
         return self._interpret_macro_event_use_case
 
@@ -997,7 +1295,14 @@ class Container:
                 news_provider=self.get_news_provider(),
                 fear_greed_provider=self.get_fear_greed_provider(),
                 instrument_universe=self.get_instrument_universe(),
-                llm_provider=self.get_llm_provider(),
+                # Fast tier (#28): bucketing coverage into a -1..1 tone score is a
+                # classification call, not analysis — `mini` is already right for it.
+                llm_provider=self.get_fast_llm_provider(),
+                # Persisted + freshness-cached since #29 (it used to be recomputed every call
+                # and thrown away).
+                sentiment_repository=self.get_sentiment_repository(),
+                freshness_policy=self.get_freshness_policy(),
+                retention_keep=self._settings.analysis_retention_keep,
                 bullish_threshold=self._settings.sentiment_bullish_threshold,
                 bearish_threshold=self._settings.sentiment_bearish_threshold,
             )
@@ -1051,7 +1356,8 @@ class Container:
         if self._scenario_simulation_runner is None:
             preset_rows = load_preset_scenarios_seed(self._settings.preset_scenarios_seed_path)
             normalize_intake = NormalizeScenarioIntake(
-                llm_provider=self.get_llm_provider(),
+                # Fast tier (#28): free text -> a `ScenarioSpec`. Extraction, not reasoning.
+                llm_provider=self.get_fast_llm_provider(),
                 instrument_universe=self.get_instrument_universe(),
                 preset_rows=preset_rows,
             )
@@ -1071,19 +1377,45 @@ class Container:
                 instrument_universe=self.get_instrument_universe(),
             )
             synthesize_result = SynthesizeScenarioResult(
-                llm_provider=self.get_llm_provider(),
+                # Reasoning tier (#28): spec + causal chain + evidence -> a quantified
+                # per-asset-class impact map. The heaviest call in the scenario graph.
+                llm_provider=self.get_reasoning_llm_provider(),
                 instrument_universe=self.get_instrument_universe(),
                 max_synthesis_attempts=self._settings.scenario_synthesis_max_attempts,
+            )
+            generate_contributions = GenerateScenarioAgentContributions(
+                # Reasoning tier (#28): six independent grounded specialists produce
+                # judgments that the final synthesis must reconcile.
+                llm_provider=self.get_reasoning_llm_provider(),
+                midas_persona=MIDAS_PERSONA,
+                specialist_personas={
+                    ScenarioAgentId.ANALYST: ANALYST_PERSONA,
+                    ScenarioAgentId.QUANT: QUANT_PERSONA,
+                    ScenarioAgentId.MACRO: MACRO_PERSONA,
+                    ScenarioAgentId.SENTIMENT: SENTIMENT_PERSONA,
+                    ScenarioAgentId.CONSEQUENCE: CONSEQUENCE_PERSONA,
+                    ScenarioAgentId.ADVISOR: ADVISOR_PERSONA,
+                },
+                max_concurrency=self._settings.scenario_agent_panel_max_concurrency,
+                max_attempts=self._settings.scenario_agent_panel_max_attempts,
             )
             graph = build_scenario_graph(
                 normalize_scenario_intake=normalize_intake,
                 gather_scenario_context=gather_context,
                 generate_consequence_chain=self.get_generate_consequence_chain_use_case(),
                 compute_scenario_quantification=compute_quantification,
+                generate_agent_contributions=generate_contributions,
                 synthesize_scenario_result=synthesize_result,
                 scenario_repository=self.get_scenario_repository(),
             )
-            self._scenario_simulation_runner = ScenarioSimulationRunner(graph=graph)
+            self._scenario_simulation_runner = ScenarioSimulationRunner(
+                graph=graph,
+                # Freshness gate + retention for PRESET runs (#29); free-form runs have no
+                # stable cache key and always execute the graph.
+                scenario_repository=self.get_scenario_repository(),
+                freshness_policy=self.get_freshness_policy(),
+                retention_keep=self._settings.analysis_retention_keep,
+            )
         return self._scenario_simulation_runner
 
     def get_agent_runner(self) -> AgentRunner:
@@ -1102,17 +1434,24 @@ class Container:
         """Build the Analyst `GenerateSignal` pipeline from its ports.
 
         NOT cached: `GenerateSignal` composes several ports (news/market/universe/signal
-        repo/LLM + the analog RAG pair) exactly as `api/v1/routers/signals.py` builds it
-        per-request — the collaborators it depends on are themselves cached singletons, so
-        the only per-call cost is wiring a thin orchestrator. Shared by the signals router
-        and the `generate_signal` realtime tool so both run the identical pipeline.
+        repo/LLM + the analog RAG pair) — the collaborators it depends on are themselves cached
+        singletons, so the only per-call cost is wiring a thin orchestrator.
+
+        THE single construction site (issue #29). The signals router, the news router's
+        analyze-pending / force-analyze endpoints, the scheduler's ticks, and the realtime tool
+        all resolve the pipeline from here, so the freshness gate, the retention count, and the
+        retry policy can't drift between "the endpoint" and "the scheduled job" — which is
+        exactly what was starting to happen while several call sites each hand-assembled their
+        own `GenerateSignal` with a different subset of the settings.
         """
         return GenerateSignal(
             news_provider=self.get_news_provider(),
             market_data_provider=self.get_market_data_provider(),
             instrument_universe=self.get_instrument_universe(),
             signal_repository=self.get_signal_repository(),
-            llm_provider=self.get_llm_provider(),
+            # Reasoning tier (#28): news + price + analogs -> a thesis with drivers and risks.
+            # The flagship analytical call in the product.
+            llm_provider=self.get_reasoning_llm_provider(),
             find_historical_analogs=FindHistoricalAnalogs(
                 embedding_provider=self.get_embedding_provider(),
                 vector_store=self.get_vector_store(),
@@ -1123,7 +1462,62 @@ class Container:
                 vector_store=self.get_vector_store(),
             ),
             min_distinct_sources=self._settings.min_distinct_news_sources,
+            freshness_policy=self.get_freshness_policy(),
+            retention_keep=self._settings.analysis_retention_keep,
+            retry_max_attempts=self._settings.signal_classification_retry_max_attempts,
+            retry_backoff_base_seconds=(
+                self._settings.signal_classification_retry_backoff_base_seconds
+            ),
         )
+
+    def get_analyze_pending_news_use_case(self) -> AnalyzePendingNews:
+        """Build the pending-news batch analysis pipeline (issue #2).
+
+        NOT cached, same rationale as `get_generate_signal_use_case`. Shared by
+        `POST /api/v1/news/analyze-pending` and the scheduler's `analyze-pending-news` tick, so
+        the gate settings can never differ between the manual trigger and the background one.
+        """
+        return AnalyzePendingNews(
+            news_item_repository=self.get_news_item_repository(),
+            instrument_universe=self.get_instrument_universe(),
+            # Reuses the one `GenerateSignal` construction site (which picks the reasoning tier,
+            # #28) rather than re-assembling the pipeline from its ports.
+            generate_signal=self.get_generate_signal_use_case(),
+            prefilter_policy=self.get_news_prefilter_policy(),
+            max_concurrency=self._settings.news_analysis_max_concurrency,
+            batch_limit=self._settings.news_analysis_batch_limit,
+        )
+
+    def get_force_analyze_news_item_use_case(self) -> ForceAnalyzeNewsItem:
+        """Build the manual "Analizar ahora" per-item pipeline (issue #27).
+
+        Wraps the SAME `GenerateSignal` every other surface uses — and calls it with
+        `force=True`, so the button genuinely re-analyzes instead of being handed the cached
+        signal the freshness gate would otherwise return (issue #29).
+        """
+        return ForceAnalyzeNewsItem(
+            news_item_repository=self.get_news_item_repository(),
+            generate_signal=self.get_generate_signal_use_case(),
+        )
+
+    def get_refresh_tracked_analysis_use_case(self) -> RefreshTrackedAnalysis:
+        """Return the cached background-refresh use case (issue #29).
+
+        Cached (unlike the pipelines above) because it holds no per-request state and is
+        resolved on every scheduler tick. Shared by that tick, by
+        `POST /api/v1/analysis/refresh`, and by the watchlist-add seed — one code path, so a
+        manual refresh and a scheduled one behave identically (the same "on-demand endpoint
+        runs the exact scheduled-job use case" pattern `POST /api/v1/watchdog/scan` set).
+        """
+        if self._refresh_tracked_analysis_use_case is None:
+            self._refresh_tracked_analysis_use_case = RefreshTrackedAnalysis(
+                watchlist_repository=self.get_watchlist_repository(),
+                generate_signal=self.get_generate_signal_use_case(),
+                analyze_sentiment=self.get_analyze_sentiment_use_case(),
+                locales=self._settings.analysis_refresh_locales,
+                max_concurrency=self._settings.analysis_refresh_concurrency,
+            )
+        return self._refresh_tracked_analysis_use_case
 
     def get_realtime_session_provider(self) -> RealtimeSessionProvider | None:
         """Return the cached `RealtimeSessionProvider`, or `None` when Realtime is off.
@@ -1148,18 +1542,36 @@ class Container:
         self._realtime_session_provider = OpenAIRealtimeSessionProvider(api_key=api_key)
         return self._realtime_session_provider
 
-    def _get_chat_model(self) -> BaseChatModel:
-        """Build/cache the LangChain chat model used ONLY by the chat/SSE agent graph
-        below. The Analyst signal / Advisor briefing pipelines do NOT use this — they
-        depend on the `LLMProvider` port (`get_llm_provider()`) instead, per the
-        hexagonal rule that `application/` never imports a vendor/framework package
-        directly (see `application/signals/use_cases/generate_signal.py`'s docstring).
-        Kept private for that reason: nothing outside `_get_chat_graph` should reach for
-        a raw `BaseChatModel`.
+    def _get_router_chat_model(self) -> BaseChatModel:
+        """Build/cache the FAST chat model backing the supervisor's routing node (issue #28).
+
+        Picking 1 of 6 specialists is a pure structured-output classification — the cheapest
+        model in the config is already correct at it, and it runs on every single chat turn.
+
+        Used ONLY by the chat/SSE agent graph below. The Analyst signal / Advisor briefing
+        pipelines do NOT use this — they depend on the `LLMProvider` port
+        (`get_fast_llm_provider()` / `get_reasoning_llm_provider()`) instead, per the hexagonal
+        rule that `application/` never imports a vendor/framework package directly (see
+        `application/signals/use_cases/generate_signal.py`'s docstring). Kept private for that
+        reason: nothing outside `_get_chat_graph` should reach for a raw `BaseChatModel`.
         """
-        if self._chat_model is None:
-            self._chat_model = build_chat_model(self._settings)
-        return self._chat_model
+        if self._router_chat_model is None:
+            self._router_chat_model = build_chat_model(self._settings, self._settings.openai_model)
+        return self._router_chat_model
+
+    def _get_specialist_chat_model(self) -> BaseChatModel:
+        """Build/cache the REASONING chat model backing all 6 specialist nodes (issue #28).
+
+        The specialists run a multi-turn tool-calling loop over real analytical work (the heavy
+        math lives in the injected tools, but the interpretation doesn't), so they're the half
+        of the graph that actually benefits from a stronger model. Same privacy rationale as
+        `_get_router_chat_model`.
+        """
+        if self._specialist_chat_model is None:
+            self._specialist_chat_model = build_chat_model(
+                self._settings, self._settings.reasoning_model
+            )
+        return self._specialist_chat_model
 
     def _get_chat_graph(self) -> Any:
         if self._chat_graph is None:
@@ -1199,7 +1611,10 @@ class Container:
             # `macro`/`sentiment` tools (issue #21): both public, non-per-user data — same
             # "safe for the unauthenticated chat route" rationale as `quant_tools` above.
             macro_tools = build_macro_tools(use_case=self.get_interpret_macro_event_use_case())
-            sentiment_tools = build_sentiment_tools(use_case=self.get_analyze_sentiment_use_case())
+            sentiment_tools = build_sentiment_tools(
+                use_case=self.get_analyze_sentiment_use_case(),
+                default_locale=self._settings.default_locale,
+            )
             analyst_tools = build_analyst_grounding_tools(
                 news_provider=self.get_news_provider(),
                 generate_signal=self.get_generate_signal_use_case(),
@@ -1259,7 +1674,8 @@ class Container:
                     ),
                 ]
             self._chat_graph = build_supervisor_graph(
-                self._get_chat_model(),
+                self._get_router_chat_model(),
+                self._get_specialist_chat_model(),
                 checkpointer,
                 advisor_tools=advisor_tools,
                 analyst_tools=analyst_tools,

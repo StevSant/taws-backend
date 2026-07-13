@@ -26,6 +26,9 @@ def build_synthesis_node(synthesize_scenario_result: SynthesizeScenarioResult) -
             quant_results=require_state_value(
                 state.get("quant_results"), "synthesis", "quant_results"
             ),
+            agent_contributions=require_state_value(
+                state.get("agent_contributions"), "synthesis", "agent_contributions"
+            ),
             locale=require_state_value(state.get("locale"), "synthesis", "locale"),
         )
         return {"result": result}

@@ -18,6 +18,12 @@ class Signal:
     `analysis_available` is `False` when classification fell back (no LLM key / an
     unparseable response) to an uncertain/zero-confidence call — the frontend uses it to
     label "análisis no disponible" instead of presenting an empty thesis as real analysis.
+
+    `locale` is the language the LLM-authored fields (`thesis`/`key_drivers`/`risk_factors`)
+    were written in. It is part of the freshness cache key (issue #29): `(instrument_symbol,
+    locale)`. Without it a symbol-only cache would happily serve a Spanish thesis to an
+    English request. Defaults to `""` only so the dataclass stays constructible in fixtures;
+    every real producer (`GenerateSignal`) and the row mapper always set it.
     """
 
     id: str
@@ -26,6 +32,7 @@ class Signal:
     confidence: float
     evidence: list[SignalEvidence]
     disclaimer: str
+    locale: str = ""
     thesis: str = ""
     key_drivers: list[str] = field(default_factory=list)
     risk_factors: list[str] = field(default_factory=list)

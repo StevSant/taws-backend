@@ -3,6 +3,7 @@ from functools import partial
 
 from app.domain.scenario.entities import ScenarioMonitor, ScenarioMonitorStatus, ScenarioResult
 from app.domain.scenario.ports import ScenarioRepository
+from app.infrastructure.persistence.extract_stale_row_ids import extract_stale_row_ids
 from app.infrastructure.persistence.scenario_monitor_row_mapper import (
     scenario_monitor_from_row,
     scenario_monitor_to_row,
@@ -71,6 +72,46 @@ class SupabaseScenarioRepository(ScenarioRepository):
             )
         )
         return [scenario_from_row(row) for row in response.data]
+
+    async def get_latest_for_preset(self, preset_id: str, locale: str) -> ScenarioResult | None:
+        """Single newest row for `(preset_id, locale)` — covered by the composite index
+        `scenarios_preset_locale_created_idx` (migration `0015`)."""
+        client = await self._clients.get()
+        response = await self._retry(
+            lambda: (
+                client.table(_SCENARIOS_TABLE)
+                .select("*")
+                .eq("preset_id", preset_id)
+                .eq("locale", locale)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+        )
+        return scenario_from_row(response.data[0]) if response.data else None
+
+    async def prune_for_preset(self, preset_id: str, locale: str, keep: int) -> int:
+        """Delete all but the `keep` newest rows for `(preset_id, locale)`. Same two-hop
+        select-then-delete shape (and rationale) as
+        `SupabaseSignalRepository.prune_for_instrument`."""
+        client = await self._clients.get()
+        response = await self._retry(
+            lambda: (
+                client.table(_SCENARIOS_TABLE)
+                .select("id")
+                .eq("preset_id", preset_id)
+                .eq("locale", locale)
+                .order("created_at", desc=True)
+                .execute()
+            )
+        )
+        stale_ids = extract_stale_row_ids(response.data, keep)
+        if not stale_ids:
+            return 0
+        await self._retry(
+            lambda: client.table(_SCENARIOS_TABLE).delete().in_("id", stale_ids).execute()
+        )
+        return len(stale_ids)
 
     async def arm_monitor(self, monitor: ScenarioMonitor) -> ScenarioMonitor:
         client = await self._clients.get()
