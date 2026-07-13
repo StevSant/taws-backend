@@ -12,6 +12,16 @@ on:
   push:
     branches: [main]
 
+# An App Runner deployment takes ~5 minutes, and the service only accepts StartDeployment while it
+# is RUNNING. Two pushes landing on main inside that window would otherwise deploy concurrently and
+# the second call is rejected outright ("Can't start a deployment ... it isn't in RUNNING state"),
+# which is what has been reddening this workflow. Serialize instead: let the in-flight deploy
+# finish, and if several pushes pile up behind it GitHub keeps only the newest queued run — which
+# is the commit we want live anyway.
+concurrency:
+  group: backend-deploy
+  cancel-in-progress: false
+
 permissions:
   id-token: write
   contents: read
@@ -42,6 +52,40 @@ jobs:
             ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Wait for App Runner service to be RUNNING
+        env:
+          SERVICE_ARN: ${{ vars.APPRUNNER_SERVICE_ARN }}
+        run: |
+          # The concurrency group above stops this workflow racing itself, but the service can still
+          # be busy for reasons outside it: pushing the :latest tag in the previous step can trip
+          # App Runner's own auto-deploy-on-ECR-push, and someone may deploy from the console. Wait
+          # for the service to settle rather than letting StartDeployment fail the whole job.
+          max_attempts=60   # 60 * 10s = ~10 minutes
+          interval=10
+
+          for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+            status=$(aws apprunner describe-service \
+              --service-arn "$SERVICE_ARN" \
+              --query 'Service.Status' --output text)
+
+            echo "Attempt $attempt/$max_attempts: service status=$status"
+
+            case "$status" in
+              RUNNING)
+                exit 0
+                ;;
+              CREATE_FAILED|DELETE_FAILED|DELETED|PAUSED)
+                echo "::error::App Runner service is $status and cannot accept a deployment."
+                exit 1
+                ;;
+            esac
+
+            sleep "$interval"
+          done
+
+          echo "::error::Timed out waiting for the App Runner service to reach RUNNING"
+          exit 1
+
       - name: Start App Runner deployment
         id: start-deployment
         run: |
