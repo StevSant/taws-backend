@@ -54,6 +54,7 @@ from app.api.v1.schemas.open_review_item_response import OpenReviewItemResponse
 from app.api.v1.schemas.realtime_session_response import RealtimeSessionResponse
 from app.api.v1.schemas.realtime_tool_request import RealtimeToolRequest
 from app.api.v1.schemas.realtime_tool_response import RealtimeToolResponse
+from app.api.v1.schemas.refresh_analysis_response import RefreshAnalysisResponse
 from app.api.v1.schemas.register_bot_request import RegisterBotRequest
 from app.api.v1.schemas.register_bot_response import RegisterBotResponse
 from app.api.v1.schemas.review_decision_request import ReviewDecisionRequest
@@ -136,6 +137,7 @@ __all__ = [
     "RealtimeToolRequest",
     "RealtimeToolResponse",
     "ReviewDecisionRequest",
+    "RefreshAnalysisResponse",
     "ReviewStateResponse",
     "ScenarioAssetClassImpactResponse",
     "ScenarioEvidenceResponse",

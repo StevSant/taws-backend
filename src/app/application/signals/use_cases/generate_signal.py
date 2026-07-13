@@ -291,7 +291,9 @@ class GenerateSignal:
                 symbol, locale, self._retention_keep
             )
         except Exception:
-            logger.warning("Signal retention prune failed for %s (%s).", symbol, locale, exc_info=True)
+            logger.warning(
+                "Signal retention prune failed for %s (%s).", symbol, locale, exc_info=True
+            )
             return
         if deleted:
             logger.info("Pruned %d stale signal(s) for %s (%s).", deleted, symbol, locale)

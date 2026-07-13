@@ -10,6 +10,7 @@ from app.domain.signals.ports import SignalRepository
 from app.infrastructure.persistence.build_illegal_review_transition_error import (
     build_illegal_review_transition_error,
 )
+from app.infrastructure.persistence.extract_stale_row_ids import extract_stale_row_ids
 from app.infrastructure.persistence.review_state_row_mapper import (
     review_state_from_row,
     review_state_to_row,
@@ -144,7 +145,7 @@ class SupabaseSignalRepository(SignalRepository):
                 .execute()
             )
         )
-        return [row["id"] for row in response.data[max(keep, 0) :]]
+        return extract_stale_row_ids(response.data, keep)
 
     async def save_review_state(self, review_state: ReviewState) -> ReviewState:
         """Persist a reviewer decision, or raise `IllegalReviewTransitionError`.

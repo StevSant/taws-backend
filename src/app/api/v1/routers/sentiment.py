@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.v1.dependencies import (
     get_analyze_sentiment_use_case,
@@ -15,6 +15,7 @@ from app.api.v1.schemas import (
 from app.application.sentiment.unknown_instrument_error import UnknownInstrumentError
 from app.application.sentiment.use_cases import AnalyzeSentiment
 from app.application.sentiment.use_cases.get_market_pulse import GetMarketPulse
+from app.core.config import Settings, get_settings
 from app.domain.sentiment.ports import FearGreedProvider
 
 router = APIRouter(prefix="/sentiment", tags=["sentiment"])
@@ -56,19 +57,28 @@ async def get_fear_greed_index(
 async def analyze_sentiment(
     symbol: str,
     use_case: Annotated[AnalyzeSentiment, Depends(get_analyze_sentiment_use_case)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    locale: Annotated[str | None, Query()] = None,
 ) -> SentimentReadingResponse:
-    """Trigger the Sentiment Analyst on-demand for one instrument (issue #21): a news-tone
-    score grounded in real recent news, plus the current market-wide Fear & Greed Index
-    reading.
+    """Ensure a fresh sentiment reading exists for one instrument, and return it (issue #21).
 
-    Not user-scoped (no `require_current_user`) — a sentiment reading is research output
-    about an instrument, not per-user data, same visibility model as
-    `POST /api/v1/consequence-chains/generate`. Never persisted. Raises `404` for a symbol
-    outside the curated universe (`UnknownInstrumentError`) — everything else about this
-    pipeline degrades gracefully instead of raising (see `AnalyzeSentiment`'s docstring).
+    A news-tone score grounded in real recent news, plus the current market-wide Fear & Greed
+    Index reading.
+
+    Persisted and freshness-cached since issue #29 (it used to be recomputed on every call and
+    thrown away). A reading still within the instrument's asset-class TTL is served from
+    `sentiment_readings` with no LLM call. `locale` is part of the cache key — the `rationale`
+    is localized, so a Spanish reading must not be served to an English request — and defaults
+    to `Settings.default_locale`.
+
+    Not user-scoped (no `require_current_user`) — a sentiment reading is research output about
+    an instrument, not per-user data, same visibility model as
+    `POST /api/v1/consequence-chains/generate`. Raises `404` for a symbol outside the curated
+    universe (`UnknownInstrumentError`) — everything else about this pipeline degrades
+    gracefully instead of raising (see `AnalyzeSentiment`'s docstring).
     """
     try:
-        reading = await use_case.execute(symbol.upper())
+        reading = await use_case.execute(symbol.upper(), locale or settings.default_locale)
     except UnknownInstrumentError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return SentimentReadingResponse.model_validate(reading)

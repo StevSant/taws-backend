@@ -1,7 +1,7 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import Mapping
 
 from app.domain.market.entities import AssetClass
 
@@ -32,7 +32,9 @@ class FreshnessPolicy:
     def __post_init__(self) -> None:
         # Freeze the injected mapping so a `FreshnessPolicy` handed to several use cases can
         # never be mutated through one of them — `frozen=True` alone wouldn't stop that.
-        object.__setattr__(self, "ttl_by_asset_class", MappingProxyType(dict(self.ttl_by_asset_class)))
+        object.__setattr__(
+            self, "ttl_by_asset_class", MappingProxyType(dict(self.ttl_by_asset_class))
+        )
 
     def ttl_for(self, asset_class: AssetClass | None) -> timedelta:
         """Return the TTL for this asset class, falling back to `default_ttl`."""

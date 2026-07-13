@@ -3,7 +3,6 @@ import logging
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
 
-from app.application.analogs.use_cases import FindHistoricalAnalogs, IndexSignalAnalog
 from app.application.compliance import ComplianceViolationError
 from app.application.signals.insufficient_evidence_error import InsufficientEvidenceError
 from app.application.signals.news_prefilter_policy import NewsPrefilterPolicy
@@ -19,15 +18,11 @@ from app.application.signals.use_cases.compute_news_relevance_score import (
 )
 from app.application.signals.use_cases.generate_signal import GenerateSignal
 from app.application.signals.use_cases.normalize_news_title import normalize_news_title
-from app.domain.agents.ports import LLMProvider
 from app.domain.market.entities import AnalysisStatus, Instrument, NewsItem, NewsSkipReason
 from app.domain.market.ports import (
     InstrumentUniverse,
-    MarketDataProvider,
     NewsItemRepository,
-    NewsProvider,
 )
-from app.domain.signals.ports import SignalRepository
 
 logger = logging.getLogger(__name__)
 
@@ -73,27 +68,22 @@ class AnalyzePendingNews:
         self,
         news_item_repository: NewsItemRepository,
         instrument_universe: InstrumentUniverse,
-        market_data_provider: MarketDataProvider,
-        news_provider: NewsProvider,
-        signal_repository: SignalRepository,
-        llm_provider: LLMProvider,
-        find_historical_analogs: FindHistoricalAnalogs,
-        index_signal_analog: IndexSignalAnalog,
+        generate_signal: GenerateSignal,
         prefilter_policy: NewsPrefilterPolicy,
-        min_distinct_sources: int,
         max_concurrency: int,
         batch_limit: int,
     ) -> None:
         self._news_item_repository = news_item_repository
         self._instrument_universe = instrument_universe
-        self._market_data_provider = market_data_provider
-        self._news_provider = news_provider
-        self._signal_repository = signal_repository
-        self._llm_provider = llm_provider
-        self._find_historical_analogs = find_historical_analogs
-        self._index_signal_analog = index_signal_analog
+        # The `GenerateSignal` pipeline is INJECTED, not rebuilt from its ports here (issue
+        # #29). This class used to hold six collaborators (news/market/signal-repo/LLM + the
+        # analog RAG pair + the source floor) whose only purpose was to re-assemble a
+        # `GenerateSignal` per group. That duplication drifted the moment the pipeline grew a
+        # setting this class didn't know about — exactly what happened when the freshness
+        # policy and retention count landed. One construction site (`Container.
+        # get_generate_signal_use_case`), one set of settings.
+        self._generate_signal = generate_signal
         self._prefilter_policy = prefilter_policy
-        self._min_distinct_sources = min_distinct_sources
         self._batch_limit = batch_limit
         self._semaphore = asyncio.Semaphore(max_concurrency)
 
@@ -180,7 +170,15 @@ class AnalyzePendingNews:
 
         async with self._semaphore:
             try:
-                signal = await self._build_generate_signal().execute(symbol, locale)
+                # `force=True` (issue #29). The freshness cache and this pre-filter are gates on
+                # DIFFERENT axes, and stacking them would be wrong: the pre-filter has already
+                # judged these specific items material enough to be worth a token, and every
+                # item reaching this line survived it. Handing them a signal generated hours ago
+                # — before this news existed — would mark genuinely market-moving articles
+                # `analyzed` against an analysis that never saw them. The cache exists to stop
+                # redundant recomputes triggered by *reads*; it must not silently discard *new
+                # information*.
+                signal = await self._generate_signal.execute(symbol, locale, force=True)
             except InsufficientEvidenceError:
                 logger.info(
                     "AnalyzePendingNews: %s has too few distinct news sources to classify; "
@@ -223,18 +221,6 @@ class AnalyzePendingNews:
         for item in to_classify:
             await self._mark_analyzed(item, signal.id)
         return len(to_classify), skipped, Counter()
-
-    def _build_generate_signal(self) -> GenerateSignal:
-        return GenerateSignal(
-            news_provider=self._news_provider,
-            market_data_provider=self._market_data_provider,
-            instrument_universe=self._instrument_universe,
-            signal_repository=self._signal_repository,
-            llm_provider=self._llm_provider,
-            find_historical_analogs=self._find_historical_analogs,
-            index_signal_analog=self._index_signal_analog,
-            min_distinct_sources=self._min_distinct_sources,
-        )
 
     def _prefilter(
         self, instrument: Instrument, items: list[NewsItem], now: datetime

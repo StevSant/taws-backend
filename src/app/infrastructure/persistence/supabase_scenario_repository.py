@@ -3,6 +3,7 @@ from functools import partial
 
 from app.domain.scenario.entities import ScenarioMonitor, ScenarioMonitorStatus, ScenarioResult
 from app.domain.scenario.ports import ScenarioRepository
+from app.infrastructure.persistence.extract_stale_row_ids import extract_stale_row_ids
 from app.infrastructure.persistence.scenario_monitor_row_mapper import (
     scenario_monitor_from_row,
     scenario_monitor_to_row,
@@ -104,7 +105,7 @@ class SupabaseScenarioRepository(ScenarioRepository):
                 .execute()
             )
         )
-        stale_ids = [row["id"] for row in response.data[max(keep, 0) :]]
+        stale_ids = extract_stale_row_ids(response.data, keep)
         if not stale_ids:
             return 0
         await self._retry(

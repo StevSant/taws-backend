@@ -10,6 +10,7 @@ from app.api.v1.dependencies import (
 from app.api.v1.schemas import InstrumentPageResponse, InstrumentResponse
 from app.application.instruments import InstrumentSortField, SortDirection
 from app.application.instruments.use_cases import ListEnrichedInstruments
+from app.core.config import Settings, get_settings
 from app.domain.market.entities import AssetClass
 from app.domain.market.ports import InstrumentUniverse, MarketDataProvider
 from app.domain.signals.ports import SignalRepository
@@ -44,6 +45,7 @@ async def list_enriched_instruments(
     universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
     market_data_provider: Annotated[MarketDataProvider, Depends(get_market_data_provider)],
     signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
+    settings: Annotated[Settings, Depends(get_settings)],
     asset_class: Annotated[AssetClass | None, Query()] = None,
     search: Annotated[str | None, Query(max_length=_SEARCH_MAX_LEN)] = None,
     sort_by: Annotated[InstrumentSortField, Query()] = InstrumentSortField.NAME,
@@ -51,6 +53,7 @@ async def list_enriched_instruments(
     page: Annotated[int, Query(ge=1)] = _DEFAULT_PAGE,
     page_size: Annotated[int, Query(ge=1, le=_MAX_PAGE_SIZE)] = _DEFAULT_PAGE_SIZE,
     window_days: Annotated[int, Query(ge=2, le=_MAX_WINDOW_DAYS)] = _DEFAULT_WINDOW_DAYS,
+    locale: Annotated[str | None, Query()] = None,
 ) -> InstrumentPageResponse:
     """Paginated/filterable/sortable enriched instruments listing for the markets explorer.
 
@@ -66,6 +69,9 @@ async def list_enriched_instruments(
         signal_repository=signal_repository,
     )
     page_result = await use_case.execute(
+        # `locale` selects which localized signal to show per row (issue #29): signals are
+        # cached per `(symbol, locale)`, so the explorer has to say which language it wants.
+        locale=locale or settings.default_locale,
         asset_class=asset_class,
         search=search,
         sort_by=sort_by,

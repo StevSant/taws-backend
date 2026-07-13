@@ -29,7 +29,11 @@ from app.application.scenario.use_cases import (
 )
 from app.application.sentiment.use_cases import AnalyzeSentiment
 from app.application.signals import NewsPrefilterPolicy
-from app.application.signals.use_cases import AnalyzePendingNews, ForceAnalyzeNewsItem, GenerateSignal
+from app.application.signals.use_cases import (
+    AnalyzePendingNews,
+    ForceAnalyzeNewsItem,
+    GenerateSignal,
+)
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.application.watchdog import AlertedSignalTracker
 from app.application.watchlist.use_cases import ReorderWatchlists
@@ -294,9 +298,7 @@ class Container:
                     AssetClass.CRYPTO: timedelta(
                         minutes=self._settings.analysis_ttl_crypto_minutes
                     ),
-                    AssetClass.STOCK: timedelta(
-                        minutes=self._settings.analysis_ttl_equity_minutes
-                    ),
+                    AssetClass.STOCK: timedelta(minutes=self._settings.analysis_ttl_equity_minutes),
                     AssetClass.FOREX: timedelta(minutes=self._settings.analysis_ttl_fx_minutes),
                 },
                 default_ttl=timedelta(minutes=self._settings.analysis_ttl_default_minutes),
@@ -1247,23 +1249,10 @@ class Container:
         return AnalyzePendingNews(
             news_item_repository=self.get_news_item_repository(),
             instrument_universe=self.get_instrument_universe(),
-            market_data_provider=self.get_market_data_provider(),
-            news_provider=self.get_news_provider(),
-            signal_repository=self.get_signal_repository(),
-            # Reasoning tier (#28): this batch pass fans out `GenerateSignal`-shaped
-            # classifications, so it belongs on the same tier as the single-signal pipeline.
-            llm_provider=self.get_reasoning_llm_provider(),
-            find_historical_analogs=FindHistoricalAnalogs(
-                embedding_provider=self.get_embedding_provider(),
-                vector_store=self.get_vector_store(),
-                top_k=self._settings.historical_analogs_top_k,
-            ),
-            index_signal_analog=IndexSignalAnalog(
-                embedding_provider=self.get_embedding_provider(),
-                vector_store=self.get_vector_store(),
-            ),
+            # Reuses the one `GenerateSignal` construction site (which picks the reasoning tier,
+            # #28) rather than re-assembling the pipeline from its ports.
+            generate_signal=self.get_generate_signal_use_case(),
             prefilter_policy=self.get_news_prefilter_policy(),
-            min_distinct_sources=self._settings.min_distinct_news_sources,
             max_concurrency=self._settings.news_analysis_max_concurrency,
             batch_limit=self._settings.news_analysis_batch_limit,
         )

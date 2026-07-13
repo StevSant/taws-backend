@@ -28,9 +28,7 @@ class SentimentRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_latest_for_instrument(
-        self, symbol: str, locale: str
-    ) -> SentimentReading | None:
+    async def get_latest_for_instrument(self, symbol: str, locale: str) -> SentimentReading | None:
         """Return the newest reading for `(symbol, locale)`, or `None` if there is none.
 
         Single `order by created_at desc limit 1` — the freshness-cache lookup. `locale` is

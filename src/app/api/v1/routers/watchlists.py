@@ -1,9 +1,10 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
 from app.api.v1.dependencies import (
+    get_refresh_tracked_analysis_use_case,
     get_reorder_watchlists_use_case,
     get_watchlist_repository,
     require_current_user,
@@ -17,6 +18,7 @@ from app.api.v1.schemas import (
     WatchlistReorderRequest,
     WatchlistResponse,
 )
+from app.application.analysis.use_cases import RefreshTrackedAnalysis
 from app.application.watchlist.use_cases import ReorderWatchlists
 from app.domain.watchlist.entities import Watchlist
 from app.domain.watchlist.ports import WatchlistRepository
@@ -126,12 +128,31 @@ async def list_watchlist_items(
 async def add_watchlist_item(
     watchlist_id: str,
     payload: WatchlistItemAddRequest,
+    background_tasks: BackgroundTasks,
     user: Annotated[CurrentUser, Depends(require_current_user)],
     repository: Annotated[WatchlistRepository, Depends(get_watchlist_repository)],
+    refresh_analysis: Annotated[
+        RefreshTrackedAnalysis, Depends(get_refresh_tracked_analysis_use_case)
+    ],
 ) -> WatchlistItemResponse:
-    """Add an instrument (by symbol) to a watchlist owned by the authenticated user."""
+    """Add an instrument (by symbol) to a watchlist owned by the authenticated user.
+
+    Seeds that symbol's shared analysis in the background (issue #29). Otherwise a user adding
+    an instrument nobody was tracking yet would see an empty radar/briefing until the next
+    scheduled refresh tick — a cold start that reads as "the product is broken", not "the job
+    hasn't run yet".
+
+    Deliberately a `BackgroundTasks` job, not an awaited call: seeding runs the full LLM
+    pipeline per configured locale, and the user is waiting on a 201 for a row insert. If the
+    seed fails, the scheduled tick will pick the symbol up anyway — `RefreshTrackedAnalysis`
+    isolates and logs per-instrument failures, so a bad seed can never fail this request or
+    crash the worker. It also honors the freshness gate, so re-adding an already-analyzed
+    symbol costs nothing.
+    """
     await _get_owned_watchlist(watchlist_id, user, repository)
-    item = await repository.add_item(watchlist_id, payload.symbol.upper())
+    symbol = payload.symbol.upper()
+    item = await repository.add_item(watchlist_id, symbol)
+    background_tasks.add_task(refresh_analysis.execute, [symbol])
     return WatchlistItemResponse.model_validate(item)
 
 

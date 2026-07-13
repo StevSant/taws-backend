@@ -16,7 +16,11 @@ from app.api.v1.dependencies.get_chat_message_handler import get_chat_message_ha
 from app.api.v1.dependencies.get_conversation_repository import get_conversation_repository
 from app.api.v1.dependencies.get_email_sender import get_email_sender
 from app.api.v1.dependencies.get_embedding_provider import get_embedding_provider
+from app.api.v1.dependencies.get_fast_llm_provider import get_fast_llm_provider
 from app.api.v1.dependencies.get_fear_greed_provider import get_fear_greed_provider
+from app.api.v1.dependencies.get_force_analyze_news_item_use_case import (
+    get_force_analyze_news_item_use_case,
+)
 from app.api.v1.dependencies.get_fundamentals_provider import get_fundamentals_provider
 from app.api.v1.dependencies.get_generate_consequence_chain_use_case import (
     get_generate_consequence_chain_use_case,
@@ -24,6 +28,7 @@ from app.api.v1.dependencies.get_generate_consequence_chain_use_case import (
 from app.api.v1.dependencies.get_generate_conversation_title_use_case import (
     get_generate_conversation_title_use_case,
 )
+from app.api.v1.dependencies.get_generate_signal_use_case import get_generate_signal_use_case
 from app.api.v1.dependencies.get_impact_command_handler import get_impact_command_handler
 from app.api.v1.dependencies.get_instrument_universe import get_instrument_universe
 from app.api.v1.dependencies.get_interpret_macro_event_use_case import (
@@ -32,16 +37,6 @@ from app.api.v1.dependencies.get_interpret_macro_event_use_case import (
 from app.api.v1.dependencies.get_link_telegram_account_use_case import (
     get_link_telegram_account_use_case,
 )
-from app.api.v1.dependencies.get_fast_llm_provider import get_fast_llm_provider
-from app.api.v1.dependencies.get_force_analyze_news_item_use_case import (
-    get_force_analyze_news_item_use_case,
-)
-from app.api.v1.dependencies.get_generate_signal_use_case import get_generate_signal_use_case
-from app.api.v1.dependencies.get_reasoning_llm_provider import get_reasoning_llm_provider
-from app.api.v1.dependencies.get_refresh_tracked_analysis_use_case import (
-    get_refresh_tracked_analysis_use_case,
-)
-from app.api.v1.dependencies.get_sentiment_repository import get_sentiment_repository
 from app.api.v1.dependencies.get_macro_data_provider import get_macro_data_provider
 from app.api.v1.dependencies.get_market_data_provider import get_market_data_provider
 from app.api.v1.dependencies.get_market_pulse_use_case import get_market_pulse_use_case
@@ -57,12 +52,17 @@ from app.api.v1.dependencies.get_process_incoming_event_use_case import (
 from app.api.v1.dependencies.get_realtime_session_provider import (
     get_realtime_session_provider,
 )
+from app.api.v1.dependencies.get_reasoning_llm_provider import get_reasoning_llm_provider
+from app.api.v1.dependencies.get_refresh_tracked_analysis_use_case import (
+    get_refresh_tracked_analysis_use_case,
+)
 from app.api.v1.dependencies.get_render_chart_use_case import get_render_chart_use_case
 from app.api.v1.dependencies.get_reorder_watchlists_use_case import (
     get_reorder_watchlists_use_case,
 )
 from app.api.v1.dependencies.get_scenario_repository import get_scenario_repository
 from app.api.v1.dependencies.get_scenario_simulation_runner import get_scenario_simulation_runner
+from app.api.v1.dependencies.get_sentiment_repository import get_sentiment_repository
 from app.api.v1.dependencies.get_signal_command_handler import get_signal_command_handler
 from app.api.v1.dependencies.get_signal_repository import get_signal_repository
 from app.api.v1.dependencies.get_simulate_command_handler import get_simulate_command_handler

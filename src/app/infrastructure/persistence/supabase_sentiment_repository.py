@@ -2,6 +2,7 @@ from functools import partial
 
 from app.domain.sentiment.entities import SentimentReading
 from app.domain.sentiment.ports import SentimentRepository
+from app.infrastructure.persistence.extract_stale_row_ids import extract_stale_row_ids
 from app.infrastructure.persistence.sentiment_reading_row_mapper import (
     sentiment_reading_from_row,
     sentiment_reading_to_row,
@@ -77,12 +78,10 @@ class SupabaseSentimentRepository(SentimentRepository):
                 .execute()
             )
         )
-        stale_ids = [row["id"] for row in response.data[max(keep, 0) :]]
+        stale_ids = extract_stale_row_ids(response.data, keep)
         if not stale_ids:
             return 0
         await self._retry(
-            lambda: (
-                client.table(_SENTIMENT_READINGS_TABLE).delete().in_("id", stale_ids).execute()
-            )
+            lambda: client.table(_SENTIMENT_READINGS_TABLE).delete().in_("id", stale_ids).execute()
         )
         return len(stale_ids)
