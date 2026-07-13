@@ -38,9 +38,7 @@ def scenario_to_row(result: ScenarioResult) -> dict[str, Any]:
         "impact_map": [_impact_to_row(impact) for impact in result.impact_map],
         "consequence_chain": _consequence_chain_to_row(result.consequence_chain),
         "recommended_actions": result.recommended_actions,
-        "agent_contributions": [
-            _contribution_to_row(item) for item in result.agent_contributions
-        ],
+        "agent_contributions": [_contribution_to_row(item) for item in result.agent_contributions],
         "consensus": _consensus_to_row(result.consensus) if result.consensus else None,
         "disclaimer": result.disclaimer,
         "locale": result.locale,

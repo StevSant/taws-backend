@@ -444,9 +444,7 @@ class Container:
     def get_note_repository(self) -> NoteRepository:
         """Return Supabase notes, with process-local storage for unconfigured development."""
         if self._note_repository is None:
-            supabase_configured = bool(
-                self._settings.supabase_url and self._settings.supabase_key
-            )
+            supabase_configured = bool(self._settings.supabase_url and self._settings.supabase_key)
             if self._settings.app_env == "development" and not supabase_configured:
                 logging.getLogger(__name__).warning(
                     "Supabase notes are not configured; using process-local development storage."

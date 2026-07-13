@@ -63,10 +63,7 @@ class GenerateScenarioAgentContributions:
         grounding = _build_grounding(spec, context, consequence_chain, quant_results)
         return list(
             await asyncio.gather(
-                *(
-                    self._generate(agent_id, grounding, locale)
-                    for agent_id in SCENARIO_SPECIALISTS
-                )
+                *(self._generate(agent_id, grounding, locale) for agent_id in SCENARIO_SPECIALISTS)
             )
         )
 
