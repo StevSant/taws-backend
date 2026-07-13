@@ -7,8 +7,12 @@ from app.application.instruments.instrument_page import InstrumentPage
 from app.application.instruments.instrument_sort_field import InstrumentSortField
 from app.application.instruments.sort_direction import SortDirection
 from app.application.quant.use_cases import ComputeMarketStats
-from app.domain.market.entities import AssetClass, Instrument, PriceCandle
-from app.domain.market.ports import InstrumentUniverse, MarketDataProvider
+from app.domain.market.entities import AssetClass, Instrument, InstrumentMetadata, PriceCandle
+from app.domain.market.ports import (
+    InstrumentMetadataProvider,
+    InstrumentUniverse,
+    MarketDataProvider,
+)
 from app.domain.signals.entities import Signal
 from app.domain.signals.ports import SignalRepository
 
@@ -20,6 +24,10 @@ _HIGHLIGHT_LIMIT = 5
 # Default number of points a sparkline is downsampled to — enough to read a trend without
 # shipping a full daily candle series per row.
 _DEFAULT_SPARKLINE_POINTS = 24
+
+# Fallback when a symbol is absent from the metadata batch result (no CoinGecko
+# mapping, or the whole batch call failed) — every field null, row still present.
+_EMPTY_METADATA = InstrumentMetadata(market_cap=None, volume_24h=None, change_7d_pct=None)
 
 
 class ListEnrichedInstruments:
@@ -42,6 +50,13 @@ class ListEnrichedInstruments:
     explorer never waits on generation. The signal read is now a single indexed
     `order by created_at desc limit 1` per row, rather than pulling every historical signal
     for a symbol over the wire just to `max()` it down to one.
+
+    `instrument_metadata_provider` (instrument-enrichment spec) supplies the additive
+    `market_cap`/`volume_24h`/`change_7d_pct` fields via ONE batch
+    `get_metadata_batch(all_symbols)` call per `execute()` — never one call per
+    instrument, matching the same bounded-fan-out philosophy as the price/signal
+    enrichment above. A symbol absent from the batch result (or the provider failing
+    entirely) still leaves that row fully present with all three fields `None`.
     """
 
     def __init__(
@@ -49,12 +64,14 @@ class ListEnrichedInstruments:
         instrument_universe: InstrumentUniverse,
         market_data_provider: MarketDataProvider,
         signal_repository: SignalRepository,
+        instrument_metadata_provider: InstrumentMetadataProvider,
     ) -> None:
         self._instrument_universe = instrument_universe
         self._market_stats = ComputeMarketStats(
             market_data_provider=market_data_provider, instrument_universe=instrument_universe
         )
         self._signal_repository = signal_repository
+        self._instrument_metadata_provider = instrument_metadata_provider
 
     async def execute(
         self,
@@ -70,9 +87,10 @@ class ListEnrichedInstruments:
         sparkline_points: int = _DEFAULT_SPARKLINE_POINTS,
     ) -> InstrumentPage:
         instruments = self._filter(asset_class, search)
+        metadata_by_symbol = await self._metadata_batch(instruments)
         enriched = await asyncio.gather(
             *(
-                self._enrich(instrument, locale, window_days, sparkline_points)
+                self._enrich(instrument, locale, window_days, sparkline_points, metadata_by_symbol)
                 for instrument in instruments
             )
         )
@@ -104,10 +122,34 @@ class ListEnrichedInstruments:
             if needle in instrument.symbol.casefold() or needle in instrument.name.casefold()
         ]
 
+    async def _metadata_batch(self, instruments: list[Instrument]) -> dict[str, InstrumentMetadata]:
+        """Fetch enrichment metadata for every filtered instrument in ONE batch call.
+
+        A provider failure or an empty result must never break the page: any
+        exception degrades to `{}` here too, so every row still gets the
+        `_EMPTY_METADATA` default in `_enrich` instead of the whole endpoint
+        erroring out (instrument-enrichment spec's "CoinGecko is fully
+        unavailable" scenario).
+        """
+        symbols = [instrument.symbol for instrument in instruments]
+        if not symbols:
+            return {}
+        try:
+            return await self._instrument_metadata_provider.get_metadata_batch(symbols)
+        except Exception:
+            logger.warning("Instrument metadata batch fetch failed; rows omit it.", exc_info=True)
+            return {}
+
     async def _enrich(
-        self, instrument: Instrument, locale: str, window_days: int, sparkline_points: int
+        self,
+        instrument: Instrument,
+        locale: str,
+        window_days: int,
+        sparkline_points: int,
+        metadata_by_symbol: dict[str, InstrumentMetadata],
     ) -> EnrichedInstrument:
         stats = await self._market_stats.execute(instrument.symbol, window_days)
+        metadata = metadata_by_symbol.get(instrument.symbol, _EMPTY_METADATA)
         return EnrichedInstrument(
             symbol=instrument.symbol,
             name=instrument.name,
@@ -119,6 +161,9 @@ class ListEnrichedInstruments:
             volatility_regime=stats.volatility_regime,
             sparkline=_downsample_closes(stats.candles, sparkline_points),
             latest_signal=await self._latest_signal(instrument.symbol, locale),
+            market_cap=metadata.market_cap,
+            volume_24h=metadata.volume_24h,
+            change_7d_pct=metadata.change_7d_pct,
         )
 
     async def _latest_signal(self, symbol: str, locale: str) -> Signal | None:

@@ -8,6 +8,9 @@ from app.infrastructure.persistence.supabase_briefing_repository import (
 from app.infrastructure.persistence.supabase_conversation_repository import (
     SupabaseConversationRepository,
 )
+from app.infrastructure.persistence.supabase_instrument_catalog_repository import (
+    SupabaseInstrumentCatalogRepository,
+)
 from app.infrastructure.persistence.supabase_news_item_repository import (
     SupabaseNewsItemRepository,
 )
@@ -37,6 +40,7 @@ __all__ = [
     "SentimentRange",
     "SupabaseBriefingRepository",
     "SupabaseConversationRepository",
+    "SupabaseInstrumentCatalogRepository",
     "SupabaseNewsItemRepository",
     "SupabaseNoteRepository",
     "SupabaseScenarioRepository",

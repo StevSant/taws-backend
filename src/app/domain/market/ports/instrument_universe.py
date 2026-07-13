@@ -4,11 +4,12 @@ from app.domain.market.entities import AssetClass, Instrument
 
 
 class InstrumentUniverse(ABC):
-    """Port for the curated, config-driven set of instruments the product tracks.
+    """Port for the curated, DB-backed set of instruments the product tracks.
 
-    Adapter: `JsonInstrumentUniverse`, loaded from the packaged `universe.json`
-    seed and cached at load — this port is synchronous since the universe is a
-    small, in-memory, already-loaded set.
+    Adapter: `SupabaseInstrumentUniverse`, loaded once from the global
+    `public.instruments` table via an async `create()` factory (awaited at app
+    startup) and cached as an in-memory index — this port stays synchronous since,
+    once loaded, the universe is a small, already-loaded, in-memory set.
     """
 
     @abstractmethod

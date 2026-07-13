@@ -1,5 +1,6 @@
 from app.infrastructure.news.aggregating_news_provider import AggregatingNewsProvider
 from app.infrastructure.news.dedupe_news_items import dedupe_news_items
+from app.infrastructure.news.extract_rss_summary import extract_rss_summary
 from app.infrastructure.news.finnhub_news_provider import FinnhubNewsProvider
 from app.infrastructure.news.fixture_news_provider import FixtureNewsProvider
 from app.infrastructure.news.link_related_symbols import link_related_symbols
@@ -20,6 +21,7 @@ __all__ = [
     "RssNewsProvider",
     "SecEdgarNewsProvider",
     "dedupe_news_items",
+    "extract_rss_summary",
     "link_related_symbols",
     "map_marketaux_article",
 ]

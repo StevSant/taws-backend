@@ -9,6 +9,7 @@ import feedparser
 from app.domain.market.entities import AssetClass, NewsItem
 from app.domain.market.ports import NewsProvider
 from app.infrastructure.news.extract_rss_image_url import extract_rss_image_url
+from app.infrastructure.news.extract_rss_summary import extract_rss_summary
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ class RssNewsProvider(NewsProvider):
                 NewsItem(
                     id=entry.get("id") or entry.get("link") or "",
                     title=entry.get("title") or "",
-                    summary=entry.get("summary") or "",
+                    summary=extract_rss_summary(entry),
                     url=entry.get("link") or "",
                     source=source_name,
                     provider="rss",

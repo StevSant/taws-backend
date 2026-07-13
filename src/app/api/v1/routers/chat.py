@@ -10,6 +10,8 @@ from pydantic import ValidationError
 from app.api.v1.dependencies import (
     get_agent_runner,
     get_generate_conversation_title_use_case,
+    get_instrument_universe,
+    get_news_item_repository,
     get_realtime_session_provider,
     get_resolve_locale_use_case,
     get_stt_provider,
@@ -47,6 +49,7 @@ from app.domain.agents.ports import (
     STTProvider,
     TTSProvider,
 )
+from app.domain.market.ports import InstrumentUniverse, NewsItemRepository
 from app.infrastructure.realtime import REALTIME_INSTRUCTIONS
 from app.infrastructure.realtime.tools import (
     ToolNotFoundError,
@@ -119,6 +122,8 @@ async def stream_chat(
     payload: ChatRequest,
     user: Annotated[CurrentUser, Depends(require_current_user)],
     agent_runner: Annotated[AgentRunner, Depends(get_agent_runner)],
+    instrument_universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
+    news_item_repository: Annotated[NewsItemRepository, Depends(get_news_item_repository)],
     resolve_locale: Annotated[ResolveLocale, Depends(get_resolve_locale_use_case)],
 ) -> StreamingResponse:
     """Stream an assistant reply over Server-Sent Events (SSE protocol v2).
@@ -131,17 +136,34 @@ async def stream_chat(
     authenticated user (see `require_current_user`); `user.id` is threaded through to
     the agent graph's config for future per-tenant tool access.
 
+    An optional `payload.asset_symbol` or `payload.news_id` (issue #73) is resolved via
+    the injected `InstrumentUniverse` / `NewsItemRepository` ports into a grounding string
+    that anchors the agent's answer on that asset/news; omit both to behave as before.
+
     The reply's language is resolved BEFORE the stream opens (issue #67) — `payload.locale`,
     else the user's stored `preferred_locale`, else `Settings.default_locale` — because once
     `StreamingResponse` starts emitting frames there is no longer a way to fail a profile
     lookup cleanly. `ResolveLocale` swallows its own errors for the same reason.
     """
-    use_case = StreamReply(agent_runner=agent_runner)
+    use_case = StreamReply(
+        agent_runner=agent_runner,
+        instrument_universe=instrument_universe,
+        news_item_repository=news_item_repository,
+    )
     thread_id = payload.thread_id or _DEFAULT_THREAD_ID
     message = Message(role=MessageRole.USER, content=payload.message)
     locale = await resolve_locale.execute(user_id=user.id, requested_locale=payload.locale)
 
-    event_stream = use_case.execute(thread_id, message, user.id, locale)
+    event_stream = use_case.execute(
+        thread_id,
+        message,
+        user.id,
+        locale,
+        asset_symbol=payload.asset_symbol,
+        news_id=payload.news_id,
+        from_date=payload.from_date,
+        to_date=payload.to_date,
+    )
     return StreamingResponse(_to_sse(event_stream), media_type="text/event-stream")
 
 
