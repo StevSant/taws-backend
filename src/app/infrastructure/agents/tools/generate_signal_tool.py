@@ -64,8 +64,7 @@ def _format_signal(signal: Signal) -> str:
     lines.extend(
         (
             f"  - [{item.published_at.isoformat()}] {item.source}: "
-            f"{item.detail or 'Supporting evidence'}"
-            + (f" — {item.url}" if item.url else "")
+            f"{item.detail or 'Supporting evidence'}" + (f" — {item.url}" if item.url else "")
         )
         for item in signal.evidence
     )

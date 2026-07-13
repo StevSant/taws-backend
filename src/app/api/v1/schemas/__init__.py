@@ -37,6 +37,7 @@ from app.api.v1.schemas.instrument_page_response import InstrumentPageResponse
 from app.api.v1.schemas.instrument_response import InstrumentResponse
 from app.api.v1.schemas.instrument_search_response import InstrumentSearchResponse
 from app.api.v1.schemas.interpret_macro_event_request import InterpretMacroEventRequest
+from app.api.v1.schemas.linked_signal_response import LinkedSignalResponse
 from app.api.v1.schemas.macro_asset_class_impact_response import MacroAssetClassImpactResponse
 from app.api.v1.schemas.macro_event_interpretation_response import (
     MacroEventInterpretationResponse,
@@ -83,6 +84,7 @@ from app.api.v1.schemas.watchlist_create_request import WatchlistCreateRequest
 from app.api.v1.schemas.watchlist_item_add_request import WatchlistItemAddRequest
 from app.api.v1.schemas.watchlist_item_response import WatchlistItemResponse
 from app.api.v1.schemas.watchlist_rename_request import WatchlistRenameRequest
+from app.api.v1.schemas.watchlist_reorder_request import WatchlistReorderRequest
 from app.api.v1.schemas.watchlist_response import WatchlistResponse
 
 __all__ = [
@@ -126,6 +128,7 @@ __all__ = [
     "InstrumentResponse",
     "InstrumentSearchResponse",
     "InterpretMacroEventRequest",
+    "LinkedSignalResponse",
     "MacroAssetClassImpactResponse",
     "MacroEventInterpretationResponse",
     "MacroObservationResponse",
@@ -165,5 +168,6 @@ __all__ = [
     "WatchlistItemAddRequest",
     "WatchlistItemResponse",
     "WatchlistRenameRequest",
+    "WatchlistReorderRequest",
     "WatchlistResponse",
 ]

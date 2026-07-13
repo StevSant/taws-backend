@@ -1,4 +1,3 @@
-
 from app.domain.telegram.entities import UserBot
 from app.domain.telegram.ports import UserBotRepository
 from app.infrastructure.persistence.supabase_client_cache import SupabaseClientCache
@@ -27,6 +26,16 @@ class SupabaseUserBotRepository(UserBotRepository):
         response = await client.table(_TABLE).select("*").eq("id", bot_id).execute()
         return user_bot_from_row(response.data[0]) if response.data else None
 
+    async def get_by_chat_id(self, chat_id: str) -> list[UserBot]:
+        client = await self._clients.get()
+        response = await client.table(_TABLE).select("*").eq("chat_id", chat_id).execute()
+        return [user_bot_from_row(row) for row in response.data]
+
+    async def get_all(self) -> list[UserBot]:
+        client = await self._clients.get()
+        response = await client.table(_TABLE).select("*").execute()
+        return [user_bot_from_row(row) for row in response.data]
+
     async def save(self, bot: UserBot) -> UserBot:
         client = await self._clients.get()
         row = {
@@ -35,7 +44,10 @@ class SupabaseUserBotRepository(UserBotRepository):
             "bot_username": bot.bot_username,
             "chat_id": bot.chat_id,
         }
-        response = await client.table(_TABLE).insert(row).execute()
+        # Upsert on user_id (the table's unique constraint) -- re-registering (e.g.
+        # linking a different bot, or retrying) must replace the existing row instead
+        # of raising a 23505 duplicate-key error.
+        response = await client.table(_TABLE).upsert(row, on_conflict="user_id").execute()
         return user_bot_from_row(response.data[0])
 
     async def delete(self, user_id: str) -> None:

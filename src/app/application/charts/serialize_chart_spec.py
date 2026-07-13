@@ -34,6 +34,8 @@ def serialize_chart_spec(spec: ChartSpec) -> dict[str, Any]:
                 "kind": spec.meta.request.kind.value,
                 "symbols": list(spec.meta.request.symbols),
                 "timeframe": spec.meta.request.timeframe,
+                "fromDate": spec.meta.request.from_date,
+                "toDate": spec.meta.request.to_date,
             },
         },
     }

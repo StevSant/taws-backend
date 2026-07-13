@@ -31,13 +31,22 @@ class RenderChart:
         self._build_sentiment_gauge = build_sentiment_gauge
 
     async def execute(
-        self, kind: ChartRequestKind, symbols: list[str], timeframe: str
+        self,
+        kind: ChartRequestKind,
+        symbols: list[str],
+        timeframe: str,
+        from_date: str | None = None,
+        to_date: str | None = None,
     ) -> ChartSpec:
         first = symbols[0] if symbols else ""
         if kind is ChartRequestKind.PRICE_CANDLESTICK:
-            return await self._build_price_chart.execute(first, timeframe, ChartType.CANDLESTICK)
+            return await self._build_price_chart.execute(
+                first, timeframe, ChartType.CANDLESTICK, from_date, to_date
+            )
         if kind is ChartRequestKind.PRICE_LINE:
-            return await self._build_price_chart.execute(first, timeframe, ChartType.LINE)
+            return await self._build_price_chart.execute(
+                first, timeframe, ChartType.LINE, from_date, to_date
+            )
         if kind is ChartRequestKind.COMPARISON:
             return await self._build_comparison_chart.execute(symbols, timeframe)
         if kind is ChartRequestKind.DRAWDOWN:

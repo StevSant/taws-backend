@@ -4,7 +4,9 @@ from typing import Any
 import httpx
 
 from app.domain.sentiment.entities import FearGreedReading
-from app.infrastructure.sentiment.parse_fear_greed_classification import parse_fear_greed_classification
+from app.infrastructure.sentiment.parse_fear_greed_classification import (
+    parse_fear_greed_classification,
+)
 
 CNN_FEAR_GREED_URL = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
 CNN_USER_AGENT = (

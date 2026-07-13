@@ -10,6 +10,7 @@ from app.infrastructure.sentiment.routing_fear_greed_provider import RoutingFear
 
 __all__ = [
     "AlternativeMeFearGreedProvider",
+    "CnnFearGreedProvider",
     "FixtureFearGreedProvider",
     "RoutingFearGreedProvider",
     "parse_fear_greed_classification",

@@ -56,6 +56,9 @@ class _FakeWatchlistRepository(WatchlistRepository):
     async def remove_item(self, watchlist_id: str, item_id: str) -> None:
         raise NotImplementedError
 
+    async def reorder(self, user_id: str, ordered_ids: list[str]) -> None:
+        raise NotImplementedError
+
 
 _SEED_ROW = InstrumentRow(
     symbol="BTC",

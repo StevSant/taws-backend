@@ -16,8 +16,8 @@ See:
     docs/specs/2026-07-11-taws-hackathon-architecture-design.md
     openspec/changes/instruments-catalog/design.md
 
-Revision ID: 0012
-Revises: 0011b
+Revision ID: 0015
+Revises: 0014
 Create Date: 2026-07-12
 
 """
@@ -26,8 +26,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0012"
-down_revision: str | None = "0011b"
+revision: str = "0015"
+down_revision: str | None = "0014"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

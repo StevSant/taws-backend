@@ -5,9 +5,7 @@ from app.api.v1.schemas import CurrentUser
 from app.core.config import Settings
 
 
-def decode_unverified_identity(
-    authorization: str, settings: Settings
-) -> CurrentUser | None:
+def decode_unverified_identity(authorization: str, settings: Settings) -> CurrentUser | None:
     """Read the identity from an `Authorization: Bearer <token>` WITHOUT verifying it.
 
     DANGER — dev fallback ONLY. This decodes the JWT with signature verification DISABLED,
@@ -23,9 +21,7 @@ def decode_unverified_identity(
     """
     token = authorization.removeprefix("Bearer ").strip()
     try:
-        payload = jwt.decode(
-            token, options={"verify_signature": False, "verify_aud": False}
-        )
+        payload = jwt.decode(token, options={"verify_signature": False, "verify_aud": False})
     except jwt.PyJWTError:
         return None
 

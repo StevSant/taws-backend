@@ -11,9 +11,7 @@ from app.domain.notes.ports import NoteRepository
 router = APIRouter(prefix="/notes", tags=["notes"])
 
 
-async def _get_owned_note(
-    note_id: str, user: CurrentUser, repository: NoteRepository
-) -> Note:
+async def _get_owned_note(note_id: str, user: CurrentUser, repository: NoteRepository) -> Note:
     """Return the note if it exists and belongs to `user`, else raise 404.
 
     404 (not 403) even when the note exists but belongs to someone else, so this endpoint

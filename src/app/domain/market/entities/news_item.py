@@ -3,6 +3,7 @@ from datetime import datetime
 
 from app.domain.market.entities.analysis_status import AnalysisStatus
 from app.domain.market.entities.news_entity import NewsEntity
+from app.domain.market.entities.news_skip_reason import NewsSkipReason
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +27,12 @@ class NewsItem:
     adapter constructs items as `pending` (the default) — persistence
     (`NewsItemRepository`/`IngestNews`) is what backfills these to `analyzed`/`skipped`
     and keeps them stable across requests.
+
+    `skip_reason` (issue #26) explains *why* an item produced no signal — the status alone
+    can't distinguish a deliberate cost-saving gate from a duplicate, an unlinkable article,
+    or an evidence shortfall. `None` on an `analyzed` item and on a `pending` one nothing has
+    looked at yet; set by `AnalyzePendingNews`/`ForceAnalyzeNewsItem` on every other outcome.
+    See `NewsSkipReason` for how each reason pairs with `analysis_status`.
     """
 
     id: str
@@ -41,3 +48,4 @@ class NewsItem:
     analysis_status: AnalysisStatus = AnalysisStatus.PENDING
     signal_id: str | None = None
     image_url: str | None = None
+    skip_reason: NewsSkipReason | None = None

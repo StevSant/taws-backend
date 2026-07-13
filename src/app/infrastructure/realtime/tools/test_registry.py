@@ -15,7 +15,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.domain.market.entities import AssetClass, Instrument, PriceCandle, PriceSeries
+from app.domain.notes.entities import Note
 from app.domain.signals.entities import ImpactClass, Signal
+from app.domain.watchlist.entities import Watchlist, WatchlistItem
 from app.infrastructure.realtime.tools import (
     ToolNotFoundError,
     build_realtime_tool_schemas,
@@ -44,7 +46,19 @@ def test_schemas_use_flat_function_shape() -> None:
     schemas = build_realtime_tool_schemas()
 
     names = {s["name"] for s in schemas}
-    assert names == {"get_market_data", "get_news", "list_signals", "generate_signal"}
+    assert names == {
+        "generate_signal",
+        "get_notes",
+        "get_news",
+        "get_watchlist",
+        "list_signals",
+        "render_comparison_chart",
+        "render_distribution_chart",
+        "render_drawdown_chart",
+        "render_macro_chart",
+        "render_price_chart",
+        "render_sentiment_gauge",
+    }
     for schema in schemas:
         # Flat shape the Realtime session mint expects — NOT nested under "function".
         assert schema["type"] == "function"
@@ -52,6 +66,19 @@ def test_schemas_use_flat_function_shape() -> None:
         assert isinstance(schema["name"], str)
         assert isinstance(schema["description"], str)
         assert schema["parameters"]["type"] == "object"
+
+
+def test_chart_schemas_are_omitted_when_disabled() -> None:
+    names = {schema["name"] for schema in build_realtime_tool_schemas(charts_enabled=False)}
+
+    assert names == {
+        "generate_signal",
+        "get_market_data",
+        "get_news",
+        "get_notes",
+        "get_watchlist",
+        "list_signals",
+    }
 
 
 # --- allowlist + arg validation (security first) -----------------------------------
@@ -83,6 +110,19 @@ def test_malformed_args_rejected_out_of_range() -> None:
         validate_tool_args("get_market_data", {"symbol": "AAPL", "days": 9999})
 
 
+def test_chart_args_reject_extra_fields() -> None:
+    with pytest.raises(ValidationError):
+        validate_tool_args(
+            "render_price_chart",
+            {"instrument_symbol": "AAPL", "chart_type": "line", "evil": True},
+        )
+
+
+def test_comparison_chart_requires_at_least_two_symbols() -> None:
+    with pytest.raises(ValidationError):
+        validate_tool_args("render_comparison_chart", {"instrument_symbols": ["AAPL"]})
+
+
 # --- dispatch delegates to the real ports with the JWT user_id ---------------------
 
 
@@ -105,9 +145,7 @@ async def test_get_market_data_dispatches_to_provider() -> None:
     )
     universe = Mock()
     universe.by_symbol = Mock(return_value=_INSTRUMENT)
-    container = _fake_container(
-        get_instrument_universe=universe, get_market_data_provider=provider
-    )
+    container = _fake_container(get_instrument_universe=universe, get_market_data_provider=provider)
 
     output = await dispatch_realtime_tool(
         container, "get_market_data", {"symbol": "aapl"}, "user-1"
@@ -157,9 +195,7 @@ async def test_list_signals_dispatches_to_repository() -> None:
     repo.list_for_instrument = AsyncMock(return_value=[signal])
     container = _fake_container(get_signal_repository=repo)
 
-    output = await dispatch_realtime_tool(
-        container, "list_signals", {"symbol": "aapl"}, "user-1"
-    )
+    output = await dispatch_realtime_tool(container, "list_signals", {"symbol": "aapl"}, "user-1")
 
     repo.list_for_instrument.assert_awaited_once_with("AAPL")
     assert output["count"] == 1
@@ -193,3 +229,170 @@ async def test_generate_signal_valid_dispatch() -> None:
     use_case.execute.assert_awaited_once_with("AAPL", "en")
     assert output["id"] == "sig-3"
     assert output["impact_class"] == "neutral"
+
+
+# --- user-scoped tools: scope by JWT user_id, never a model-supplied id -------------
+
+
+async def test_get_watchlist_dispatches_with_jwt_user_id() -> None:
+    watchlist = Watchlist(id="wl-1", user_id="jwt-user-7", name="Tech")
+    repo = Mock()
+    repo.list_for_user = AsyncMock(return_value=[watchlist])
+    repo.list_items = AsyncMock(
+        return_value=[WatchlistItem(id="it-1", watchlist_id="wl-1", symbol="AAPL")]
+    )
+    container = _fake_container(get_watchlist_repository=repo)
+
+    output = await dispatch_realtime_tool(container, "get_watchlist", {}, "jwt-user-7")
+
+    repo.list_for_user.assert_awaited_once_with("jwt-user-7")
+    repo.list_items.assert_awaited_once_with("wl-1")
+    assert output["count"] == 1
+    assert output["watchlists"][0]["name"] == "Tech"
+    assert output["watchlists"][0]["symbols"] == ["AAPL"]
+
+
+async def test_get_watchlist_ignores_user_id_in_arguments() -> None:
+    """A `user_id` smuggled into arguments must be rejected (extra=forbid), never used."""
+    with pytest.raises(ValidationError):
+        validate_tool_args("get_watchlist", {"user_id": "attacker"})
+
+
+async def test_get_notes_dispatches_with_jwt_user_id() -> None:
+    note = Note(id="n-1", user_id="jwt-user-8", body="Watch the Fed.")
+    repo = Mock()
+    repo.list_for_user = AsyncMock(return_value=[note])
+    container = _fake_container(get_note_repository=repo)
+
+    output = await dispatch_realtime_tool(container, "get_notes", {}, "jwt-user-8")
+
+    repo.list_for_user.assert_awaited_once_with("jwt-user-8")
+    assert output["count"] == 1
+    assert output["notes"][0]["body"] == "Watch the Fed."
+    assert output["notes"][0]["id"] == "n-1"
+
+
+async def test_get_notes_ignores_user_id_in_arguments() -> None:
+    with pytest.raises(ValidationError):
+        validate_tool_args("get_notes", {"user_id": "attacker"})
+
+
+def _chart_spec(
+    *, symbol: str = "AAPL", timeframe: str = "1y", series_names: list[str] | None = None
+) -> Any:
+    request = SimpleNamespace(
+        kind=SimpleNamespace(value="price_line"),
+        symbols=[symbol],
+        timeframe=timeframe,
+        from_date=None,
+        to_date=None,
+    )
+    meta = SimpleNamespace(
+        title=f"{symbol} chart",
+        subtitle=None,
+        source="test",
+        symbol=symbol,
+        timeframe=timeframe,
+        timeframes=["1m", "1y"],
+        request=request,
+    )
+    axis = SimpleNamespace(label="Value", type="value", format="number")
+    series = [SimpleNamespace(name=name, points=[], bars=[]) for name in (series_names or [symbol])]
+    return SimpleNamespace(
+        type=SimpleNamespace(value="line"),
+        series=series,
+        x_axis=axis,
+        y_axis=axis,
+        meta=meta,
+    )
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "accessor", "arguments", "expected_call", "spec"),
+    [
+        (
+            "render_comparison_chart",
+            "get_build_comparison_chart_use_case",
+            {"instrument_symbols": ["aapl", "btc"], "timeframe": "6m"},
+            (["AAPL", "BTC"], "6m"),
+            _chart_spec(series_names=["AAPL", "BTC"], timeframe="6m"),
+        ),
+        (
+            "render_macro_chart",
+            "get_build_macro_chart_use_case",
+            {"series_key": "vix", "timeframe": "1m"},
+            ("vix", "1m"),
+            _chart_spec(symbol="VIX", timeframe="1m"),
+        ),
+        (
+            "render_drawdown_chart",
+            "get_build_drawdown_chart_use_case",
+            {"instrument_symbol": "aapl", "timeframe": "1y"},
+            ("AAPL", "1y"),
+            _chart_spec(),
+        ),
+        (
+            "render_distribution_chart",
+            "get_build_distribution_chart_use_case",
+            {"instrument_symbol": "btc", "timeframe": "3m"},
+            ("BTC", "3m"),
+            _chart_spec(symbol="BTC", timeframe="3m"),
+        ),
+        (
+            "render_sentiment_gauge",
+            "get_build_sentiment_gauge_use_case",
+            {},
+            (),
+            _chart_spec(symbol="FEAR_GREED", timeframe=""),
+        ),
+    ],
+)
+async def test_chart_tools_return_summary_and_serialized_chart(
+    tool_name: str,
+    accessor: str,
+    arguments: dict[str, Any],
+    expected_call: tuple[Any, ...],
+    spec: Any,
+) -> None:
+    use_case = Mock()
+    use_case.execute = AsyncMock(return_value=spec)
+    container = _fake_container(**{accessor: use_case})
+
+    output = await dispatch_realtime_tool(container, tool_name, arguments, "user-1")
+
+    use_case.execute.assert_awaited_once_with(*expected_call)
+    assert isinstance(output["summary"], str)
+    assert output["chart"]["meta"]["title"] == spec.meta.title
+    assert output["chart"]["type"] == "line"
+
+
+async def test_price_chart_dispatches_chart_type_and_returns_chart() -> None:
+    use_case = Mock()
+    use_case.execute = AsyncMock(return_value=_chart_spec())
+    container = _fake_container(get_build_price_chart_use_case=use_case)
+
+    output = await dispatch_realtime_tool(
+        container,
+        "render_price_chart",
+        {"instrument_symbol": "aapl", "timeframe": "1y", "chart_type": "line"},
+        "user-1",
+    )
+
+    call = use_case.execute.await_args.args
+    assert call[:2] == ("AAPL", "1y")
+    assert call[2].value == "line"
+    assert set(output) == {"summary", "chart"}
+
+
+async def test_chart_handler_rejects_dispatch_when_charts_disabled() -> None:
+    use_case = Mock()
+    use_case.execute = AsyncMock(return_value=_chart_spec())
+    container = _fake_container(get_build_price_chart_use_case=use_case)
+    container._settings.charts_enabled = False
+
+    with pytest.raises(RuntimeError, match="disabled"):
+        await dispatch_realtime_tool(
+            container, "render_price_chart", {"instrument_symbol": "AAPL"}, "user-1"
+        )
+
+    use_case.execute.assert_not_awaited()

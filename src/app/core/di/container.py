@@ -27,9 +27,11 @@ from app.application.scenario.use_cases import (
     SynthesizeScenarioResult,
 )
 from app.application.sentiment.use_cases import AnalyzeSentiment
+from app.application.signals import NewsPrefilterPolicy
 from app.application.signals.use_cases import GenerateSignal
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.application.watchdog import AlertedSignalTracker
+from app.application.watchlist.use_cases import ReorderWatchlists
 from app.core.config import Settings, get_settings
 from app.domain.agents.ports import (
     AgentMemory,
@@ -127,7 +129,7 @@ from app.infrastructure.news import (
 )
 from app.infrastructure.notification import (
     LoggingEmailSender,
-    LoggingNotificationChannel,
+    MultiBotNotificationChannel,
     TelegramNotificationChannel,
 )
 from app.infrastructure.persistence import (
@@ -189,6 +191,7 @@ class Container:
         self._agent_memory: AgentMemory | None = None
         self._conversation_repository: ConversationRepository | None = None
         self._watchlist_repository: WatchlistRepository | None = None
+        self._reorder_watchlists_use_case: ReorderWatchlists | None = None
         self._note_repository: NoteRepository | None = None
         self._signal_repository: SignalRepository | None = None
         self._briefing_repository: BriefingRepository | None = None
@@ -333,6 +336,19 @@ class Container:
             )
         return self._watchlist_repository
 
+    def get_reorder_watchlists_use_case(self) -> ReorderWatchlists:
+        """Return the cached `ReorderWatchlists` use case (issue #66).
+
+        Backs `PATCH /api/v1/watchlists/reorder`. Only depends on the watchlist
+        repository, so caching one instance is safe — same shape as the other
+        single-port use cases wired here.
+        """
+        if self._reorder_watchlists_use_case is None:
+            self._reorder_watchlists_use_case = ReorderWatchlists(
+                watchlist_repository=self.get_watchlist_repository()
+            )
+        return self._reorder_watchlists_use_case
+
     def get_note_repository(self) -> NoteRepository:
         """Return the cached per-user NoteRepository (issue #62), Supabase-backed with the
         same retry/config wiring as the other per-user repositories."""
@@ -402,8 +418,8 @@ class Container:
         """Return the cached Watchdog alert delivery channel.
 
         `TelegramNotificationChannel` when `TELEGRAM_BOT_TOKEN` is configured (issue #14);
-        `LoggingNotificationChannel` (no-op/logging stand-in) otherwise — same
-        "graceful degradation when unconfigured" pattern as `get_agent_memory`'s Redis
+        `MultiBotNotificationChannel` (fans out to all registered user bots) otherwise —
+        same "graceful degradation when unconfigured" pattern as `get_agent_memory`'s Redis
         fallback and `get_news_provider`'s per-key-gated fan-out. Nothing in
         `application/` or `api/` needs to know which adapter is behind the port.
         """
@@ -416,7 +432,11 @@ class Container:
                     telegram_link_repository=self.get_telegram_link_repository(),
                 )
             else:
-                self._notification_channel = LoggingNotificationChannel()
+                self._notification_channel = MultiBotNotificationChannel(
+                    user_bot_repository=self.get_user_bot_repository(),
+                    watchlist_repository=self.get_watchlist_repository(),
+                    telegram_link_repository=self.get_telegram_link_repository(),
+                )
         return self._notification_channel
 
     def get_alerted_signal_tracker(self) -> AlertedSignalTracker:
@@ -493,6 +513,7 @@ class Container:
             self._bot_registration = TelegramBotRegistration(
                 repository=self.get_user_bot_repository(),
                 webhook_base_url=self._settings.telegram_webhook_url or "",
+                webhook_secret=self._settings.telegram_webhook_secret,
             )
         return self._bot_registration
 
@@ -609,6 +630,10 @@ class Container:
                         api_key=self._settings.newsapi_api_key,
                         base_url=self._settings.newsapi_base_url,
                         default_query=self._settings.newsapi_default_query,
+                        cooldown_seconds=self._settings.newsapi_cooldown_minutes * 60,
+                        rate_limit_cooldown_seconds=(
+                            self._settings.newsapi_rate_limit_cooldown_minutes * 60
+                        ),
                     )
                 )
             if self._settings.finnhub_api_key:
@@ -726,6 +751,32 @@ class Container:
                 watchlist_repository=self.get_watchlist_repository(),
             )
         return self._register_instrument_use_case
+
+    def get_news_prefilter_policy(self) -> NewsPrefilterPolicy:
+        """Return the Analyst pre-filter's gate tuning (issue #26), assembled from `Settings`.
+
+        The single place these `news_*` settings are read. Both callers of
+        `AnalyzePendingNews` — `POST /api/v1/news/analyze-pending` and the scheduled tick —
+        resolve the policy from here, so an operator retuning the gate can't end up with the
+        endpoint and the background job disagreeing about what gets classified.
+        """
+        settings = self._settings
+        return NewsPrefilterPolicy(
+            skip_threshold=settings.news_relevance_skip_threshold,
+            relevance_weight=settings.news_prefilter_relevance_weight,
+            materiality_weight=settings.news_prefilter_materiality_weight,
+            name_match_score=settings.news_relevance_name_match_score,
+            materiality_keywords=tuple(settings.news_materiality_keywords),
+            materiality_high_impact_sources=tuple(settings.news_materiality_high_impact_sources),
+            materiality_keyword_weight=settings.news_materiality_keyword_weight,
+            materiality_source_weight=settings.news_materiality_source_weight,
+            materiality_sentiment_weight=settings.news_materiality_sentiment_weight,
+            materiality_recency_weight=settings.news_materiality_recency_weight,
+            materiality_recency_half_life_hours=(settings.news_materiality_recency_half_life_hours),
+            materiality_keyword_saturation_count=(
+                settings.news_materiality_keyword_saturation_count
+            ),
+        )
 
     def get_market_data_provider(self) -> MarketDataProvider:
         """Return the routing MarketDataProvider (CoinGecko/yfinance + fixture fallback).

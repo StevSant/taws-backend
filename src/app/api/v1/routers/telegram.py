@@ -29,6 +29,7 @@ from app.api.v1.schemas import (
 )
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.core.config import Settings, get_settings
+from app.core.di import Container, get_container
 from app.domain.telegram.entities import TelegramLinkToken
 from app.domain.telegram.ports import (
     BotRegistrationPort,
@@ -157,12 +158,8 @@ async def telegram_webhook(
     simulate_handler: Annotated[
         SimulateCommandHandler | None, Depends(get_simulate_command_handler)
     ],
-    impact_handler: Annotated[
-        ImpactCommandHandler | None, Depends(get_impact_command_handler)
-    ],
-    chat_handler: Annotated[
-        ChatMessageHandler | None, Depends(get_chat_message_handler)
-    ],
+    impact_handler: Annotated[ImpactCommandHandler | None, Depends(get_impact_command_handler)],
+    chat_handler: Annotated[ChatMessageHandler | None, Depends(get_chat_message_handler)],
     messenger: Annotated[TelegramMessenger | None, Depends(get_telegram_messenger)],
 ) -> dict[str, bool]:
     """Telegram webhook endpoint: Telegram POSTs every `Update` here once `setWebhook` is
@@ -250,6 +247,7 @@ async def telegram_webhook_for_bot(
     request: Request,
     background_tasks: BackgroundTasks,
     bot_repository: Annotated[UserBotRepository, Depends(get_user_bot_repository)],
+    container: Annotated[Container, Depends(get_container)],
     briefing_handler: Annotated[
         BriefingCommandHandler | None, Depends(get_briefing_command_handler)
     ],
@@ -257,12 +255,8 @@ async def telegram_webhook_for_bot(
     simulate_handler: Annotated[
         SimulateCommandHandler | None, Depends(get_simulate_command_handler)
     ],
-    impact_handler: Annotated[
-        ImpactCommandHandler | None, Depends(get_impact_command_handler)
-    ],
-    chat_handler: Annotated[
-        ChatMessageHandler | None, Depends(get_chat_message_handler)
-    ],
+    impact_handler: Annotated[ImpactCommandHandler | None, Depends(get_impact_command_handler)],
+    chat_handler: Annotated[ChatMessageHandler | None, Depends(get_chat_message_handler)],
 ) -> dict[str, bool]:
     """Webhook endpoint for a user-registered Telegram bot.
 
@@ -306,8 +300,11 @@ async def telegram_webhook_for_bot(
                     await impact_handler.handle(command)
                 return {"ok": True}
             case ChatMessage():
-                if chat_handler is not None:
-                    await chat_handler.handle(command)
+                handler = chat_handler or ChatMessageHandler(
+                    agent_runner=container.get_agent_runner(),
+                    messenger=messenger,
+                )
+                await handler.handle(command)
                 return {"ok": True}
             case UnknownCommand():
                 await messenger.send_text(command.chat_id, format_unknown_command_reply())

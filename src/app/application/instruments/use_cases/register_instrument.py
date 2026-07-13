@@ -8,6 +8,7 @@ from app.domain.market.ports import (
     InstrumentUniverse,
     MutableInstrumentUniverse,
 )
+from app.domain.watchlist.errors import DuplicateWatchlistItemError
 from app.domain.watchlist.ports import WatchlistRepository
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,11 @@ class RegisterInstrument:
     async def _add_to_watchlist(self, watchlist_id: str, symbol: str) -> bool:
         try:
             await self._watchlist_repository.add_item(watchlist_id, symbol)
+        except DuplicateWatchlistItemError:
+            # Re-registering a coin already in the caller's watchlist is an idempotent
+            # no-op success (spec SC4): the desired end state (symbol tracked) already
+            # holds, so it counts as watchlisted — not a 502 failure.
+            return True
         except Exception:
             logger.warning(
                 "Watchlist add failed after catalog upsert for %s; instrument is "

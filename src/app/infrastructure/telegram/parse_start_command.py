@@ -30,5 +30,5 @@ def parse_start_command(update_payload: dict[str, Any]) -> StartCommand | None:
     if not isinstance(chat, dict) or "id" not in chat:
         return None
 
-    token = text.strip()[len("/start"):].strip()
+    token = text.strip()[len("/start") :].strip()
     return StartCommand(chat_id=str(chat["id"]), token=token)

@@ -4,8 +4,7 @@ _MESSAGES: dict[str, str] = {
         "Volvé a intentarlo en unos minutos."
     ),
     "en": (
-        "We couldn't generate the scenario analysis right now. "
-        "Please try again in a few minutes."
+        "We couldn't generate the scenario analysis right now. Please try again in a few minutes."
     ),
 }
 _DEFAULT_LOCALE = "en"

@@ -5,7 +5,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.middleware import RequestIDMiddleware, unhandled_exception_handler
+from app.api.middleware import (
+    RequestIDMiddleware,
+    duplicate_watchlist_item_handler,
+    invalid_watchlist_identifier_handler,
+    unhandled_exception_handler,
+)
 from app.api.v1.dependencies import dev_fallback_allowed
 from app.api.v1.routers import (
     briefing_export_router,
@@ -21,6 +26,7 @@ from app.api.v1.routers import (
     news_router,
     notes_router,
     quant_router,
+    realtime_ws_router,
     reviews_router,
     scenarios_router,
     sentiment_router,
@@ -32,8 +38,11 @@ from app.api.v1.routers import (
 from app.core.config import Settings, get_settings
 from app.core.di import get_container
 from app.core.logging import configure_logging
+from app.domain.watchlist.errors import (
+    DuplicateWatchlistItemError,
+    InvalidWatchlistIdentifierError,
+)
 from app.infrastructure.scheduling import build_watchdog_scheduler
-from app.infrastructure.telegram import register_telegram_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -101,16 +110,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler = build_watchdog_scheduler(container, settings)
     scheduler.start()
 
-    # Telegram webhook registration (issue #14) — best-effort, never blocks boot. Only
-    # attempted when both a bot token and a public webhook URL are configured; see
-    # `register_telegram_webhook`'s docstring for why this can't be live-verified in a
-    # sandbox without a real bot token and a publicly reachable HTTPS URL.
-    if settings.telegram_bot_token and settings.telegram_webhook_url:
-        await register_telegram_webhook(
-            bot_token=settings.telegram_bot_token,
-            webhook_url=settings.telegram_webhook_url,
-            secret_token=settings.telegram_webhook_secret,
-        )
+    # User-bot webhooks are managed individually via the register-bot endpoint.
+    # The legacy single-bot webhook registration is no longer applied at startup
+    # because it would overwrite per-user bot webhooks on every restart.
 
     try:
         yield
@@ -132,11 +134,16 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_middleware(RequestIDMiddleware)
+    # Watchlist domain errors → meaningful HTTP status (issue #22); the catch-all stays
+    # last as the 500 backstop for everything else.
+    app.add_exception_handler(DuplicateWatchlistItemError, duplicate_watchlist_item_handler)
+    app.add_exception_handler(InvalidWatchlistIdentifierError, invalid_watchlist_identifier_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
     app.include_router(health_router)
     app.include_router(charts_router, prefix="/api/v1")
     app.include_router(chat_router, prefix="/api/v1")
+    app.include_router(realtime_ws_router, prefix="/api/v1")
     app.include_router(instruments_router, prefix="/api/v1")
     app.include_router(news_router, prefix="/api/v1")
     app.include_router(quant_router, prefix="/api/v1")
