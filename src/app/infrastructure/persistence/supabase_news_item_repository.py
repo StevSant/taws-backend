@@ -1,4 +1,4 @@
-from app.domain.market.entities import AnalysisStatus, NewsItem
+from app.domain.market.entities import AnalysisStatus, NewsItem, NewsSkipReason
 from app.domain.market.ports import NewsItemRepository
 from app.infrastructure.persistence.news_item_row_mapper import (
     news_item_from_row,
@@ -73,12 +73,25 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         return [news_item_from_row(row) for row in response.data]
 
     async def update_analysis_status(
-        self, news_item_id: str, status: AnalysisStatus, signal_id: str | None = None
+        self,
+        news_item_id: str,
+        status: AnalysisStatus,
+        signal_id: str | None = None,
+        skip_reason: NewsSkipReason | None = None,
     ) -> NewsItem:
+        """Both `signal_id` and `skip_reason` are written unconditionally, so an item that
+        was previously gated and is now `analyzed` doesn't keep a stale `skip_reason` (and
+        vice-versa) — see the port's contract."""
         client = await self._clients.get()
         response = (
             await client.table(_NEWS_ITEMS_TABLE)
-            .update({"analysis_status": status.value, "signal_id": signal_id})
+            .update(
+                {
+                    "analysis_status": status.value,
+                    "signal_id": signal_id,
+                    "skip_reason": skip_reason.value if skip_reason else None,
+                }
+            )
             .eq("id", news_item_id)
             .execute()
         )

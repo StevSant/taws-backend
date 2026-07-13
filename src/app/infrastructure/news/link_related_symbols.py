@@ -1,23 +1,7 @@
 import re
 
+from app.application.market.use_cases import extract_instrument_name_tokens
 from app.domain.market.entities import Instrument
-
-_NAME_STOPWORDS = {
-    "inc",
-    "corp",
-    "corporation",
-    "co",
-    "ltd",
-    "plc",
-    "group",
-    "holdings",
-    "company",
-    "etf",
-    "fund",
-    "trust",
-    "the",
-    "class",
-}
 
 
 def link_related_symbols(text: str, instruments: list[Instrument]) -> list[str]:
@@ -25,6 +9,11 @@ def link_related_symbols(text: str, instruments: list[Instrument]) -> list[str]:
 
     Case-insensitive. Used to backfill `NewsItem.related_symbols` for sources
     that don't tag instruments themselves (NewsAPI, Finnhub, RSS feeds).
+
+    The name half of the match uses the shared `extract_instrument_name_tokens` so the
+    Analyst pre-filter's `compute_news_relevance_score` scores an article by exactly the
+    rule this linker used to link it (issue #68) — see that tokenizer's docstring for the
+    divergence this prevents.
     """
     lowered = text.lower()
     matched: list[str] = []
@@ -39,6 +28,6 @@ def _mentions_word(lowered_text: str, token: str) -> bool:
 
 
 def _mentions_name(lowered_text: str, name: str) -> bool:
-    words = re.findall(r"[a-z0-9]+", name.lower())
-    significant_words = [word for word in words if word not in _NAME_STOPWORDS and len(word) > 2]
-    return any(_mentions_word(lowered_text, word) for word in significant_words)
+    return any(
+        _mentions_word(lowered_text, token) for token in extract_instrument_name_tokens(name)
+    )

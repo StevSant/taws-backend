@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from app.domain.market.entities import AnalysisStatus, NewsItem
+from app.domain.market.entities import AnalysisStatus, NewsItem, NewsSkipReason
 
 
 class NewsItemRepository(ABC):
@@ -36,7 +36,16 @@ class NewsItemRepository(ABC):
 
     @abstractmethod
     async def update_analysis_status(
-        self, news_item_id: str, status: AnalysisStatus, signal_id: str | None = None
+        self,
+        news_item_id: str,
+        status: AnalysisStatus,
+        signal_id: str | None = None,
+        skip_reason: NewsSkipReason | None = None,
     ) -> NewsItem:
-        """Set `analysis_status` (and optionally `signal_id`) on one persisted item."""
+        """Set `analysis_status` (and optionally `signal_id`/`skip_reason`) on one persisted item.
+
+        Both optional arguments are written unconditionally, so omitting them clears whatever
+        was there before — a freshly `analyzed` item must not keep the `skip_reason` from an
+        earlier run that gated it (issue #26).
+        """
         raise NotImplementedError
