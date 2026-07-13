@@ -73,7 +73,7 @@ class _EmptyNewsItemRepository(NewsItemRepository):
     async def list_pending(self, limit: int):
         return []
 
-    async def update_analysis_status(self, news_item_id, status, signal_id=None):
+    async def update_analysis_status(self, news_item_id, status, signal_id=None, skip_reason=None):
         raise NotImplementedError
 
 

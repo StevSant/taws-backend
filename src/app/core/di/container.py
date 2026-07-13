@@ -53,6 +53,7 @@ from app.domain.event_intelligence.ports import (
 from app.domain.market.entities import MacroIndicator
 from app.domain.market.ports import (
     FundamentalsProvider,
+    InstrumentCatalogRepository,
     InstrumentUniverse,
     MacroDataProvider,
     MarketDataProvider,
@@ -131,6 +132,7 @@ from app.infrastructure.notification import (
 from app.infrastructure.persistence import (
     SupabaseBriefingRepository,
     SupabaseConversationRepository,
+    SupabaseInstrumentCatalogRepository,
     SupabaseNewsItemRepository,
     SupabaseNoteRepository,
     SupabaseScenarioRepository,
@@ -141,7 +143,7 @@ from app.infrastructure.persistence import (
     SupabaseWatchlistRepository,
 )
 from app.infrastructure.realtime import OpenAIRealtimeSessionProvider
-from app.infrastructure.seeds import load_preset_scenarios_seed, load_universe_seed
+from app.infrastructure.seeds import load_preset_scenarios_seed
 from app.infrastructure.sentiment import (
     AlternativeMeFearGreedProvider,
     FixtureFearGreedProvider,
@@ -158,7 +160,7 @@ from app.infrastructure.telegram import (
     TelegramBotRegistration,
 )
 from app.infrastructure.tts import OpenAITTSProvider
-from app.infrastructure.universe import JsonInstrumentUniverse
+from app.infrastructure.universe import SupabaseInstrumentUniverse
 from app.infrastructure.vectorstore import PgvectorStore
 
 
@@ -192,7 +194,8 @@ class Container:
         self._briefing_repository: BriefingRepository | None = None
         self._news_provider: NewsProvider | None = None
         self._news_item_repository: NewsItemRepository | None = None
-        self._instrument_universe: InstrumentUniverse | None = None
+        self._instrument_catalog_repository: InstrumentCatalogRepository | None = None
+        self._instrument_universe: SupabaseInstrumentUniverse | None = None
         self._market_data_provider: MarketDataProvider | None = None
         self._macro_data_provider: MacroDataProvider | None = None
         self._fundamentals_provider: FundamentalsProvider | None = None
@@ -673,10 +676,34 @@ class Container:
             )
         return self._news_provider
 
+    def get_instrument_catalog_repository(self) -> InstrumentCatalogRepository:
+        if self._instrument_catalog_repository is None:
+            self._instrument_catalog_repository = SupabaseInstrumentCatalogRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
+            )
+        return self._instrument_catalog_repository
+
+    async def build_instrument_universe(self) -> InstrumentUniverse:
+        """Load `public.instruments` once and cache the resulting universe singleton.
+
+        MUST be awaited during app startup (`main.py`'s `_lifespan`, before other
+        warmup) — `get_instrument_universe()` only returns the already-built
+        instance and never constructs it lazily itself (design decision #1: the
+        `InstrumentUniverse` port stays sync, so the one async DB read happens here,
+        not on the request path).
+        """
+        repo = self.get_instrument_catalog_repository()
+        self._instrument_universe = await SupabaseInstrumentUniverse.create(repo)
+        return self._instrument_universe
+
     def get_instrument_universe(self) -> InstrumentUniverse:
         if self._instrument_universe is None:
-            self._instrument_universe = JsonInstrumentUniverse(
-                seed_path=self._settings.universe_seed_path
+            raise RuntimeError(
+                "InstrumentUniverse was not built yet — `build_instrument_universe()` "
+                "must be awaited during app startup before this accessor is used."
             )
         return self._instrument_universe
 
@@ -709,21 +736,20 @@ class Container:
     def get_market_data_provider(self) -> MarketDataProvider:
         """Return the routing MarketDataProvider (CoinGecko/yfinance + fixture fallback).
 
-        `yfinance`/CoinGecko symbol overrides come straight from the universe
-        seed's optional `yfinance_symbol` / `coingecko_id` rows — those vendor
-        details never touch the pure `Instrument` entity.
+        `yfinance`/CoinGecko symbol overrides come from the prebuilt instrument
+        universe's `all_rows()` (FIX #7) — a sync read over the already-loaded
+        catalog singleton, not a fresh async DB call — so those vendor details
+        never touch the pure `Instrument` entity.
         """
         if self._market_data_provider is None:
-            universe_rows = load_universe_seed(self._settings.universe_seed_path)
+            self.get_instrument_universe()  # raises if the universe wasn't built yet
+            assert self._instrument_universe is not None
+            universe_rows = self._instrument_universe.all_rows()
             yfinance_overrides = {
-                row["symbol"]: row["yfinance_symbol"]
-                for row in universe_rows
-                if row.get("yfinance_symbol")
+                row.symbol: row.yfinance_symbol for row in universe_rows if row.yfinance_symbol
             }
             coingecko_overrides = {
-                row["symbol"]: row["coingecko_id"]
-                for row in universe_rows
-                if row.get("coingecko_id")
+                row.symbol: row.coingecko_id for row in universe_rows if row.coingecko_id
             }
             fixture_provider = FixtureMarketDataProvider()
             self._market_data_provider = RoutingMarketDataProvider(

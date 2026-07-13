@@ -3,6 +3,7 @@ from app.domain.market.entities.asset_class import AssetClass
 from app.domain.market.entities.earnings_calendar_entry import EarningsCalendarEntry
 from app.domain.market.entities.instrument import Instrument
 from app.domain.market.entities.instrument_fundamentals import InstrumentFundamentals
+from app.domain.market.entities.instrument_row import InstrumentRow
 from app.domain.market.entities.macro_indicator import MacroIndicator
 from app.domain.market.entities.macro_observation import MacroObservation
 from app.domain.market.entities.macro_series import MacroSeries
@@ -20,6 +21,7 @@ __all__ = [
     "EarningsCalendarEntry",
     "Instrument",
     "InstrumentFundamentals",
+    "InstrumentRow",
     "MacroIndicator",
     "MacroObservation",
     "MacroSeries",
