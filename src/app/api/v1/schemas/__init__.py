@@ -35,6 +35,7 @@ from app.api.v1.schemas.instrument_highlights_response import InstrumentHighligh
 from app.api.v1.schemas.instrument_page_response import InstrumentPageResponse
 from app.api.v1.schemas.instrument_response import InstrumentResponse
 from app.api.v1.schemas.interpret_macro_event_request import InterpretMacroEventRequest
+from app.api.v1.schemas.linked_signal_response import LinkedSignalResponse
 from app.api.v1.schemas.macro_asset_class_impact_response import MacroAssetClassImpactResponse
 from app.api.v1.schemas.macro_event_interpretation_response import (
     MacroEventInterpretationResponse,
@@ -123,6 +124,7 @@ __all__ = [
     "InstrumentPageResponse",
     "InstrumentResponse",
     "InterpretMacroEventRequest",
+    "LinkedSignalResponse",
     "MacroAssetClassImpactResponse",
     "MacroEventInterpretationResponse",
     "MacroObservationResponse",

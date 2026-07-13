@@ -1,23 +1,48 @@
 from collections.abc import AsyncIterator
 
+from app.application.chat.use_cases.resolve_grounding_context import ResolveGroundingContext
 from app.domain.agents.entities import AgentStreamEvent, Message
 from app.domain.agents.ports import AgentRunner
+from app.domain.market.ports import InstrumentUniverse, NewsItemRepository
 
 
 class StreamReply:
     """Streams an assistant reply as `AgentStreamEvent`s via the agent layer.
 
-    Depends only on the `AgentRunner` port — the application layer knows nothing
-    about LangGraph or any specific graph shape. Per-thread history is the
-    `AgentRunner`'s (checkpointer's) job now, keyed by `thread_id`; this use case no
-    longer persists messages itself.
+    Depends only on ports — the application layer knows nothing about LangGraph or any
+    specific graph shape. Per-thread history is the `AgentRunner`'s (checkpointer's) job,
+    keyed by `thread_id`; this use case no longer persists messages itself.
+
+    An optional reference (`asset_symbol` OR `news_id`, at most one) is resolved to a
+    `grounding_context` string via the injected `InstrumentUniverse` / `NewsItemRepository`
+    ports and forwarded to the runner so the agent answer is grounded on that asset/news
+    (issue #73). No reference resolves to `None` and behaves exactly as before.
     """
 
-    def __init__(self, agent_runner: AgentRunner) -> None:
+    def __init__(
+        self,
+        agent_runner: AgentRunner,
+        instrument_universe: InstrumentUniverse,
+        news_item_repository: NewsItemRepository,
+    ) -> None:
         self._agent_runner = agent_runner
+        self._resolve_grounding_context = ResolveGroundingContext(
+            instrument_universe=instrument_universe,
+            news_item_repository=news_item_repository,
+        )
 
     async def execute(
-        self, thread_id: str, message: Message, user_id: str
+        self,
+        thread_id: str,
+        message: Message,
+        user_id: str,
+        asset_symbol: str | None = None,
+        news_id: str | None = None,
     ) -> AsyncIterator[AgentStreamEvent]:
-        async for event in self._agent_runner.stream(thread_id, message, user_id):
+        grounding_context = await self._resolve_grounding_context.execute(
+            asset_symbol=asset_symbol, news_id=news_id
+        )
+        async for event in self._agent_runner.stream(
+            thread_id, message, user_id, grounding_context=grounding_context
+        ):
             yield event
