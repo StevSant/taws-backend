@@ -151,6 +151,8 @@ async def stream_chat(
         user.id,
         asset_symbol=payload.asset_symbol,
         news_id=payload.news_id,
+        from_date=payload.from_date,
+        to_date=payload.to_date,
     )
     return StreamingResponse(_to_sse(event_stream), media_type="text/event-stream")
 

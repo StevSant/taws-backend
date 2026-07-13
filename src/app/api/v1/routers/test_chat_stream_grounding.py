@@ -76,6 +76,9 @@ class _EmptyNewsItemRepository(NewsItemRepository):
     async def list_related(self, item, limit: int):
         return []
 
+    async def list_for_symbol_in_range(self, symbol, from_date, to_date, limit):
+        return []
+
     async def update_analysis_status(self, news_item_id, status, signal_id=None, skip_reason=None):
         raise NotImplementedError
 

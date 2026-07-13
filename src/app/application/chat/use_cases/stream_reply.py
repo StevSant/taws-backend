@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from datetime import date
 
 from app.application.chat.use_cases.resolve_grounding_context import ResolveGroundingContext
 from app.domain.agents.entities import AgentStreamEvent, Message
@@ -38,9 +39,14 @@ class StreamReply:
         user_id: str,
         asset_symbol: str | None = None,
         news_id: str | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
     ) -> AsyncIterator[AgentStreamEvent]:
         grounding_context = await self._resolve_grounding_context.execute(
-            asset_symbol=asset_symbol, news_id=news_id
+            asset_symbol=asset_symbol,
+            news_id=news_id,
+            from_date=from_date,
+            to_date=to_date,
         )
         async for event in self._agent_runner.stream(
             thread_id, message, user_id, grounding_context=grounding_context

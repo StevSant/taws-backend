@@ -1,3 +1,5 @@
+from datetime import date
+
 from pydantic import BaseModel, Field
 
 
@@ -21,4 +23,15 @@ class ChatRequest(BaseModel):
             "Optional id of a news article to ground the answer on. Mutually exclusive "
             "with `asset_symbol`."
         ),
+    )
+    from_date: date | None = Field(
+        default=None,
+        description=(
+            "Optional start (YYYY-MM-DD) of a chart date window; with `to_date` and "
+            "`asset_symbol` it grounds the answer on the asset's news in that period."
+        ),
+    )
+    to_date: date | None = Field(
+        default=None,
+        description="Optional end (YYYY-MM-DD) of the date window; see `from_date`.",
     )

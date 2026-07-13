@@ -1,5 +1,9 @@
+<<<<<<< HEAD
 from collections.abc import Callable
 from typing import Any
+=======
+from datetime import date, timedelta
+>>>>>>> d9c5b05 (feat(chat): ground the answer on the asset's news in a selected date window (#73))
 
 from app.domain.market.entities import AnalysisStatus, NewsItem, NewsSkipReason
 from app.domain.market.ports import NewsItemRepository
@@ -88,6 +92,7 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         )
         return [news_item_from_row(row) for row in response.data]
 
+<<<<<<< HEAD
     async def list_related(self, item: NewsItem, limit: int) -> list[NewsItem]:
         """Shared-symbol matches first, then same-source, then plain recency — see the port
         for why the fallback chain exists. Each tier is a separate query rather than one
@@ -127,13 +132,29 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         query = narrow(client.table(_NEWS_ITEMS_TABLE).select("*"))
         response = (
             await query.not_.in_("id", list(seen))
+=======
+    async def list_for_symbol_in_range(
+        self, symbol: str, from_date: date, to_date: date, limit: int
+    ) -> list[NewsItem]:
+        client = await self._clients.get()
+        response = (
+            await client.table(_NEWS_ITEMS_TABLE)
+            .select("*")
+            .contains("related_symbols", [symbol])
+            .gte("published_at", from_date.isoformat())
+            .lt("published_at", (to_date + timedelta(days=1)).isoformat())
+>>>>>>> d9c5b05 (feat(chat): ground the answer on the asset's news in a selected date window (#73))
             .order("published_at", desc=True)
             .limit(limit)
             .execute()
         )
+<<<<<<< HEAD
         items = [news_item_from_row(row) for row in response.data]
         seen.update(news_item.id for news_item in items)
         return items
+=======
+        return [news_item_from_row(row) for row in response.data]
+>>>>>>> d9c5b05 (feat(chat): ground the answer on the asset's news in a selected date window (#73))
 
     async def update_analysis_status(
         self,

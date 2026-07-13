@@ -8,7 +8,7 @@
 """
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from app.application.chat.use_cases import StreamReply
 from app.domain.agents.entities import AgentStreamEvent, Message, MessageRole, TokenEvent
@@ -55,10 +55,11 @@ class _FakeInstrumentUniverse(InstrumentUniverse):
 
 
 class _FakeNewsItemRepository(NewsItemRepository):
-    """Returns a single news item by id; `None` otherwise."""
+    """Returns a single news item by id, plus a fixed list for a symbol+date window."""
 
-    def __init__(self, item: NewsItem | None) -> None:
+    def __init__(self, item: NewsItem | None, window_news: list[NewsItem] | None = None) -> None:
         self._item = item
+        self._window_news = window_news or []
 
     async def upsert_many(self, items: list[NewsItem]) -> list[NewsItem]:
         return items
@@ -73,6 +74,9 @@ class _FakeNewsItemRepository(NewsItemRepository):
 
     async def list_related(self, item: NewsItem, limit: int) -> list[NewsItem]:
         return []
+
+    async def list_for_symbol_in_range(self, symbol, from_date, to_date, limit) -> list[NewsItem]:
+        return self._window_news
 
     async def update_analysis_status(
         self, news_item_id, status, signal_id=None, skip_reason=None
@@ -197,6 +201,30 @@ async def test_unknown_symbol_leaves_grounding_context_none() -> None:
     )
 
     assert runner.grounding_context is None
+
+
+async def test_asset_symbol_with_window_grounds_on_period_news() -> None:
+    runner = _FakeAgentRunner()
+    use_case = _build(
+        runner,
+        _FakeInstrumentUniverse(_instrument()),
+        _FakeNewsItemRepository(None, window_news=[_news_item()]),
+    )
+
+    await _drain(
+        use_case.execute(
+            "thread-1",
+            Message(role=MessageRole.USER, content="why did it move?"),
+            "user-1",
+            asset_symbol="AAPL",
+            from_date=date(2026, 6, 1),
+            to_date=date(2026, 7, 15),
+        )
+    )
+
+    assert runner.grounding_context is not None
+    assert "2026-06-01 to 2026-07-15" in runner.grounding_context
+    assert "Apple beats earnings" in runner.grounding_context
 
 
 async def test_unknown_news_id_leaves_grounding_context_none() -> None:

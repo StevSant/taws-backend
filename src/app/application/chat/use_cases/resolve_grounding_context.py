@@ -1,5 +1,9 @@
+from datetime import date
+
 from app.domain.market.entities import Instrument, NewsItem
 from app.domain.market.ports import InstrumentUniverse, NewsItemRepository
+
+_WINDOW_NEWS_LIMIT = 12
 
 
 class ResolveGroundingContext:
@@ -21,11 +25,22 @@ class ResolveGroundingContext:
         self._news_item_repository = news_item_repository
 
     async def execute(
-        self, asset_symbol: str | None = None, news_id: str | None = None
+        self,
+        asset_symbol: str | None = None,
+        news_id: str | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
     ) -> str | None:
         if asset_symbol:
             instrument = self._instrument_universe.by_symbol(asset_symbol)
-            return _format_instrument(instrument) if instrument else None
+            if not instrument:
+                return None
+            if from_date and to_date:
+                news = await self._news_item_repository.list_for_symbol_in_range(
+                    asset_symbol, from_date, to_date, _WINDOW_NEWS_LIMIT
+                )
+                return _format_instrument_window(instrument, from_date, to_date, news)
+            return _format_instrument(instrument)
         if news_id:
             news_item = await self._news_item_repository.get_by_id(news_id)
             return _format_news_item(news_item) if news_item else None
@@ -51,3 +66,23 @@ def _format_news_item(news_item: NewsItem) -> str:
         f"- Summary: {news_item.summary}\n"
         f"- URL: {news_item.url}"
     )
+
+
+def _format_instrument_window(
+    instrument: Instrument, from_date: date, to_date: date, news: list[NewsItem]
+) -> str:
+    header = (
+        "The user selected a date window on this asset's price chart and is asking WHY the "
+        "price moved during it. Explain the likely drivers using ONLY the news below from that "
+        "window; if the news is thin or unrelated, say so plainly instead of inventing causes.\n"
+        f"- Symbol: {instrument.symbol}\n"
+        f"- Name: {instrument.name}\n"
+        f"- Window: {from_date.isoformat()} to {to_date.isoformat()}"
+    )
+    if not news:
+        return f"{header}\n- News in window: none found for this asset in this period."
+    lines = "\n".join(
+        f"  - [{item.published_at.date().isoformat()}] {item.title} ({item.source})"
+        for item in news
+    )
+    return f"{header}\n- News in window (most recent first):\n{lines}"
