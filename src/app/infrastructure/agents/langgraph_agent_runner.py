@@ -41,16 +41,26 @@ class LangGraphAgentRunner(AgentRunner):
     exception during the run is caught and yielded as a single `ErrorEvent` instead of
     propagating — so a failure mid-stream still reaches the SSE client as a well-formed
     frame instead of dropping the connection (see `api/v1/routers/chat.py`'s `_to_sse`).
+
+    An optional `grounding_context` (issue #73) is threaded into the graph's initial
+    input state so the specialist node can anchor its reply on a referenced asset/news
+    article; omitted from the state when `None`, leaving behavior unchanged.
     """
 
     def __init__(self, graph: Any) -> None:
         self._graph = graph
 
     async def stream(
-        self, thread_id: str, message: Message, user_id: str
+        self,
+        thread_id: str,
+        message: Message,
+        user_id: str,
+        grounding_context: str | None = None,
     ) -> AsyncIterator[AgentStreamEvent]:
         config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
-        input_state = {"messages": [HumanMessage(content=message.content)]}
+        input_state: dict[str, Any] = {"messages": [HumanMessage(content=message.content)]}
+        if grounding_context:
+            input_state["grounding_context"] = grounding_context
 
         try:
             async for mode, payload in self._graph.astream(

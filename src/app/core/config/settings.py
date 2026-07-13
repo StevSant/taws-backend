@@ -239,13 +239,84 @@ class Settings(BaseSettings):
     signal_classification_retry_max_attempts: int = 2
     signal_classification_retry_backoff_base_seconds: float = 0.5
 
-    # --- Pending news pre-filter (issue #3): cheap-relevance floor (see
-    # `compute_news_relevance_score`) below which a pending news item is skipped
-    # (analysis_status -> skipped) without an LLM call. ---
+    # --- Pending news pre-filter (issues #3 + #26): the gate `AnalyzePendingNews._prefilter`
+    # applies before spending an LLM classification call. Assembled into a
+    # `NewsPrefilterPolicy` by `Container.get_news_prefilter_policy()` — the single place
+    # these are read, so the HTTP endpoint and the scheduled tick can't drift apart. ---
+    # Floor (0-1) below which a pending news item is skipped (analysis_status -> skipped,
+    # skip_reason -> gated_low_relevance) without an LLM call. NOTE: since #26 this gates the
+    # COMBINED relevance+materiality score below, not symbol-relevance alone.
     news_relevance_skip_threshold: float = 0.35
+    # How the two components of that combined score are weighted (normalized by their sum, so
+    # only their ratio matters). Materiality is what lets a genuinely important article that
+    # never spells out a watchlist ticker survive the gate.
+    news_prefilter_relevance_weight: float = 0.6
+    news_prefilter_materiality_weight: float = 0.4
+    # Relevance credited when an article is linked to an instrument by company/fund NAME
+    # rather than by its ticker ("Apple unveils…" -> AAPL). Weaker evidence than an explicit
+    # ticker, hence < 1.0 — but these used to score 0.0 and be gated out wholesale, which is
+    # what made essentially every item show as "Sin clasificar" (issue #68).
+    news_relevance_name_match_score: float = 0.6
+
+    # --- News materiality signal (issue #26): the cheap, non-LLM "is this important enough to
+    # be worth a token?" half of the pre-filter. See `compute_news_materiality_score`. ---
+    # Market-moving event terms; the share of these found in an item's title+summary is the
+    # score's main component. Whole-word matched, case-insensitive; multi-word entries allowed.
+    news_materiality_keywords: list[str] = [
+        "acquisition",
+        "bankruptcy",
+        "central bank",
+        "default",
+        "downgrade",
+        "earnings",
+        "fed",
+        "guidance",
+        "inflation",
+        "interest rate",
+        "ipo",
+        "lawsuit",
+        "layoffs",
+        "merger",
+        "rate cut",
+        "rate hike",
+        "recession",
+        "reform",
+        "regulation",
+        "sanctions",
+        "selloff",
+        "stimulus",
+        "tariff",
+        "upgrade",
+    ]
+    # Publishers whose choosing to cover an event is itself evidence that it matters. Matched
+    # against `NewsItem.source` (the article's own outlet), case-insensitively.
+    news_materiality_high_impact_sources: list[str] = [
+        "Bloomberg",
+        "CNBC",
+        "Financial Times",
+        "Reuters",
+        "The Wall Street Journal",
+        "Yahoo Finance",
+    ]
+    # Relative weights of the four materiality components (normalized by their sum, so zeroing
+    # one out reweights the others rather than shrinking the score's range).
+    news_materiality_keyword_weight: float = 0.5
+    news_materiality_source_weight: float = 0.2
+    news_materiality_sentiment_weight: float = 0.15
+    news_materiality_recency_weight: float = 0.15
+    # Recency decays by half every this many hours since publication.
+    news_materiality_recency_half_life_hours: float = 24.0
+    # Keyword hits at or above this count saturate the keyword component at 1.0, so a
+    # keyword-stuffed headline can't outscore a genuinely material one.
+    news_materiality_keyword_saturation_count: int = 3
 
     # --- Pending news analysis batch pipeline (issue #2: POST /api/v1/news/analyze-pending
     # and its scheduled tick) ---
+    # Master switch for the SCHEDULED tick only. Turning it off stops the background analysis
+    # job from being registered at all (so no LLM spend happens unattended); the on-demand
+    # `POST /api/v1/news/analyze-pending` and the manual per-item `POST /news/{id}/analyze`
+    # keep working either way.
+    news_analysis_enabled: bool = True
     # Bounds concurrent `GenerateSignal` calls fanned out by `AnalyzePendingNews`, so a
     # large pending backlog can't fire unbounded concurrent LLM requests.
     news_analysis_max_concurrency: int = 5
@@ -255,6 +326,18 @@ class Settings(BaseSettings):
     # so newly-ingested news gets analyzed even while no user is on the page. Reuses the
     # same APScheduler infra as the Watchdog jobs (`infrastructure/scheduling`).
     news_analysis_poll_interval_minutes: int = 15
+
+    # --- News detail payload (issue #57: GET /api/v1/news/{id}, via `BuildNewsDetail`) ---
+    # Caps how many of an article's `related_symbols` get a live price lookup, since each one
+    # costs a `ComputeMarketStats` call (an upstream market-data fetch). An article tagged with
+    # 30 tickers is a linker artifact, not 30 chips worth rendering.
+    news_detail_max_affected_instruments: int = 8
+    # How many related articles the detail page's "related news" list carries. Paginated client
+    # side, so this is the whole list, not a page.
+    news_detail_related_limit: int = 12
+    # Lookback for the affected-instrument chips' % change. Matches `ComputeMarketStats`'s own
+    # default window, so a chip and the asset page it links to never disagree on the number.
+    news_detail_price_window_days: int = 30
 
     # --- Historical analogs RAG (behind the VectorStore port, pgvector-backed) ---
     historical_analogs_top_k: int = 3

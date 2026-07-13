@@ -112,18 +112,21 @@ async def _run_analyze_pending_news_job(container: Container, settings: Settings
             embedding_provider=container.get_embedding_provider(),
             vector_store=container.get_vector_store(),
         ),
+        prefilter_policy=container.get_news_prefilter_policy(),
         min_distinct_sources=settings.min_distinct_news_sources,
-        relevance_skip_threshold=settings.news_relevance_skip_threshold,
         max_concurrency=settings.news_analysis_max_concurrency,
         batch_limit=settings.news_analysis_batch_limit,
     )
     try:
         result = await use_case.execute(locale=settings.default_locale)
         logger.info(
-            "analyze-pending-news tick complete: %d analyzed, %d skipped, %d failed",
+            "analyze-pending-news tick complete: %d analyzed, %d skipped, %d failed. "
+            "Skipped by reason: %s. Failed by reason: %s.",
             result.analyzed_count,
             result.skipped_count,
             result.failed_count,
+            result.skipped_by_reason or "none",
+            result.failed_by_reason or "none",
         )
     except Exception:  # noqa: BLE001 — same resilience guarantee as the other scheduled jobs
         logger.exception("analyze-pending-news job failed")
@@ -148,7 +151,13 @@ def build_watchdog_scheduler(container: Container, settings: Settings) -> AsyncI
       `ScenarioMonitor` for a materializing signal/price-move match.
     - `analyze-pending-news` (`AnalyzePendingNews`, issue #2, every
       `settings.news_analysis_poll_interval_minutes` minutes): the same batch pass
-      `POST /api/v1/news/analyze-pending` triggers manually.
+      `POST /api/v1/news/analyze-pending` triggers manually. This is the ONLY job behind an
+      enable/disable switch (`settings.news_analysis_enabled`, issue #68): it's the one that
+      spends money unattended — each tick can fan out up to `news_analysis_max_concurrency`
+      LLM classification calls — so an operator needs to be able to stop the background spend
+      without also losing the Watchdog's alerting. Disabling it doesn't disable analysis
+      itself: `POST /api/v1/news/analyze-pending` and the per-item `POST /news/{id}/analyze`
+      ("Analizar ahora", issue #27) both keep working on demand.
 
     `AsyncIOScheduler` (not a background thread pool) integrates directly with FastAPI's
     asyncio event loop; `max_instances=1` on each job prevents a slow run from overlapping
@@ -184,12 +193,22 @@ def build_watchdog_scheduler(container: Container, settings: Settings) -> AsyncI
         replace_existing=True,
         max_instances=1,
     )
-    scheduler.add_job(
-        _run_analyze_pending_news_job,
-        trigger=IntervalTrigger(minutes=settings.news_analysis_poll_interval_minutes),
-        args=(container, settings),
-        id=_ANALYZE_PENDING_NEWS_JOB_ID,
-        replace_existing=True,
-        max_instances=1,
-    )
+    if settings.news_analysis_enabled:
+        scheduler.add_job(
+            _run_analyze_pending_news_job,
+            trigger=IntervalTrigger(minutes=settings.news_analysis_poll_interval_minutes),
+            args=(container, settings),
+            id=_ANALYZE_PENDING_NEWS_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+        )
+        logger.info(
+            "analyze-pending-news job scheduled every %d minute(s)",
+            settings.news_analysis_poll_interval_minutes,
+        )
+    else:
+        logger.warning(
+            "analyze-pending-news job is DISABLED (NEWS_ANALYSIS_ENABLED=false): ingested news "
+            "will stay 'pending' until POST /api/v1/news/analyze-pending is called on demand."
+        )
     return scheduler

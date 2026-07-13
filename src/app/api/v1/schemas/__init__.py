@@ -12,6 +12,7 @@ from app.api.v1.schemas.chat_request import ChatRequest
 from app.api.v1.schemas.chat_response import ChatResponse
 from app.api.v1.schemas.chat_title_message import ChatTitleMessage
 from app.api.v1.schemas.chat_token import ChatToken
+from app.api.v1.schemas.coin_candidate_response import CoinCandidateResponse
 from app.api.v1.schemas.consequence_chain_response import ConsequenceChainResponse
 from app.api.v1.schemas.consequence_edge_response import ConsequenceEdgeResponse
 from app.api.v1.schemas.consequence_node_response import ConsequenceNodeResponse
@@ -34,7 +35,9 @@ from app.api.v1.schemas.instrument_fundamentals_response import InstrumentFundam
 from app.api.v1.schemas.instrument_highlights_response import InstrumentHighlightsResponse
 from app.api.v1.schemas.instrument_page_response import InstrumentPageResponse
 from app.api.v1.schemas.instrument_response import InstrumentResponse
+from app.api.v1.schemas.instrument_search_response import InstrumentSearchResponse
 from app.api.v1.schemas.interpret_macro_event_request import InterpretMacroEventRequest
+from app.api.v1.schemas.linked_signal_response import LinkedSignalResponse
 from app.api.v1.schemas.macro_asset_class_impact_response import MacroAssetClassImpactResponse
 from app.api.v1.schemas.macro_event_interpretation_response import (
     MacroEventInterpretationResponse,
@@ -44,6 +47,8 @@ from app.api.v1.schemas.macro_series_response import MacroSeriesResponse
 from app.api.v1.schemas.macro_state_response import MacroStateResponse
 from app.api.v1.schemas.market_pulse_response import MarketPulseResponse
 from app.api.v1.schemas.market_stats_response import MarketStatsResponse
+from app.api.v1.schemas.news_asset_impact_response import NewsAssetImpactResponse
+from app.api.v1.schemas.news_detail_response import NewsDetailResponse
 from app.api.v1.schemas.news_entity_response import NewsEntityResponse
 from app.api.v1.schemas.news_event_response import NewsEventResponse
 from app.api.v1.schemas.news_item_response import NewsItemResponse
@@ -56,6 +61,8 @@ from app.api.v1.schemas.realtime_tool_request import RealtimeToolRequest
 from app.api.v1.schemas.realtime_tool_response import RealtimeToolResponse
 from app.api.v1.schemas.register_bot_request import RegisterBotRequest
 from app.api.v1.schemas.register_bot_response import RegisterBotResponse
+from app.api.v1.schemas.register_instrument_request import RegisterInstrumentRequest
+from app.api.v1.schemas.register_instrument_response import RegisterInstrumentResponse
 from app.api.v1.schemas.review_decision_request import ReviewDecisionRequest
 from app.api.v1.schemas.review_state_response import ReviewStateResponse
 from app.api.v1.schemas.scenario_asset_class_impact_response import (
@@ -98,6 +105,7 @@ __all__ = [
     "ChatResponse",
     "ChatTitleMessage",
     "ChatToken",
+    "CoinCandidateResponse",
     "ConsequenceChainResponse",
     "ConversationTitleResponse",
     "ConsequenceEdgeResponse",
@@ -121,13 +129,17 @@ __all__ = [
     "InstrumentHighlightsResponse",
     "InstrumentPageResponse",
     "InstrumentResponse",
+    "InstrumentSearchResponse",
     "InterpretMacroEventRequest",
+    "LinkedSignalResponse",
     "MacroAssetClassImpactResponse",
     "MacroEventInterpretationResponse",
     "MacroObservationResponse",
     "MacroSeriesResponse",
     "MacroStateResponse",
     "MarketStatsResponse",
+    "NewsAssetImpactResponse",
+    "NewsDetailResponse",
     "NewsEntityResponse",
     "NewsEventResponse",
     "NewsItemResponse",
@@ -136,6 +148,8 @@ __all__ = [
     "RealtimeSessionResponse",
     "RealtimeToolRequest",
     "RealtimeToolResponse",
+    "RegisterInstrumentRequest",
+    "RegisterInstrumentResponse",
     "ReviewDecisionRequest",
     "ReviewStateResponse",
     "ScenarioAssetClassImpactResponse",

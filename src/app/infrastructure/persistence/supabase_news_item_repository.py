@@ -1,4 +1,8 @@
-from app.domain.market.entities import AnalysisStatus, NewsItem
+from collections.abc import Callable
+from datetime import date, timedelta
+from typing import Any
+
+from app.domain.market.entities import AnalysisStatus, NewsItem, NewsSkipReason
 from app.domain.market.ports import NewsItemRepository
 from app.infrastructure.persistence.news_item_row_mapper import (
     news_item_from_row,
@@ -48,6 +52,19 @@ class SupabaseNewsItemRepository(NewsItemRepository):
                     .is_("image_url", "null")
                     .execute()
                 )
+            # Same backfill-only shape as `image_url` above, for the same reason: rows
+            # ingested before `extract_rss_summary` landed were persisted with an empty
+            # summary (the feed's description was never read), and `ignore_duplicates`
+            # means a re-fetch would never repair them. Guarded on `summary = ''` so this
+            # can only ever fill a blank, never overwrite a real one.
+            if item.summary:
+                await (
+                    client.table(_NEWS_ITEMS_TABLE)
+                    .update({"summary": item.summary})
+                    .eq("url", item.url)
+                    .eq("summary", "")
+                    .execute()
+                )
 
         urls = [item.url for item in items]
         response = await client.table(_NEWS_ITEMS_TABLE).select("*").in_("url", urls).execute()
@@ -72,13 +89,89 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         )
         return [news_item_from_row(row) for row in response.data]
 
-    async def update_analysis_status(
-        self, news_item_id: str, status: AnalysisStatus, signal_id: str | None = None
-    ) -> NewsItem:
+    async def list_related(self, item: NewsItem, limit: int) -> list[NewsItem]:
+        """Shared-symbol matches first, then same-source, then plain recency — see the port
+        for why the fallback chain exists. Each tier is a separate query rather than one
+        `or(...)` filter so the tiers stay *ordered by strength*: PostgREST would sort a
+        combined result by `published_at` alone, letting an unrelated-but-newer article
+        outrank a genuine shared-symbol match.
+        """
+        related: list[NewsItem] = []
+        seen = {item.id}
+
+        if item.related_symbols:
+            related += await self._select_related(
+                seen,
+                limit - len(related),
+                lambda query: query.overlaps("related_symbols", item.related_symbols),
+            )
+        if len(related) < limit:
+            related += await self._select_related(
+                seen, limit - len(related), lambda query: query.eq("source", item.source)
+            )
+        if len(related) < limit:
+            related += await self._select_related(seen, limit - len(related), lambda query: query)
+        return related
+
+    async def _select_related(
+        self,
+        seen: set[str],
+        limit: int,
+        narrow: Callable[[Any], Any],
+    ) -> list[NewsItem]:
+        """Run one tier of `list_related`: the newest `limit` items matching `narrow`, minus
+        everything already collected. Mutates `seen` so the next tier can't re-serve them.
+        """
+        if limit <= 0:
+            return []
+        client = await self._clients.get()
+        query = narrow(client.table(_NEWS_ITEMS_TABLE).select("*"))
+        response = (
+            await query.not_.in_("id", list(seen))
+            .order("published_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        items = [news_item_from_row(row) for row in response.data]
+        seen.update(news_item.id for news_item in items)
+        return items
+
+    async def list_for_symbol_in_range(
+        self, symbol: str, from_date: date, to_date: date, limit: int
+    ) -> list[NewsItem]:
         client = await self._clients.get()
         response = (
             await client.table(_NEWS_ITEMS_TABLE)
-            .update({"analysis_status": status.value, "signal_id": signal_id})
+            .select("*")
+            .contains("related_symbols", [symbol])
+            .gte("published_at", from_date.isoformat())
+            .lt("published_at", (to_date + timedelta(days=1)).isoformat())
+            .order("published_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return [news_item_from_row(row) for row in response.data]
+
+    async def update_analysis_status(
+        self,
+        news_item_id: str,
+        status: AnalysisStatus,
+        signal_id: str | None = None,
+        skip_reason: NewsSkipReason | None = None,
+    ) -> NewsItem:
+        """Both `signal_id` and `skip_reason` are written unconditionally, so an item that
+        was previously gated and is now `analyzed` doesn't keep a stale `skip_reason` (and
+        vice-versa) — see the port's contract."""
+        client = await self._clients.get()
+        response = (
+            await client.table(_NEWS_ITEMS_TABLE)
+            .update(
+                {
+                    "analysis_status": status.value,
+                    "signal_id": signal_id,
+                    "skip_reason": skip_reason.value if skip_reason else None,
+                }
+            )
             .eq("id", news_item_id)
             .execute()
         )

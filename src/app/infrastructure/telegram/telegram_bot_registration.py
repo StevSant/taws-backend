@@ -10,14 +10,21 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramBotRegistration(BotRegistrationPort):
-    """`BotRegistrationPort` adapter: parses BotFather text, calls `getUpdates` to
-    obtain the user's `chat_id`, sets the webhook, and persists via `UserBotRepository`.
+    """`BotRegistrationPort` adapter: parses BotFather text, resolves the user's `chat_id`,
+    sets the webhook, and persists via `UserBotRepository`.
 
     Flow:
     1. Parse BotFather text → extract `bot_token` and `bot_username`
-    2. Call `getUpdates` → extract `chat_id` from the first message
+    2. Resolve `chat_id` — reuse the stored one when re-registering the same bot, otherwise
+       call `getUpdates` and read it off the first message
     3. Set webhook for the bot
     4. Save to repository
+
+    Step 2 must prefer the stored `chat_id`: `setWebhook` (step 3) makes Telegram deliver
+    every pending update to the webhook, which drains the `getUpdates` queue. So once a bot
+    is registered, `getUpdates` is empty forever, and re-deriving `chat_id` from it would
+    always fail — even though we already know the answer. Registration is idempotent: the
+    same BotFather text can be submitted twice.
     """
 
     def __init__(
@@ -39,7 +46,8 @@ class TelegramBotRegistration(BotRegistrationPort):
                 "Asegúrate de pegar el mensaje completo que te envió BotFather."
             )
 
-        chat_id = await self._get_chat_id(parsed.bot_token)
+        existing = await self._repository.get_by_user_id(user_id)
+        chat_id = await self._resolve_chat_id(existing, parsed.bot_token)
         if chat_id is None:
             raise ValueError(
                 "No se encontró ningún mensaje en el bot. "
@@ -59,13 +67,28 @@ class TelegramBotRegistration(BotRegistrationPort):
         try:
             await self._set_webhook(parsed.bot_token, saved.id)
         except Exception:
-            try:
+            if existing is None:
                 await self._repository.delete(user_id)
-            except Exception:
-                logger.exception("Failed to clean up bot after webhook error for user %s", user_id)
             raise
 
         return saved
+
+    async def _resolve_chat_id(self, existing: UserBot | None, bot_token: str) -> str | None:
+        """The `chat_id` for `bot_token`, reusing `existing`'s when it's the same bot.
+
+        Re-registering a bot the user already registered (a second "Registrar Bot" click, or
+        a retry after a failure) must NOT ask Telegram again: this bot's webhook has already
+        consumed the message `getUpdates` would have read, so Telegram would answer "no
+        messages" and we'd reject a perfectly valid registration. `user_bots.chat_id` is
+        `not null`, so a stored row always carries a usable `chat_id`.
+
+        Only a bot we've never seen for this user falls through to `getUpdates` — and only
+        that path deletes the webhook, so a retry can no longer knock a working bot offline.
+        """
+        if existing is not None and existing.bot_token == bot_token and existing.chat_id:
+            logger.info("Reusing stored chat_id for already-registered bot %s", existing.id)
+            return existing.chat_id
+        return await self._get_chat_id(bot_token)
 
     async def _get_chat_id(self, bot_token: str) -> str | None:
         """Call `getUpdates` to find the user's chat_id.

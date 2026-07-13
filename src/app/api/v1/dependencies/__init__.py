@@ -10,6 +10,7 @@ from app.api.v1.dependencies.get_briefing_command_handler import get_briefing_co
 from app.api.v1.dependencies.get_briefing_document_renderer import get_briefing_document_renderer
 from app.api.v1.dependencies.get_briefing_repository import get_briefing_repository
 from app.api.v1.dependencies.get_chat_message_handler import get_chat_message_handler
+from app.api.v1.dependencies.get_coingecko_search_provider import get_coingecko_search_provider
 from app.api.v1.dependencies.get_conversation_repository import get_conversation_repository
 from app.api.v1.dependencies.get_email_sender import get_email_sender
 from app.api.v1.dependencies.get_embedding_provider import get_embedding_provider
@@ -35,6 +36,7 @@ from app.api.v1.dependencies.get_macro_data_provider import get_macro_data_provi
 from app.api.v1.dependencies.get_market_data_provider import get_market_data_provider
 from app.api.v1.dependencies.get_market_pulse_use_case import get_market_pulse_use_case
 from app.api.v1.dependencies.get_news_item_repository import get_news_item_repository
+from app.api.v1.dependencies.get_news_prefilter_policy import get_news_prefilter_policy
 from app.api.v1.dependencies.get_news_provider import get_news_provider
 from app.api.v1.dependencies.get_note_repository import get_note_repository
 from app.api.v1.dependencies.get_notification_channel import get_notification_channel
@@ -45,12 +47,16 @@ from app.api.v1.dependencies.get_process_incoming_event_use_case import (
 from app.api.v1.dependencies.get_realtime_session_provider import (
     get_realtime_session_provider,
 )
+from app.api.v1.dependencies.get_register_instrument_use_case import (
+    get_register_instrument_use_case,
+)
 from app.api.v1.dependencies.get_render_chart_use_case import get_render_chart_use_case
 from app.api.v1.dependencies.get_reorder_watchlists_use_case import (
     get_reorder_watchlists_use_case,
 )
 from app.api.v1.dependencies.get_scenario_repository import get_scenario_repository
 from app.api.v1.dependencies.get_scenario_simulation_runner import get_scenario_simulation_runner
+from app.api.v1.dependencies.get_search_coins_use_case import get_search_coins_use_case
 from app.api.v1.dependencies.get_signal_command_handler import get_signal_command_handler
 from app.api.v1.dependencies.get_signal_repository import get_signal_repository
 from app.api.v1.dependencies.get_simulate_command_handler import get_simulate_command_handler
@@ -83,6 +89,7 @@ __all__ = [
     "get_briefing_command_handler",
     "get_briefing_document_renderer",
     "get_chat_message_handler",
+    "get_coingecko_search_provider",
     "get_briefing_repository",
     "get_conversation_repository",
     "get_email_sender",
@@ -101,15 +108,18 @@ __all__ = [
     "get_market_pulse_use_case",
     "get_market_data_provider",
     "get_news_item_repository",
+    "get_news_prefilter_policy",
     "get_news_provider",
     "get_notification_channel",
     "get_preset_scenario_rows",
     "get_process_incoming_event_use_case",
     "get_realtime_session_provider",
+    "get_register_instrument_use_case",
     "get_render_chart_use_case",
     "get_reorder_watchlists_use_case",
     "get_scenario_repository",
     "get_scenario_simulation_runner",
+    "get_search_coins_use_case",
     "get_signal_command_handler",
     "get_signal_repository",
     "get_simulate_command_handler",
