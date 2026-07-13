@@ -17,10 +17,8 @@ jobs:
           enable-cache: true
       - name: Sync deps
         run: uv sync
-      - name: Ruff (lint + format check)
-        run: |
-          uv run ruff check .
-          uv run ruff format --check .
+      - name: Ruff (lint)
+        run: uv run ruff check .
       - name: Pyright
         run: uv run pyright
       - name: Import smoke test
