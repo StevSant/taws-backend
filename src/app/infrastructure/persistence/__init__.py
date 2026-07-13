@@ -1,3 +1,4 @@
+from app.infrastructure.persistence.in_memory_note_repository import InMemoryNoteRepository
 from app.infrastructure.persistence.sentiment_filter_to_range import (
     SentimentRange,
     sentiment_filter_to_range,
@@ -37,6 +38,7 @@ from app.infrastructure.persistence.supabase_watchlist_repository import (
 )
 
 __all__ = [
+    "InMemoryNoteRepository",
     "SentimentRange",
     "SupabaseBriefingRepository",
     "SupabaseConversationRepository",

@@ -25,7 +25,10 @@ from app.domain.market.entities import AssetClass
 from app.domain.market.ports import InstrumentUniverse
 from app.domain.scenario.entities import (
     EvidenceType,
+    ScenarioAgentContribution,
     ScenarioAssetClassImpact,
+    ScenarioConsensus,
+    ScenarioContributionStatus,
     ScenarioEvidence,
     ScenarioResult,
     ScenarioSpec,
@@ -53,6 +56,10 @@ and never claim more certainty than the evidence supports.
 
 Also propose research/monitoring actions (e.g. "watch for...", "set an alert on...") — never \
 buy/sell/order/execution instructions, and never phrased as personalized advice.
+
+The six specialist contributions are independent perspectives, not votes. Synthesize them into \
+a Midas consensus that preserves material agreements, disagreements, failed/missing perspectives, \
+and uncertainties. Base the conclusion only on the supplied grounding and contributions.
 
 This is research/informational output only."""
 
@@ -152,11 +159,14 @@ class SynthesizeScenarioResult:
         consequence_chain: ConsequenceChain,
         context: ScenarioContext,
         quant_results: dict[str, EventStudyStats],
+        agent_contributions: list[ScenarioAgentContribution],
         locale: str,
     ) -> ScenarioResult:
         spec = _attach_empirical_likelihood(spec, quant_results)
         evidence_pool = self._build_evidence_pool(spec, context, quant_results, locale)
-        extraction = await self._synthesize(spec, consequence_chain, evidence_pool, locale)
+        extraction = await self._synthesize(
+            spec, consequence_chain, evidence_pool, agent_contributions, locale
+        )
 
         impact_map = self._build_impact_map(spec, evidence_pool, extraction.impact_map, locale)
 
@@ -172,6 +182,15 @@ class SynthesizeScenarioResult:
             # Records which language `title`/`narrative`/`recommended_actions` were written
             # in; half of the `(preset_id, locale)` freshness cache key (issue #29).
             locale=locale,
+            agent_contributions=agent_contributions,
+            consensus=ScenarioConsensus(
+                summary=extraction.consensus.summary,
+                conclusion=extraction.consensus.conclusion,
+                agreements=extraction.consensus.agreements,
+                disagreements=extraction.consensus.disagreements,
+                uncertainties=extraction.consensus.uncertainties,
+                confidence=extraction.consensus.confidence,
+            ),
         )
 
     async def _synthesize(
@@ -179,6 +198,7 @@ class SynthesizeScenarioResult:
         spec: ScenarioSpec,
         consequence_chain: ConsequenceChain,
         evidence_pool: dict[AssetClass, list[ScenarioEvidence]],
+        agent_contributions: list[ScenarioAgentContribution],
         locale: str,
     ) -> ScenarioSynthesisExtraction:
         """Call the structured-output model with a bounded retry (issue #64).
@@ -199,7 +219,9 @@ class SynthesizeScenarioResult:
             ),
             Message(
                 role=MessageRole.USER,
-                content=_build_synthesis_prompt(spec, consequence_chain, evidence_pool),
+                content=_build_synthesis_prompt(
+                    spec, consequence_chain, evidence_pool, agent_contributions
+                ),
             ),
         ]
         last_error: Exception | None = None
@@ -469,6 +491,7 @@ def _build_synthesis_prompt(
     spec: ScenarioSpec,
     consequence_chain: ConsequenceChain,
     evidence_pool: dict[AssetClass, list[ScenarioEvidence]],
+    agent_contributions: list[ScenarioAgentContribution],
 ) -> str:
     lines = [
         f"Scenario: {spec.title}",
@@ -496,6 +519,25 @@ def _build_synthesis_prompt(
             lines.extend(f"  - {evidence.detail}" for evidence in evidence_list)
         else:
             lines.append("  - (no gathered evidence for this asset class)")
+    lines.extend(["", "Specialist panel contributions (synthesize; do not treat as votes):"])
+    for contribution in agent_contributions:
+        if contribution.status is ScenarioContributionStatus.FAILED:
+            lines.append(
+                f"- {contribution.agent_id.value}: unavailable "
+                f"({contribution.failure_reason or 'unknown failure'})"
+            )
+            continue
+        lines.extend(
+            [
+                f"- {contribution.agent_id.value} (confidence {contribution.confidence:.2f})",
+                f"  thesis: {contribution.thesis}",
+                f"  findings: {contribution.key_findings!r}",
+                f"  evidence refs: {contribution.evidence_refs!r}",
+                f"  risks: {contribution.risks!r}",
+                f"  uncertainty: {contribution.uncertainty}",
+                f"  recommendation: {contribution.recommendation}",
+            ]
+        )
     return "\n".join(lines)
 
 
