@@ -348,6 +348,18 @@ class Settings(BaseSettings):
     # default window, so a chip and the asset page it links to never disagree on the number.
     news_detail_price_window_days: int = 30
 
+    # --- News browse page (issue #70: GET /api/v1/news/browse, the DB-backed archive with
+    # numbered pagination — distinct from the live provider-fed GET /api/v1/news) ---
+    # Page size used when the caller doesn't pass one, and the ceiling it's clamped to, so a
+    # crafted `page_size` can't ask the store for an unbounded page.
+    news_browse_default_page_size: int = 20
+    news_browse_max_page_size: int = 100
+    # abs(sentiment_score) at or below which a news item counts as *neutral* in the browse
+    # sentiment filter; above it, positive/negative. Deliberately mirrors the frontend's
+    # `classifyNewsSentiment` threshold — if the two drift, a card badged "positivo" could
+    # disappear from the "positive" filter.
+    news_sentiment_neutral_threshold: float = 0.15
+
     # --- Historical analogs RAG (behind the VectorStore port, pgvector-backed) ---
     historical_analogs_top_k: int = 3
 

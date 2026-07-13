@@ -9,11 +9,17 @@ from app.domain.market.entities.instrument_row import InstrumentRow
 from app.domain.market.entities.macro_indicator import MacroIndicator
 from app.domain.market.entities.macro_observation import MacroObservation
 from app.domain.market.entities.macro_series import MacroSeries
+from app.domain.market.entities.news_browse_query import NewsBrowseQuery
 from app.domain.market.entities.news_entity import NewsEntity
+from app.domain.market.entities.news_facets import NewsFacets
 from app.domain.market.entities.news_item import NewsItem
 from app.domain.market.entities.news_skip_reason import NewsSkipReason
+from app.domain.market.entities.news_sort_field import NewsSortField
+from app.domain.market.entities.paginated_news_items import PaginatedNewsItems
 from app.domain.market.entities.price_candle import PriceCandle
 from app.domain.market.entities.price_series import PriceSeries
+from app.domain.market.entities.sentiment_filter import SentimentFilter
+from app.domain.market.entities.sort_direction import SortDirection
 from app.domain.market.entities.volatility_level import VolatilityLevel
 from app.domain.market.entities.volatility_regime import VolatilityRegime
 
@@ -29,11 +35,17 @@ __all__ = [
     "MacroIndicator",
     "MacroObservation",
     "MacroSeries",
+    "NewsBrowseQuery",
     "NewsEntity",
+    "NewsFacets",
     "NewsItem",
     "NewsSkipReason",
+    "NewsSortField",
+    "PaginatedNewsItems",
     "PriceCandle",
     "PriceSeries",
+    "SentimentFilter",
+    "SortDirection",
     "VolatilityLevel",
     "VolatilityRegime",
 ]

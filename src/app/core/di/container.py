@@ -453,6 +453,7 @@ class Container:
             self._news_item_repository = SupabaseNewsItemRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
+                sentiment_neutral_threshold=self._settings.news_sentiment_neutral_threshold,
             )
         return self._news_item_repository
 

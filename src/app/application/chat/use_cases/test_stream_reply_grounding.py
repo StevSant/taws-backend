@@ -13,7 +13,14 @@ from datetime import UTC, date, datetime
 from app.application.chat.use_cases import StreamReply
 from app.domain.agents.entities import AgentStreamEvent, Message, MessageRole, TokenEvent
 from app.domain.agents.ports import AgentRunner
-from app.domain.market.entities import AssetClass, Instrument, NewsItem
+from app.domain.market.entities import (
+    AssetClass,
+    Instrument,
+    NewsBrowseQuery,
+    NewsFacets,
+    NewsItem,
+    PaginatedNewsItems,
+)
 from app.domain.market.ports import InstrumentUniverse, NewsItemRepository
 
 
@@ -68,6 +75,12 @@ class _FakeNewsItemRepository(NewsItemRepository):
         if self._item and self._item.id == news_id:
             return self._item
         return None
+
+    async def browse(self, query: NewsBrowseQuery) -> PaginatedNewsItems:
+        return PaginatedNewsItems(items=[], total=0, page=1, page_size=0)
+
+    async def list_facets(self) -> NewsFacets:
+        return NewsFacets(sources=[], providers=[])
 
     async def list_pending(self, limit: int) -> list[NewsItem]:
         return []
