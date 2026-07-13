@@ -39,9 +39,7 @@ async def _require_owned_watchlist(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found")
 
 
-async def _to_response(
-    briefing: Briefing, signal_repository: SignalRepository
-) -> BriefingResponse:
+async def _to_response(briefing: Briefing, signal_repository: SignalRepository) -> BriefingResponse:
     """Validate a domain `Briefing` and enrich its `linked_signal_ids` into `linked_signals`.
 
     Resolution runs here in the API layer (via the injected port), keeping the domain
