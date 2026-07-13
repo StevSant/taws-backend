@@ -23,7 +23,9 @@ def test_coin_candidate_response_matches_coin_candidate_fields() -> None:
 
 
 def test_coin_candidate_response_allows_null_market_cap_rank() -> None:
-    candidate = CoinCandidate(id="micro", symbol="mic", name="Micro", market_cap_rank=None, thumb="")
+    candidate = CoinCandidate(
+        id="micro", symbol="mic", name="Micro", market_cap_rank=None, thumb=""
+    )
 
     response = CoinCandidateResponse.model_validate(candidate)
 

@@ -58,12 +58,12 @@ def migrated_db() -> sqlalchemy.Engine:
     }
 
     config = _alembic_config()
-    command.upgrade(config, "0015")
+    command.upgrade(config, "0013b")
     engine = _engine()
     try:
         yield engine
     finally:
-        command.downgrade(config, "0014")
+        command.downgrade(config, "0013")
         engine.dispose()
         for name, logger in manager.loggerDict.items():
             if isinstance(logger, logging.Logger):
@@ -96,7 +96,7 @@ def test_rerunning_seed_insert_is_a_no_op(migrated_db: sqlalchemy.Engine) -> Non
 
 def test_downgrade_drops_the_table(migrated_db: sqlalchemy.Engine) -> None:
     config = _alembic_config()
-    command.downgrade(config, "0014")
+    command.downgrade(config, "0013")
 
     with migrated_db.connect() as conn:
         exists = conn.execute(
@@ -108,13 +108,16 @@ def test_downgrade_drops_the_table(migrated_db: sqlalchemy.Engine) -> None:
 
     assert exists is False
 
-    command.upgrade(config, "0015")
+    command.upgrade(config, "0013b")
 
 
-def test_alembic_heads_includes_0015() -> None:
+def test_instruments_migration_is_in_the_tree() -> None:
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(_alembic_config())
-    heads = script.get_heads()
+    revisions = {rev.revision for rev in script.walk_revisions()}
 
-    assert heads == ["0015"]
+    # The instruments migration lives at `0013b` on main (a teammate renumbered the
+    # original Slice-1 migration to keep revision ids unique, PR #41); this feature
+    # reuses it rather than adding a duplicate.
+    assert "0013b" in revisions

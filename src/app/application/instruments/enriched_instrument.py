@@ -14,6 +14,11 @@ class EnrichedInstrument:
     fanning out one request per instrument per column. Every market-derived field is
     `None`/empty (never a crash) when the underlying price series is too thin to compute
     from — same graceful-degradation contract as `application.quant.MarketStats`.
+
+    `market_cap`, `volume_24h`, `change_7d_pct` (instrument-enrichment spec) are additive
+    CoinGecko `/coins/markets` fields sourced via the `InstrumentMetadataProvider` port —
+    `None` when CoinGecko has no mapping for the instrument or is unavailable, same
+    graceful-degradation contract as every other market-derived field on this row.
     """
 
     symbol: str
@@ -26,3 +31,6 @@ class EnrichedInstrument:
     volatility_regime: VolatilityRegime | None
     sparkline: list[float]
     latest_signal: Signal | None
+    market_cap: float | None = None
+    volume_24h: float | None = None
+    change_7d_pct: float | None = None

@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.v1.dependencies import (
+    get_instrument_metadata_provider,
     get_instrument_universe,
     get_market_data_provider,
     get_register_instrument_use_case,
@@ -29,7 +30,11 @@ from app.application.instruments.use_cases import (
     SearchCoins,
 )
 from app.domain.market.entities import AssetClass, CoinCandidate
-from app.domain.market.ports import InstrumentUniverse, MarketDataProvider
+from app.domain.market.ports import (
+    InstrumentMetadataProvider,
+    InstrumentUniverse,
+    MarketDataProvider,
+)
 from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.entities import Watchlist
 from app.domain.watchlist.ports import WatchlistRepository
@@ -65,6 +70,9 @@ async def list_enriched_instruments(
     universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
     market_data_provider: Annotated[MarketDataProvider, Depends(get_market_data_provider)],
     signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
+    instrument_metadata_provider: Annotated[
+        InstrumentMetadataProvider, Depends(get_instrument_metadata_provider)
+    ],
     asset_class: Annotated[AssetClass | None, Query()] = None,
     search: Annotated[str | None, Query(max_length=_SEARCH_MAX_LEN)] = None,
     sort_by: Annotated[InstrumentSortField, Query()] = InstrumentSortField.NAME,
@@ -85,6 +93,7 @@ async def list_enriched_instruments(
         instrument_universe=universe,
         market_data_provider=market_data_provider,
         signal_repository=signal_repository,
+        instrument_metadata_provider=instrument_metadata_provider,
     )
     page_result = await use_case.execute(
         asset_class=asset_class,
