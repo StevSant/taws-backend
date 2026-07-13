@@ -11,6 +11,7 @@ from app.domain.market.entities.macro_observation import MacroObservation
 from app.domain.market.entities.macro_series import MacroSeries
 from app.domain.market.entities.news_entity import NewsEntity
 from app.domain.market.entities.news_item import NewsItem
+from app.domain.market.entities.news_skip_reason import NewsSkipReason
 from app.domain.market.entities.price_candle import PriceCandle
 from app.domain.market.entities.price_series import PriceSeries
 from app.domain.market.entities.volatility_level import VolatilityLevel
@@ -30,6 +31,7 @@ __all__ = [
     "MacroSeries",
     "NewsEntity",
     "NewsItem",
+    "NewsSkipReason",
     "PriceCandle",
     "PriceSeries",
     "VolatilityLevel",

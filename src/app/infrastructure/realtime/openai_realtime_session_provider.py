@@ -55,12 +55,23 @@ class OpenAIRealtimeSessionProvider(RealtimeSessionProvider):
                 "model": model,
                 "instructions": instructions,
                 "tools": tools,
-                "audio": {"output": {"voice": voice}},
+                "tool_choice": "required",
+                "audio": {
+                    "input": {
+                        "transcription": {
+                            "model": "gpt-4o-mini-transcribe",
+                            "language": "es",
+                            "prompt": (
+                                "Mercados financieros, tickers, acciones, criptomonedas "
+                                "y solicitudes de gráficos."
+                            ),
+                        }
+                    },
+                    "output": {"voice": voice},
+                },
             },
         )
-        expires_after = cast(
-            ExpiresAfter, {"anchor": "created_at", "seconds": expires_in_seconds}
-        )
+        expires_after = cast(ExpiresAfter, {"anchor": "created_at", "seconds": expires_in_seconds})
         response = await self._client.realtime.client_secrets.create(
             expires_after=expires_after,
             session=session_config,

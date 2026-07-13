@@ -31,9 +31,7 @@ def build_get_recent_events_tool(
             if event.affected_assets:
                 parts.append(f"  Assets: {', '.join(event.affected_assets)}")
             if event.suggested_questions:
-                parts.append(
-                    f"  Follow-up: {' | '.join(event.suggested_questions)}"
-                )
+                parts.append(f"  Follow-up: {' | '.join(event.suggested_questions)}")
         return "\n".join(parts)
 
     return StructuredTool.from_function(

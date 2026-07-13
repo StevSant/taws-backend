@@ -31,9 +31,7 @@ def test_returns_none_when_enabled_but_no_key_available() -> None:
 
 
 def test_returns_adapter_when_enabled_with_dedicated_key() -> None:
-    container = _container(
-        openai_realtime_enabled=True, openai_realtime_api_key="sk-realtime"
-    )
+    container = _container(openai_realtime_enabled=True, openai_realtime_api_key="sk-realtime")
 
     provider = container.get_realtime_session_provider()
 
@@ -53,9 +51,7 @@ def test_falls_back_to_openai_api_key_when_dedicated_key_unset() -> None:
 
 
 def test_provider_is_cached_singleton() -> None:
-    container = _container(
-        openai_realtime_enabled=True, openai_realtime_api_key="sk-realtime"
-    )
+    container = _container(openai_realtime_enabled=True, openai_realtime_api_key="sk-realtime")
 
     first = container.get_realtime_session_provider()
     second = container.get_realtime_session_provider()

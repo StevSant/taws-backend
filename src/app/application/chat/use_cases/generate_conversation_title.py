@@ -49,8 +49,7 @@ class GenerateConversationTitle:
         lines = [
             f"{message.role.value}: {message.content.strip()}"
             for message in messages
-            if message.role in (MessageRole.USER, MessageRole.ASSISTANT)
-            and message.content.strip()
+            if message.role in (MessageRole.USER, MessageRole.ASSISTANT) and message.content.strip()
         ]
         return "\n".join(lines)
 

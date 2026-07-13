@@ -37,6 +37,17 @@ class WatchlistRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def reorder(self, user_id: str, ordered_ids: list[str]) -> None:
+        """Persist a new display order for `user_id`'s watchlists (issue #66).
+
+        Sets `position = index` for each id in `ordered_ids`, in list order. Only rows
+        owned by `user_id` are touched — ids that don't belong to the caller (or don't
+        exist) are silently ignored, never raising and never affecting another user's
+        rows. Ids the user owns but omits from the list keep their current `position`.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def delete(self, watchlist_id: str) -> None:
         """Delete a watchlist and cascade-delete its items."""
         raise NotImplementedError

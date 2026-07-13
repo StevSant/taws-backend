@@ -10,6 +10,8 @@ from pydantic import ValidationError
 from app.api.v1.dependencies import (
     get_agent_runner,
     get_generate_conversation_title_use_case,
+    get_instrument_universe,
+    get_news_item_repository,
     get_realtime_session_provider,
     get_stt_provider,
     get_tts_provider,
@@ -45,6 +47,8 @@ from app.domain.agents.ports import (
     STTProvider,
     TTSProvider,
 )
+from app.domain.market.ports import InstrumentUniverse, NewsItemRepository
+from app.infrastructure.realtime import REALTIME_INSTRUCTIONS
 from app.infrastructure.realtime.tools import (
     ToolNotFoundError,
     build_realtime_tool_schemas,
@@ -57,17 +61,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 _DEFAULT_THREAD_ID = "default"
-
-_REALTIME_INSTRUCTIONS = (
-    "You are TAWS Voice, a spoken market-intelligence assistant. Answer briefly and "
-    "conversationally. Use the provided tools to ground every market claim in real "
-    "data — call get_market_data for prices, get_news for headlines, list_signals for "
-    "existing Analyst signals, and generate_signal to produce a fresh one (acknowledge "
-    "verbally before that slower call). For broad news-impact questions, generate fresh "
-    "signals for up to three related symbols returned by get_news. Omit unsupported impact "
-    "or confidence fields instead of saying they are unspecified. Never give personalized "
-    "financial advice; this is research and information only."
-)
 
 
 def _to_sse_frame(event: AgentStreamEvent) -> str:
@@ -127,6 +120,8 @@ async def stream_chat(
     payload: ChatRequest,
     user: Annotated[CurrentUser, Depends(require_current_user)],
     agent_runner: Annotated[AgentRunner, Depends(get_agent_runner)],
+    instrument_universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
+    news_item_repository: Annotated[NewsItemRepository, Depends(get_news_item_repository)],
 ) -> StreamingResponse:
     """Stream an assistant reply over Server-Sent Events (SSE protocol v2).
 
@@ -137,12 +132,28 @@ async def stream_chat(
     kept by the graph's checkpointer, keyed by `payload.thread_id`. Requires an
     authenticated user (see `require_current_user`); `user.id` is threaded through to
     the agent graph's config for future per-tenant tool access.
+
+    An optional `payload.asset_symbol` or `payload.news_id` (issue #73) is resolved via
+    the injected `InstrumentUniverse` / `NewsItemRepository` ports into a grounding string
+    that anchors the agent's answer on that asset/news; omit both to behave as before.
     """
-    use_case = StreamReply(agent_runner=agent_runner)
+    use_case = StreamReply(
+        agent_runner=agent_runner,
+        instrument_universe=instrument_universe,
+        news_item_repository=news_item_repository,
+    )
     thread_id = payload.thread_id or _DEFAULT_THREAD_ID
     message = Message(role=MessageRole.USER, content=payload.message)
 
-    event_stream = use_case.execute(thread_id, message, user.id)
+    event_stream = use_case.execute(
+        thread_id,
+        message,
+        user.id,
+        asset_symbol=payload.asset_symbol,
+        news_id=payload.news_id,
+        from_date=payload.from_date,
+        to_date=payload.to_date,
+    )
     return StreamingResponse(_to_sse(event_stream), media_type="text/event-stream")
 
 
@@ -162,9 +173,7 @@ async def generate_title(
     short slice of the first user message when the LLM is unavailable (e.g. no API key),
     so it never fails the caller.
     """
-    messages = [
-        Message(role=item.role, content=item.content) for item in payload.messages
-    ]
+    messages = [Message(role=item.role, content=item.content) for item in payload.messages]
     title = await use_case.execute(messages)
     return ConversationTitleResponse(title=title)
 
@@ -172,9 +181,7 @@ async def generate_title(
 @router.post("/realtime/session", response_model=RealtimeSessionResponse)
 async def create_realtime_session(
     user: Annotated[CurrentUser, Depends(require_current_user)],
-    provider: Annotated[
-        RealtimeSessionProvider | None, Depends(get_realtime_session_provider)
-    ],
+    provider: Annotated[RealtimeSessionProvider | None, Depends(get_realtime_session_provider)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> RealtimeSessionResponse:
     """Mint a short-lived OpenAI Realtime session for the browser's WebRTC connection.
@@ -192,12 +199,12 @@ async def create_realtime_session(
             detail="Realtime voice is not enabled",
         )
 
-    tools = build_realtime_tool_schemas()
+    tools = build_realtime_tool_schemas(charts_enabled=settings.charts_enabled)
     session = await provider.mint_ephemeral_session(
         user_id=user.id,
         model=settings.openai_realtime_model,
         voice=settings.openai_realtime_voice,
-        instructions=_REALTIME_INSTRUCTIONS,
+        instructions=REALTIME_INSTRUCTIONS,
         tools=tools,
         expires_in_seconds=settings.openai_realtime_ttl_seconds,
     )
@@ -231,25 +238,29 @@ async def execute_realtime_tool(
     try:
         validate_tool_args(payload.name, payload.arguments)
     except ToolNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors()
         ) from exc
 
     try:
-        output = await dispatch_realtime_tool(
-            container, payload.name, payload.arguments, user.id
-        )
+        output = await dispatch_realtime_tool(container, payload.name, payload.arguments, user.id)
     except Exception as exc:  # noqa: BLE001 — recoverable tool error, not a server fault
         logger.warning(
-            "Realtime tool %r failed for call %r", payload.name, payload.call_id,
+            "Realtime tool %r failed for call %r",
+            payload.name,
+            payload.call_id,
             exc_info=True,
         )
         output = {"error": str(exc)}
 
+    logger.info(
+        "Realtime tool %r completed for call %r (chart=%s)",
+        payload.name,
+        payload.call_id,
+        "chart" in output,
+    )
     return RealtimeToolResponse(call_id=payload.call_id, output=output)
 
 

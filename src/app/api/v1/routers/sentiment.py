@@ -7,7 +7,11 @@ from app.api.v1.dependencies import (
     get_fear_greed_provider,
     get_market_pulse_use_case,
 )
-from app.api.v1.schemas import FearGreedReadingResponse, MarketPulseResponse, SentimentReadingResponse
+from app.api.v1.schemas import (
+    FearGreedReadingResponse,
+    MarketPulseResponse,
+    SentimentReadingResponse,
+)
 from app.application.sentiment.unknown_instrument_error import UnknownInstrumentError
 from app.application.sentiment.use_cases import AnalyzeSentiment
 from app.application.sentiment.use_cases.get_market_pulse import GetMarketPulse

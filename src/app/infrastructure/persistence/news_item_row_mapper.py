@@ -1,6 +1,6 @@
 from typing import Any
 
-from app.domain.market.entities import AnalysisStatus, NewsEntity, NewsItem
+from app.domain.market.entities import AnalysisStatus, NewsEntity, NewsItem, NewsSkipReason
 from app.infrastructure.persistence.parse_supabase_timestamp import parse_supabase_timestamp
 
 
@@ -25,7 +25,23 @@ def news_item_from_row(row: Any) -> NewsItem:
         analysis_status=AnalysisStatus(row["analysis_status"]),
         signal_id=row.get("signal_id"),
         image_url=row.get("image_url"),
+        skip_reason=_skip_reason_from_row(row.get("skip_reason")),
     )
+
+
+def _skip_reason_from_row(value: str | None) -> NewsSkipReason | None:
+    """Tolerate an unrecognized `skip_reason` rather than failing the whole read.
+
+    The column is `check`-constrained (migration 0014), so an unknown value can only mean the
+    DB is ahead of this deploy (a newer revision added a reason). Degrading that to "no reason
+    given" keeps `GET /api/v1/news` serving during a rolling deploy; raising would 500 it.
+    """
+    if value is None:
+        return None
+    try:
+        return NewsSkipReason(value)
+    except ValueError:
+        return None
 
 
 def news_item_to_insert_row(item: NewsItem) -> dict[str, Any]:
@@ -49,6 +65,7 @@ def news_item_to_insert_row(item: NewsItem) -> dict[str, Any]:
         "analysis_status": item.analysis_status.value,
         "signal_id": item.signal_id,
         "image_url": item.image_url,
+        "skip_reason": item.skip_reason.value if item.skip_reason else None,
     }
 
 

@@ -325,9 +325,7 @@ def _build_instrument_breakdown(
             # had grounding data — never let a signal-less instrument surface an LLM
             # narrative, however unlikely, despite the system prompt's instruction not to
             # produce one.
-            narrative = narratives_by_symbol.get(
-                symbol, _no_signals_narrative(symbol, locale)
-            )
+            narrative = narratives_by_symbol.get(symbol, _no_signals_narrative(symbol, locale))
         else:
             narrative = _no_signals_narrative(symbol, locale)
         sections.append(

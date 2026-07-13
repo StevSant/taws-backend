@@ -105,6 +105,9 @@ class _FakeWatchlistRepository(WatchlistRepository):
     async def remove_item(self, watchlist_id: str, item_id: str) -> None:
         raise NotImplementedError
 
+    async def reorder(self, user_id: str, ordered_ids: list[str]) -> None:
+        raise NotImplementedError
+
 
 async def test_register_new_coin_upserts_adds_and_watchlists_in_order() -> None:
     catalog = _FakeCatalogRepository()

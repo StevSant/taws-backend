@@ -103,9 +103,7 @@ class LocalizeNewsBlurbs:
             lines.append(
                 f"- id={item.id}\n  title={item.title.strip()}\n  summary={summary or '(none)'}"
             )
-        user_content = (
-            "Return JSON with one blurb per id.\n\nArticles:\n" + "\n".join(lines)
-        )
+        user_content = "Return JSON with one blurb per id.\n\nArticles:\n" + "\n".join(lines)
         try:
             payload = await self._llm.complete_structured(
                 [
@@ -145,7 +143,7 @@ class LocalizeNewsBlurbs:
 
     @staticmethod
     def _cache_key(locale: str, item: NewsBlurbSource) -> str:
-        digest = hashlib.sha1(f"{item.title}\n{item.summary}".encode("utf-8")).hexdigest()[:10]
+        digest = hashlib.sha1(f"{item.title}\n{item.summary}".encode()).hexdigest()[:10]
         return f"{locale}:{item.id}:{digest}"
 
 

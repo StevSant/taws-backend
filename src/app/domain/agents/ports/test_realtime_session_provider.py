@@ -66,9 +66,7 @@ async def test_fake_mint_returns_ephemeral_session_and_records_args() -> None:
 
 
 def test_entity_is_frozen() -> None:
-    session = EphemeralRealtimeSession(
-        client_secret="ek_x", model="m", expires_at=1, tools=[]
-    )
+    session = EphemeralRealtimeSession(client_secret="ek_x", model="m", expires_at=1, tools=[])
     try:
         session.client_secret = "leak"  # type: ignore[misc]
     except (AttributeError, TypeError):

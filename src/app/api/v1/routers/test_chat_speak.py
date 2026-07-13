@@ -66,9 +66,7 @@ def test_speak_uses_requested_voice_when_provided() -> None:
     app.dependency_overrides[get_tts_provider] = lambda: provider
     try:
         with TestClient(app) as client:
-            response = client.post(
-                "/api/v1/chat/speak", json={"text": "hi", "voice": "shimmer"}
-            )
+            response = client.post("/api/v1/chat/speak", json={"text": "hi", "voice": "shimmer"})
     finally:
         app.dependency_overrides.clear()
 
@@ -127,9 +125,7 @@ def test_speak_rejects_text_over_configured_max() -> None:
     app.dependency_overrides[get_tts_provider] = lambda: provider
     try:
         with TestClient(app) as client:
-            response = client.post(
-                "/api/v1/chat/speak", json={"text": "way too long"}
-            )
+            response = client.post("/api/v1/chat/speak", json={"text": "way too long"})
     finally:
         app.dependency_overrides.clear()
 
