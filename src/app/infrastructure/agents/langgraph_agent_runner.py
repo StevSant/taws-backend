@@ -55,10 +55,17 @@ class LangGraphAgentRunner(AgentRunner):
         thread_id: str,
         message: Message,
         user_id: str,
+        locale: str,
         grounding_context: str | None = None,
     ) -> AsyncIterator[AgentStreamEvent]:
         config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
-        input_state: dict[str, Any] = {"messages": [HumanMessage(content=message.content)]}
+        # `locale` is re-sent on every turn (issue #67): a user who switches language
+        # mid-thread must be answered in the new one, and the checkpointed state's
+        # last-value-wins reducer makes the newest turn's locale the effective one.
+        input_state: dict[str, Any] = {
+            "messages": [HumanMessage(content=message.content)],
+            "locale": locale,
+        }
         if grounding_context:
             input_state["grounding_context"] = grounding_context
 

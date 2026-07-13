@@ -29,10 +29,12 @@ class Settings(BaseSettings):
         "compliance@midas.demo": "compliance",
     }
 
-    # Locale used for LLM-generated content (signals/briefings/scenarios) when a caller
-    # doesn't supply one — e.g. a scheduled job, a chat tool call, or a request that omits
-    # the `locale` field. BCP-47-ish tag, e.g. "en", "es", "es-MX".
-    default_locale: str = "en"
+    # Locale used for LLM-generated content (chat/signals/briefings/scenarios) when neither
+    # the request nor the authenticated user's `preferred_locale` supplies one — e.g. a
+    # scheduled job, an anonymous visitor, or a request that omits the `locale` field.
+    # BCP-47-ish tag, e.g. "en", "es", "es-MX". `es` matches the frontend's default locale
+    # (`core/i18n/translation-service.ts`); the two sides must agree (issue #67).
+    default_locale: str = "es"
 
     openai_api_key: str | None = None
     # --- Tiered LLM models (issue #28) ---

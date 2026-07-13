@@ -21,6 +21,7 @@ from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.event_intelligence.use_cases import AnalyzeEventImpact, ProcessIncomingEvent
 from app.application.instruments.use_cases import RegisterInstrument, SearchCoins
 from app.application.macro.use_cases import InterpretMacroEvent
+from app.application.profile.use_cases import ResolveLocale
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
 from app.application.scenario.use_cases import (
     ComputeScenarioQuantification,
@@ -73,6 +74,7 @@ from app.domain.market.ports import (
 )
 from app.domain.notes.ports import NoteRepository
 from app.domain.notification.ports import EmailSender, NotificationChannel
+from app.domain.profile.ports import UserProfileRepository
 from app.domain.scenario.entities import ScenarioAgentId
 from app.domain.scenario.ports import ScenarioRepository
 from app.domain.sentiment.ports import FearGreedProvider, SentimentRepository
@@ -164,6 +166,7 @@ from app.infrastructure.persistence import (
     SupabaseTelegramLinkRepository,
     SupabaseTelegramLinkTokenRepository,
     SupabaseUserBotRepository,
+    SupabaseUserProfileRepository,
     SupabaseWatchlistRepository,
 )
 from app.infrastructure.realtime import OpenAIRealtimeSessionProvider
@@ -219,6 +222,8 @@ class Container:
         self._watchlist_repository: WatchlistRepository | None = None
         self._reorder_watchlists_use_case: ReorderWatchlists | None = None
         self._note_repository: NoteRepository | None = None
+        self._user_profile_repository: UserProfileRepository | None = None
+        self._resolve_locale_use_case: ResolveLocale | None = None
         self._signal_repository: SignalRepository | None = None
         self._briefing_repository: BriefingRepository | None = None
         self._news_provider: NewsProvider | None = None
@@ -439,9 +444,7 @@ class Container:
     def get_note_repository(self) -> NoteRepository:
         """Return Supabase notes, with process-local storage for unconfigured development."""
         if self._note_repository is None:
-            supabase_configured = bool(
-                self._settings.supabase_url and self._settings.supabase_key
-            )
+            supabase_configured = bool(self._settings.supabase_url and self._settings.supabase_key)
             if self._settings.app_env == "development" and not supabase_configured:
                 logging.getLogger(__name__).warning(
                     "Supabase notes are not configured; using process-local development storage."
@@ -455,6 +458,33 @@ class Container:
                     retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
                 )
         return self._note_repository
+
+    def get_user_profile_repository(self) -> UserProfileRepository:
+        """Return the cached per-user UserProfileRepository (issue #67), Supabase-backed with
+        the same retry/config wiring as the other per-user repositories."""
+        if self._user_profile_repository is None:
+            self._user_profile_repository = SupabaseUserProfileRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
+            )
+        return self._user_profile_repository
+
+    def get_resolve_locale_use_case(self) -> ResolveLocale:
+        """Return the cached `ResolveLocale` use case (issue #67).
+
+        The single place that answers "what language does this reply go out in":
+        request locale -> the user's stored `preferred_locale` -> `Settings.default_locale`.
+        Only depends on one repository plus a settings value, so caching one instance is
+        safe — same shape as the other single-port use cases wired here.
+        """
+        if self._resolve_locale_use_case is None:
+            self._resolve_locale_use_case = ResolveLocale(
+                user_profile_repository=self.get_user_profile_repository(),
+                default_locale=self._settings.default_locale,
+            )
+        return self._resolve_locale_use_case
 
     def get_signal_repository(self) -> SignalRepository:
         if self._signal_repository is None:
@@ -676,8 +706,16 @@ class Container:
         )
 
     def build_chat_message_handler(self, messenger: TelegramMessenger) -> ChatMessageHandler:
-        """A conversational handler replying through `messenger`. See the note above."""
-        return ChatMessageHandler(agent_runner=self.get_agent_runner(), messenger=messenger)
+        """A conversational handler replying through `messenger`. See the note above.
+
+        Telegram has no per-user language preference of its own, so the handler answers in
+        `Settings.default_locale` (issue #67) rather than defaulting to the personas' English.
+        """
+        return ChatMessageHandler(
+            agent_runner=self.get_agent_runner(),
+            messenger=messenger,
+            default_locale=self._settings.default_locale,
+        )
 
     def get_briefing_command_handler(self) -> BriefingCommandHandler | None:
         """Return the main bot's cached `/briefing` handler, or `None` when Telegram isn't

@@ -18,6 +18,9 @@ class StreamReply:
     `grounding_context` string via the injected `InstrumentUniverse` / `NewsItemRepository`
     ports and forwarded to the runner so the agent answer is grounded on that asset/news
     (issue #73). No reference resolves to `None` and behaves exactly as before.
+
+    `locale` (issue #67) is the language the reply must be written in, already resolved by
+    the caller via `ResolveLocale` — this use case just carries it to the agent layer.
     """
 
     def __init__(
@@ -37,6 +40,7 @@ class StreamReply:
         thread_id: str,
         message: Message,
         user_id: str,
+        locale: str,
         asset_symbol: str | None = None,
         news_id: str | None = None,
         from_date: date | None = None,
@@ -49,6 +53,6 @@ class StreamReply:
             to_date=to_date,
         )
         async for event in self._agent_runner.stream(
-            thread_id, message, user_id, grounding_context=grounding_context
+            thread_id, message, user_id, locale, grounding_context=grounding_context
         ):
             yield event

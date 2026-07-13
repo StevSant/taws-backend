@@ -40,9 +40,7 @@ def _result() -> ScenarioResult:
                 confidence=0.8,
             )
         ],
-        consensus=ScenarioConsensus(
-            summary="Summary", conclusion="Conclusion", confidence=0.7
-        ),
+        consensus=ScenarioConsensus(summary="Summary", conclusion="Conclusion", confidence=0.7),
     )
 
 
