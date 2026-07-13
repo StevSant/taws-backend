@@ -44,7 +44,10 @@ class SupabaseUserBotRepository(UserBotRepository):
             "bot_username": bot.bot_username,
             "chat_id": bot.chat_id,
         }
-        response = await client.table(_TABLE).insert(row).execute()
+        # Upsert on user_id (the table's unique constraint) -- re-registering (e.g.
+        # linking a different bot, or retrying) must replace the existing row instead
+        # of raising a 23505 duplicate-key error.
+        response = await client.table(_TABLE).upsert(row, on_conflict="user_id").execute()
         return user_bot_from_row(response.data[0])
 
     async def delete(self, user_id: str) -> None:

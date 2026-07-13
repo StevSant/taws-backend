@@ -1,3 +1,4 @@
+from app.infrastructure.persistence.in_memory_note_repository import InMemoryNoteRepository
 from app.infrastructure.persistence.sentiment_filter_to_range import (
     SentimentRange,
     sentiment_filter_to_range,
@@ -7,6 +8,9 @@ from app.infrastructure.persistence.supabase_briefing_repository import (
 )
 from app.infrastructure.persistence.supabase_conversation_repository import (
     SupabaseConversationRepository,
+)
+from app.infrastructure.persistence.supabase_instrument_catalog_repository import (
+    SupabaseInstrumentCatalogRepository,
 )
 from app.infrastructure.persistence.supabase_news_item_repository import (
     SupabaseNewsItemRepository,
@@ -34,9 +38,11 @@ from app.infrastructure.persistence.supabase_watchlist_repository import (
 )
 
 __all__ = [
+    "InMemoryNoteRepository",
     "SentimentRange",
     "SupabaseBriefingRepository",
     "SupabaseConversationRepository",
+    "SupabaseInstrumentCatalogRepository",
     "SupabaseNewsItemRepository",
     "SupabaseNoteRepository",
     "SupabaseScenarioRepository",

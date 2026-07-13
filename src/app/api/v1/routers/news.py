@@ -7,13 +7,16 @@ from app.api.v1.dependencies import (
     get_fast_llm_provider,
     get_force_analyze_news_item_use_case,
     get_instrument_universe,
+    get_market_data_provider,
     get_news_item_repository,
     get_news_provider,
     get_signal_repository,
 )
+from app.api.v1.mappers import map_news_detail_to_response
 from app.api.v1.schemas import (
     AnalyzePendingNewsResponse,
     NewsBrowseResponse,
+    NewsDetailResponse,
     NewsFacetsResponse,
     NewsItemResponse,
     NewsListResponse,
@@ -23,11 +26,12 @@ from app.api.v1.schemas.localize_news_blurbs import (
     LocalizeNewsBlurbsResponse,
     NewsBlurbResponse,
 )
-from app.application.market.use_cases import BrowseNews, IngestNews
+from app.application.market.use_cases import BrowseNews, BuildNewsDetail, IngestNews
 from app.application.market.use_cases.localize_news_blurbs import (
     LocalizeNewsBlurbs,
     NewsBlurbSource,
 )
+from app.application.quant.use_cases import ComputeMarketStats
 from app.application.signals import NewsItemNotAnalyzableError, NewsItemNotFoundError
 from app.application.signals.use_cases import AnalyzePendingNews, ForceAnalyzeNewsItem
 from app.core.config import Settings, get_settings
@@ -41,7 +45,12 @@ from app.domain.market.entities import (
     SentimentFilter,
     SortDirection,
 )
-from app.domain.market.ports import InstrumentUniverse, NewsItemRepository, NewsProvider
+from app.domain.market.ports import (
+    InstrumentUniverse,
+    MarketDataProvider,
+    NewsItemRepository,
+    NewsProvider,
+)
 from app.domain.signals.ports import SignalRepository
 
 router = APIRouter(prefix="/news", tags=["news"])
@@ -211,18 +220,39 @@ async def list_news_facets(
 async def get_news_item(
     news_id: str,
     news_item_repository: Annotated[NewsItemRepository, Depends(get_news_item_repository)],
-) -> NewsItemResponse:
+    signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
+    instrument_universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
+    market_data_provider: Annotated[MarketDataProvider, Depends(get_market_data_provider)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> NewsDetailResponse:
     """Return a single persisted news item by its `news_items.id` (issue #38), or 404.
 
     Reads straight from the `news_items` store — the item must already have been
     persisted by a prior `GET /api/v1/news` (persist-then-read) — so `analysis_status`
     reflects whatever a prior `AnalyzePendingNews` run decided. Not user-scoped (public
     read, same visibility model as the list endpoint).
+
+    The response carries the article's own fields unchanged (`skip_reason` included) plus two
+    additive sections the detail page used to assemble itself, one HTTP call per affected
+    instrument (issue #57): `affected_instruments` (live price + % change + the Analyst's
+    per-asset impact/confidence) and `related_news`. `NewsDetailResponse` extends
+    `NewsItemResponse`, so this widened the payload without moving a single existing key.
     """
-    item = await news_item_repository.get_by_id(news_id)
-    if item is None:
+    use_case = BuildNewsDetail(
+        news_item_repository=news_item_repository,
+        signal_repository=signal_repository,
+        instrument_universe=instrument_universe,
+        compute_market_stats=ComputeMarketStats(
+            market_data_provider=market_data_provider, instrument_universe=instrument_universe
+        ),
+        max_affected_instruments=settings.news_detail_max_affected_instruments,
+        related_news_limit=settings.news_detail_related_limit,
+        price_window_days=settings.news_detail_price_window_days,
+    )
+    detail = await use_case.execute(news_id)
+    if detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News item not found")
-    return NewsItemResponse.model_validate(item)
+    return map_news_detail_to_response(detail)
 
 
 @router.post("/analyze-pending", status_code=status.HTTP_200_OK)

@@ -11,6 +11,11 @@ class SupervisorState(MessagesState):
     read by `select_specialist_route` to pick the conditional edge; it's absent from
     the initial input state (`NotRequired`), which is why it can't be a plain `str`.
 
+    `grounding_context` (issue #73) is an optional pre-formatted string describing one
+    specific asset or news article the user referenced; when present, the specialist node
+    prepends it as a `SystemMessage` to anchor its reply (see `specialist_node_factory`).
+    It's supplied on the initial input state (or omitted), hence `NotRequired`.
+
     `locale` (issue #67) travels the other way: `LangGraphAgentRunner.stream` writes it into
     the input state on every turn, and the supervisor + specialist nodes read it back to
     append `build_locale_instruction(locale)` to their system prompts. It rides in the state
@@ -21,4 +26,5 @@ class SupervisorState(MessagesState):
     """
 
     route: NotRequired[str]
+    grounding_context: NotRequired[str]
     locale: NotRequired[str]

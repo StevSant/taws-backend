@@ -3,12 +3,13 @@ from typing import NotRequired, TypedDict
 from app.application.quant.event_study_stats import EventStudyStats
 from app.application.scenario.scenario_context import ScenarioContext
 from app.domain.consequence.entities import ConsequenceChain
-from app.domain.scenario.entities import ScenarioResult, ScenarioSpec
+from app.domain.scenario.entities import ScenarioAgentContribution, ScenarioResult, ScenarioSpec
 
 
 class ScenarioGraphState(TypedDict):
     """Graph state for `build_scenario_graph`: threads a scenario run through Intake ->
-    Context gathering -> Causal chain -> Quantification -> Synthesis -> Compliance.
+    Context gathering -> Causal chain -> Quantification -> Agent panel -> Synthesis ->
+    Compliance.
 
     `preset_id`/`free_text` are the only fields present in the initial input state (see
     `ScenarioSimulationRunner.execute`); every other field is written by the node that
@@ -28,6 +29,7 @@ class ScenarioGraphState(TypedDict):
     context: NotRequired[ScenarioContext]
     consequence_chain: NotRequired[ConsequenceChain]
     quant_results: NotRequired[dict[str, EventStudyStats]]
+    agent_contributions: NotRequired[list[ScenarioAgentContribution]]
     result: NotRequired[ScenarioResult]
 
 

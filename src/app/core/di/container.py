@@ -19,12 +19,14 @@ from app.application.charts.use_cases import (
 from app.application.chat.use_cases import GenerateConversationTitle
 from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.event_intelligence.use_cases import AnalyzeEventImpact, ProcessIncomingEvent
+from app.application.instruments.use_cases import RegisterInstrument, SearchCoins
 from app.application.macro.use_cases import InterpretMacroEvent
 from app.application.profile.use_cases import ResolveLocale
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
 from app.application.scenario.use_cases import (
     ComputeScenarioQuantification,
     GatherScenarioContext,
+    GenerateScenarioAgentContributions,
     NormalizeScenarioIntake,
     SynthesizeScenarioResult,
 )
@@ -60,7 +62,10 @@ from app.domain.event_intelligence.ports import (
 from app.domain.freshness import FreshnessPolicy
 from app.domain.market.entities import AssetClass, MacroIndicator
 from app.domain.market.ports import (
+    CoinGeckoSearchProvider,
     FundamentalsProvider,
+    InstrumentCatalogRepository,
+    InstrumentMetadataProvider,
     InstrumentUniverse,
     MacroDataProvider,
     MarketDataProvider,
@@ -70,6 +75,7 @@ from app.domain.market.ports import (
 from app.domain.notes.ports import NoteRepository
 from app.domain.notification.ports import EmailSender, NotificationChannel
 from app.domain.profile.ports import UserProfileRepository
+from app.domain.scenario.entities import ScenarioAgentId
 from app.domain.scenario.ports import ScenarioRepository
 from app.domain.sentiment.ports import FearGreedProvider, SentimentRepository
 from app.domain.signals.ports import SignalRepository
@@ -82,7 +88,15 @@ from app.domain.telegram.ports import (
 )
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
-from app.infrastructure.agents.personas import MIDAS_PERSONA
+from app.infrastructure.agents.personas import (
+    ADVISOR_PERSONA,
+    ANALYST_PERSONA,
+    CONSEQUENCE_PERSONA,
+    MACRO_PERSONA,
+    MIDAS_PERSONA,
+    QUANT_PERSONA,
+    SENTIMENT_PERSONA,
+)
 from app.infrastructure.agents.scenario import ScenarioSimulationRunner, build_scenario_graph
 from app.infrastructure.agents.tools import (
     build_advisor_grounding_tools,
@@ -117,6 +131,8 @@ from app.infrastructure.macro import (
     RoutingMacroDataProvider,
 )
 from app.infrastructure.marketdata import (
+    CoinGeckoCoinSearchProvider,
+    CoinGeckoInstrumentMetadataProvider,
     CoinGeckoMarketDataProvider,
     FixtureMarketDataProvider,
     RoutingMarketDataProvider,
@@ -138,8 +154,10 @@ from app.infrastructure.notification import (
     TelegramNotificationChannel,
 )
 from app.infrastructure.persistence import (
+    InMemoryNoteRepository,
     SupabaseBriefingRepository,
     SupabaseConversationRepository,
+    SupabaseInstrumentCatalogRepository,
     SupabaseNewsItemRepository,
     SupabaseNoteRepository,
     SupabaseScenarioRepository,
@@ -152,7 +170,7 @@ from app.infrastructure.persistence import (
     SupabaseWatchlistRepository,
 )
 from app.infrastructure.realtime import OpenAIRealtimeSessionProvider
-from app.infrastructure.seeds import load_preset_scenarios_seed, load_universe_seed
+from app.infrastructure.seeds import load_preset_scenarios_seed
 from app.infrastructure.sentiment import (
     AlternativeMeFearGreedProvider,
     FixtureFearGreedProvider,
@@ -169,7 +187,7 @@ from app.infrastructure.telegram import (
     TelegramBotRegistration,
 )
 from app.infrastructure.tts import OpenAITTSProvider
-from app.infrastructure.universe import JsonInstrumentUniverse
+from app.infrastructure.universe import SupabaseInstrumentUniverse
 from app.infrastructure.vectorstore import PgvectorStore
 
 
@@ -210,7 +228,12 @@ class Container:
         self._briefing_repository: BriefingRepository | None = None
         self._news_provider: NewsProvider | None = None
         self._news_item_repository: NewsItemRepository | None = None
-        self._instrument_universe: InstrumentUniverse | None = None
+        self._instrument_catalog_repository: InstrumentCatalogRepository | None = None
+        self._instrument_universe: SupabaseInstrumentUniverse | None = None
+        self._coingecko_search_provider: CoinGeckoSearchProvider | None = None
+        self._search_coins_use_case: SearchCoins | None = None
+        self._register_instrument_use_case: RegisterInstrument | None = None
+        self._instrument_metadata_provider: InstrumentMetadataProvider | None = None
         self._market_data_provider: MarketDataProvider | None = None
         self._macro_data_provider: MacroDataProvider | None = None
         self._fundamentals_provider: FundamentalsProvider | None = None
@@ -419,15 +442,21 @@ class Container:
         return self._reorder_watchlists_use_case
 
     def get_note_repository(self) -> NoteRepository:
-        """Return the cached per-user NoteRepository (issue #62), Supabase-backed with the
-        same retry/config wiring as the other per-user repositories."""
+        """Return Supabase notes, with process-local storage for unconfigured development."""
         if self._note_repository is None:
-            self._note_repository = SupabaseNoteRepository(
-                supabase_url=self._settings.supabase_url,
-                supabase_key=self._settings.supabase_key,
-                retry_max_attempts=self._settings.supabase_retry_max_attempts,
-                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
-            )
+            supabase_configured = bool(self._settings.supabase_url and self._settings.supabase_key)
+            if self._settings.app_env == "development" and not supabase_configured:
+                logging.getLogger(__name__).warning(
+                    "Supabase notes are not configured; using process-local development storage."
+                )
+                self._note_repository = InMemoryNoteRepository()
+            else:
+                self._note_repository = SupabaseNoteRepository(
+                    supabase_url=self._settings.supabase_url,
+                    supabase_key=self._settings.supabase_key,
+                    retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                    retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
+                )
         return self._note_repository
 
     def get_user_profile_repository(self) -> UserProfileRepository:
@@ -614,8 +643,82 @@ class Container:
             )
         return self._bot_registration
 
+    # -- Telegram inbound-command handlers -------------------------------------------------
+    #
+    # Each handler comes in two flavours, and the split is load-bearing:
+    #
+    # `build_*_command_handler(messenger)` -- NOT cached. Builds a handler that replies
+    # through the messenger you pass. A user-registered bot's webhook
+    # (`/telegram/webhook/{bot_id}`) MUST use these, with a `TelegramBotClient` for that
+    # bot's own token: a handler answers via `messenger.send_text(...)`, so the messenger it
+    # holds IS the identity the user sees the reply come from. Building them is cheap --
+    # every expensive collaborator they take (repositories, agent runner, simulation runner)
+    # is still a cached singleton.
+    #
+    # `get_*_command_handler()` -- cached, bound to the main `.env` bot's messenger. ONLY the
+    # main `/telegram/webhook` route may use these. Handing them to a user-registered bot's
+    # webhook (which is what this `Container` used to do) made every registered bot reply
+    # with the main bot's token; because a private-chat `chat_id` is the user's account ID
+    # and is identical across bots, those replies were delivered -- into the *other* bot's
+    # conversation.
+
+    def build_briefing_command_handler(
+        self, messenger: TelegramMessenger
+    ) -> BriefingCommandHandler:
+        """A `/briefing` handler replying through `messenger`. See the note above."""
+        return BriefingCommandHandler(
+            link_repository=self.get_telegram_link_repository(),
+            watchlist_repository=self.get_watchlist_repository(),
+            briefing_repository=self.get_briefing_repository(),
+            messenger=messenger,
+            frontend_base_url=self._settings.frontend_base_url,
+        )
+
+    def build_signal_command_handler(self, messenger: TelegramMessenger) -> SignalCommandHandler:
+        """A `/signal <TICKER>` handler replying through `messenger`. See the note above."""
+        return SignalCommandHandler(
+            link_repository=self.get_telegram_link_repository(),
+            instrument_universe=self.get_instrument_universe(),
+            signal_repository=self.get_signal_repository(),
+            messenger=messenger,
+        )
+
+    def build_simulate_command_handler(
+        self, messenger: TelegramMessenger
+    ) -> SimulateCommandHandler:
+        """A `/simular <text>` handler replying through `messenger`. Reuses the same cached
+        `ScenarioSimulationRunner` as `POST /api/v1/scenarios/generate` and the
+        `run_scenario_simulation` chat tool — see `get_scenario_simulation_runner`."""
+        return SimulateCommandHandler(
+            link_repository=self.get_telegram_link_repository(),
+            scenario_simulation_runner=self.get_scenario_simulation_runner(),
+            messenger=messenger,
+            frontend_base_url=self._settings.frontend_base_url,
+            default_locale=self._settings.default_locale,
+        )
+
+    def build_impact_command_handler(self, messenger: TelegramMessenger) -> ImpactCommandHandler:
+        """An `/impact <sector>` handler replying through `messenger`. See the note above."""
+        return ImpactCommandHandler(
+            event_repository=self.get_event_repository(),
+            analyze_event_impact=AnalyzeEventImpact(analyzer=self.get_event_analyzer()),
+            messenger=messenger,
+        )
+
+    def build_chat_message_handler(self, messenger: TelegramMessenger) -> ChatMessageHandler:
+        """A conversational handler replying through `messenger`. See the note above.
+
+        Telegram has no per-user language preference of its own, so the handler answers in
+        `Settings.default_locale` (issue #67) rather than defaulting to the personas' English.
+        """
+        return ChatMessageHandler(
+            agent_runner=self.get_agent_runner(),
+            messenger=messenger,
+            default_locale=self._settings.default_locale,
+        )
+
     def get_briefing_command_handler(self) -> BriefingCommandHandler | None:
-        """Return the cached `/briefing` command handler, or `None` when Telegram isn't
+        """Return the main bot's cached `/briefing` handler, or `None` when Telegram isn't
         configured — same unconfigured-integration fallback shape as
         `get_link_telegram_account_use_case` (issue #19).
         """
@@ -623,77 +726,47 @@ class Container:
         if messenger is None:
             return None
         if self._briefing_command_handler is None:
-            self._briefing_command_handler = BriefingCommandHandler(
-                link_repository=self.get_telegram_link_repository(),
-                watchlist_repository=self.get_watchlist_repository(),
-                briefing_repository=self.get_briefing_repository(),
-                messenger=messenger,
-                frontend_base_url=self._settings.frontend_base_url,
-            )
+            self._briefing_command_handler = self.build_briefing_command_handler(messenger)
         return self._briefing_command_handler
 
     def get_signal_command_handler(self) -> SignalCommandHandler | None:
-        """Return the cached `/signal <TICKER>` command handler, or `None` when
+        """Return the main bot's cached `/signal <TICKER>` handler, or `None` when
         Telegram isn't configured (issue #19)."""
         messenger = self.get_telegram_messenger()
         if messenger is None:
             return None
         if self._signal_command_handler is None:
-            self._signal_command_handler = SignalCommandHandler(
-                link_repository=self.get_telegram_link_repository(),
-                instrument_universe=self.get_instrument_universe(),
-                signal_repository=self.get_signal_repository(),
-                messenger=messenger,
-            )
+            self._signal_command_handler = self.build_signal_command_handler(messenger)
         return self._signal_command_handler
 
     def get_simulate_command_handler(self) -> SimulateCommandHandler | None:
-        """Return the cached `/simular <text>` command handler, or `None` when
-        Telegram isn't configured (issue #19). Reuses the same cached
-        `ScenarioSimulationRunner` as `POST /api/v1/scenarios/generate` and the
-        `run_scenario_simulation` chat tool — see `get_scenario_simulation_runner`.
-        """
+        """Return the main bot's cached `/simular <text>` handler, or `None` when
+        Telegram isn't configured (issue #19)."""
         messenger = self.get_telegram_messenger()
         if messenger is None:
             return None
         if self._simulate_command_handler is None:
-            self._simulate_command_handler = SimulateCommandHandler(
-                link_repository=self.get_telegram_link_repository(),
-                scenario_simulation_runner=self.get_scenario_simulation_runner(),
-                messenger=messenger,
-                frontend_base_url=self._settings.frontend_base_url,
-                default_locale=self._settings.default_locale,
-            )
+            self._simulate_command_handler = self.build_simulate_command_handler(messenger)
         return self._simulate_command_handler
 
     def get_impact_command_handler(self) -> ImpactCommandHandler | None:
-        """Return the cached `/impact <sector>` command handler, or `None` when
+        """Return the main bot's cached `/impact <sector>` handler, or `None` when
         Telegram isn't configured — same pattern as `get_briefing_command_handler`."""
         messenger = self.get_telegram_messenger()
         if messenger is None:
             return None
         if self._impact_command_handler is None:
-            self._impact_command_handler = ImpactCommandHandler(
-                event_repository=self.get_event_repository(),
-                analyze_event_impact=AnalyzeEventImpact(
-                    analyzer=self.get_event_analyzer(),
-                ),
-                messenger=messenger,
-            )
+            self._impact_command_handler = self.build_impact_command_handler(messenger)
         return self._impact_command_handler
 
     def get_chat_message_handler(self) -> ChatMessageHandler | None:
-        """Return the cached conversational chat handler, or `None` when Telegram
+        """Return the main bot's cached conversational handler, or `None` when Telegram
         isn't configured — same pattern as `get_briefing_command_handler`."""
         messenger = self.get_telegram_messenger()
         if messenger is None:
             return None
         if self._chat_message_handler is None:
-            self._chat_message_handler = ChatMessageHandler(
-                agent_runner=self.get_agent_runner(),
-                messenger=messenger,
-                default_locale=self._settings.default_locale,
-            )
+            self._chat_message_handler = self.build_chat_message_handler(messenger)
         return self._chat_message_handler
 
     def get_news_provider(self) -> NewsProvider:
@@ -780,12 +853,75 @@ class Container:
             )
         return self._news_provider
 
+    def get_instrument_catalog_repository(self) -> InstrumentCatalogRepository:
+        if self._instrument_catalog_repository is None:
+            self._instrument_catalog_repository = SupabaseInstrumentCatalogRepository(
+                supabase_url=self._settings.supabase_url,
+                supabase_key=self._settings.supabase_key,
+                retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
+            )
+        return self._instrument_catalog_repository
+
+    async def build_instrument_universe(self) -> InstrumentUniverse:
+        """Load `public.instruments` once and cache the resulting universe singleton.
+
+        MUST be awaited during app startup (`main.py`'s `_lifespan`, before other
+        warmup) — `get_instrument_universe()` only returns the already-built
+        instance and never constructs it lazily itself (design decision #1: the
+        `InstrumentUniverse` port stays sync, so the one async DB read happens here,
+        not on the request path).
+        """
+        repo = self.get_instrument_catalog_repository()
+        self._instrument_universe = await SupabaseInstrumentUniverse.create(repo)
+        return self._instrument_universe
+
     def get_instrument_universe(self) -> InstrumentUniverse:
         if self._instrument_universe is None:
-            self._instrument_universe = JsonInstrumentUniverse(
-                seed_path=self._settings.universe_seed_path
+            raise RuntimeError(
+                "InstrumentUniverse was not built yet — `build_instrument_universe()` "
+                "must be awaited during app startup before this accessor is used."
             )
         return self._instrument_universe
+
+    def get_coingecko_search_provider(self) -> CoinGeckoSearchProvider:
+        """Return the cached CoinGecko `/search` adapter (issue #60 candidate resolution).
+
+        Reuses the same base URL, API key, and cooldown settings as
+        `get_market_data_provider`'s `CoinGeckoMarketDataProvider` — same vendor, same
+        graceful rate-limit degradation (429/timeout -> `[]`, see
+        `CoinGeckoCoinSearchProvider`'s docstring), just a different endpoint.
+        """
+        if self._coingecko_search_provider is None:
+            self._coingecko_search_provider = CoinGeckoCoinSearchProvider(
+                base_url=self._settings.coingecko_base_url,
+                api_key=self._settings.coingecko_api_key,
+                cooldown_seconds=self._settings.coingecko_cooldown_seconds,
+            )
+        return self._coingecko_search_provider
+
+    def get_search_coins_use_case(self) -> SearchCoins:
+        """Return the cached `SearchCoins` use case backing `GET /instruments/search`."""
+        if self._search_coins_use_case is None:
+            self._search_coins_use_case = SearchCoins(
+                search_provider=self.get_coingecko_search_provider()
+            )
+        return self._search_coins_use_case
+
+    def get_register_instrument_use_case(self) -> RegisterInstrument:
+        """Return the cached `RegisterInstrument` use case backing `POST /instruments`.
+
+        Depends on the domain `MutableInstrumentUniverse` protocol (design's FIX #6)
+        via the same `InstrumentUniverse` singleton every other pipeline uses —
+        `SupabaseInstrumentUniverse.add()` satisfies it structurally.
+        """
+        if self._register_instrument_use_case is None:
+            self._register_instrument_use_case = RegisterInstrument(
+                catalog_repository=self.get_instrument_catalog_repository(),
+                universe=self.get_instrument_universe(),
+                watchlist_repository=self.get_watchlist_repository(),
+            )
+        return self._register_instrument_use_case
 
     def get_news_prefilter_policy(self) -> NewsPrefilterPolicy:
         """Return the Analyst pre-filter's gate tuning (issue #26), assembled from `Settings`.
@@ -816,22 +952,22 @@ class Container:
     def get_market_data_provider(self) -> MarketDataProvider:
         """Return the routing MarketDataProvider (CoinGecko/yfinance + fixture fallback).
 
-        `yfinance`/CoinGecko symbol overrides come straight from the universe
-        seed's optional `yfinance_symbol` / `coingecko_id` rows — those vendor
-        details never touch the pure `Instrument` entity.
+        `yfinance`/CoinGecko symbol overrides come from the prebuilt instrument
+        universe's LIVE `coingecko_id_overrides()`/`yfinance_symbol_overrides()`
+        dicts (CRITICAL fix, post-hoc adversarial review) — NOT a one-time
+        snapshot comprehension over `all_rows()`. The previous snapshot approach
+        meant a coin registered via `POST /instruments` after this provider was
+        first built would never resolve a live price until process restart,
+        because `CoinGeckoMarketDataProvider` holds `self._overrides` as a
+        reference and the snapshot dict was never updated. Passing the SAME
+        dict objects the universe mutates in `add_row()` makes every subsequent
+        registration visible immediately, with no rebuild.
         """
         if self._market_data_provider is None:
-            universe_rows = load_universe_seed(self._settings.universe_seed_path)
-            yfinance_overrides = {
-                row["symbol"]: row["yfinance_symbol"]
-                for row in universe_rows
-                if row.get("yfinance_symbol")
-            }
-            coingecko_overrides = {
-                row["symbol"]: row["coingecko_id"]
-                for row in universe_rows
-                if row.get("coingecko_id")
-            }
+            self.get_instrument_universe()  # raises if the universe wasn't built yet
+            assert self._instrument_universe is not None
+            coingecko_overrides = self._instrument_universe.coingecko_id_overrides()
+            yfinance_overrides = self._instrument_universe.yfinance_symbol_overrides()
             fixture_provider = FixtureMarketDataProvider()
             self._market_data_provider = RoutingMarketDataProvider(
                 yfinance_provider=YFinanceMarketDataProvider(symbol_overrides=yfinance_overrides),
@@ -845,6 +981,28 @@ class Container:
                 fixture_provider=fixture_provider,
             )
         return self._market_data_provider
+
+    def get_instrument_metadata_provider(self) -> InstrumentMetadataProvider:
+        """Return the cached CoinGecko `/coins/markets` batch metadata adapter.
+
+        Backs `GET /instruments/enriched`'s additive `market_cap`/`volume_24h`/
+        `change_7d_pct` fields (instrument-enrichment spec). Resolves symbol ->
+        CoinGecko id from the prebuilt instrument universe's LIVE
+        `coingecko_id_overrides()` dict — the SAME source
+        `get_market_data_provider` uses for its own CoinGecko id resolution — so a
+        coin registered via `POST /instruments` after this provider was first
+        built still resolves without a container rebuild.
+        """
+        if self._instrument_metadata_provider is None:
+            self.get_instrument_universe()  # raises if the universe wasn't built yet
+            assert self._instrument_universe is not None
+            self._instrument_metadata_provider = CoinGeckoInstrumentMetadataProvider(
+                base_url=self._settings.coingecko_base_url,
+                coingecko_id_overrides=self._instrument_universe.coingecko_id_overrides(),
+                api_key=self._settings.coingecko_api_key,
+                cooldown_seconds=self._settings.coingecko_cooldown_seconds,
+            )
+        return self._instrument_metadata_provider
 
     def get_chart_config(self) -> ChartConfig:
         """Return the cached ChartConfig built from Settings (single source for chart limits)."""
@@ -1203,11 +1361,28 @@ class Container:
                 instrument_universe=self.get_instrument_universe(),
                 max_synthesis_attempts=self._settings.scenario_synthesis_max_attempts,
             )
+            generate_contributions = GenerateScenarioAgentContributions(
+                # Reasoning tier (#28): six independent grounded specialists produce
+                # judgments that the final synthesis must reconcile.
+                llm_provider=self.get_reasoning_llm_provider(),
+                midas_persona=MIDAS_PERSONA,
+                specialist_personas={
+                    ScenarioAgentId.ANALYST: ANALYST_PERSONA,
+                    ScenarioAgentId.QUANT: QUANT_PERSONA,
+                    ScenarioAgentId.MACRO: MACRO_PERSONA,
+                    ScenarioAgentId.SENTIMENT: SENTIMENT_PERSONA,
+                    ScenarioAgentId.CONSEQUENCE: CONSEQUENCE_PERSONA,
+                    ScenarioAgentId.ADVISOR: ADVISOR_PERSONA,
+                },
+                max_concurrency=self._settings.scenario_agent_panel_max_concurrency,
+                max_attempts=self._settings.scenario_agent_panel_max_attempts,
+            )
             graph = build_scenario_graph(
                 normalize_scenario_intake=normalize_intake,
                 gather_scenario_context=gather_context,
                 generate_consequence_chain=self.get_generate_consequence_chain_use_case(),
                 compute_scenario_quantification=compute_quantification,
+                generate_agent_contributions=generate_contributions,
                 synthesize_scenario_result=synthesize_result,
                 scenario_repository=self.get_scenario_repository(),
             )
