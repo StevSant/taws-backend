@@ -153,6 +153,25 @@ class Settings(BaseSettings):
     news_provider_timeout_seconds: float = 2.5
     news_live_fetch_budget_seconds: float = 3.5
 
+    # --- `GET /api/v1/news` read path (taws#71) ---
+    # Serve the feed from the persisted `news_items` store (`ListRecentNews`) instead of
+    # re-aggregating the upstream providers synchronously on the request path, which on a
+    # cold cache overshot the radar client's request timeout and killed the whole page.
+    # Kill switch: set False to restore the old always-blocking `IngestNews` behavior.
+    news_db_first_enabled: bool = True
+    # Persisted items a window must yield before it is served straight from the store.
+    # Below this the store counts as cold and the request falls back to a blocking upstream
+    # fetch, so the very first caller for a window/symbol still gets news. 1 = only fall
+    # back when the store returns nothing at all.
+    news_db_first_min_items: int = 1
+    # Cadence (seconds) of the post-response upstream refresh that keeps `news_items` warm
+    # (`NewsFeedRefresher`), per (symbol, asset_class, since_hours). The radar polls the
+    # feed on an interval from every open browser; this is what stops those polls from
+    # stampeding the upstream providers.
+    news_refresh_min_interval_seconds: float = 120.0
+    # Items requested from the upstream providers per background refresh run.
+    news_refresh_limit: int = 50
+
     # --- CoinGecko (crypto prices, behind the MarketDataProvider port); no key required ---
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"
     # Short-TTL in-process cache in front of get_price_series/get_last_price (issue #8) —

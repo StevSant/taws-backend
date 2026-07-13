@@ -1,3 +1,4 @@
+import asyncio
 import re
 from collections import defaultdict
 from collections.abc import Callable
@@ -71,28 +72,14 @@ class SupabaseNewsItemRepository(NewsItemRepository):
             .execute()
         )
 
-        for item in items:
-            if item.image_url:
-                await (
-                    client.table(_NEWS_ITEMS_TABLE)
-                    .update({"image_url": item.image_url})
-                    .eq("url", item.url)
-                    .is_("image_url", "null")
-                    .execute()
-                )
-            # Same backfill-only shape as `image_url` above, for the same reason: rows
-            # ingested before `extract_rss_summary` landed were persisted with an empty
-            # summary (the feed's description was never read), and `ignore_duplicates`
-            # means a re-fetch would never repair them. Guarded on `summary = ''` so this
-            # can only ever fill a blank, never overwrite a real one.
-            if item.summary:
-                await (
-                    client.table(_NEWS_ITEMS_TABLE)
-                    .update({"summary": item.summary})
-                    .eq("url", item.url)
-                    .eq("summary", "")
-                    .execute()
-                )
+        # One backfill round-trip per item, fanned out concurrently: run sequentially this
+        # was an N-round-trip await chain on the `GET /api/v1/news` request path, and with a
+        # 50-item page it dominated the endpoint's latency (taws#71). Order between them is
+        # irrelevant — each targets a distinct url.
+        await asyncio.gather(
+            *(self._backfill_image_url(client, item) for item in items if item.image_url),
+            *(self._backfill_summary(client, item) for item in items if item.summary),
+        )
 
         await self._backfill_categories(client, items)
 
@@ -101,6 +88,32 @@ class SupabaseNewsItemRepository(NewsItemRepository):
         persisted = [news_item_from_row(row) for row in response.data]
         by_url = {news_item.url: news_item for news_item in persisted}
         return [by_url[item.url] for item in items if item.url in by_url]
+
+    async def _backfill_image_url(self, client: Any, item: NewsItem) -> None:
+        """Fill in `image_url` on an already-persisted row that has none — a later fetch of
+        the same article (via a provider that does carry images) enriches the stored row,
+        while never overwriting an image already on it (`.is_("image_url", "null")`)."""
+        await (
+            client.table(_NEWS_ITEMS_TABLE)
+            .update({"image_url": item.image_url})
+            .eq("url", item.url)
+            .is_("image_url", "null")
+            .execute()
+        )
+
+    async def _backfill_summary(self, client: Any, item: NewsItem) -> None:
+        """Same backfill-only shape as `_backfill_image_url`, for the same reason: rows
+        ingested before `extract_rss_summary` landed were persisted with an empty summary
+        (the feed's description was never read), and `ignore_duplicates` means a re-fetch
+        would never repair them. Guarded on `summary = ''` so this can only ever fill a
+        blank, never overwrite a real one."""
+        await (
+            client.table(_NEWS_ITEMS_TABLE)
+            .update({"summary": item.summary})
+            .eq("url", item.url)
+            .eq("summary", "")
+            .execute()
+        )
 
     async def _backfill_categories(self, client: AsyncClient, items: list[NewsItem]) -> None:
         """Give a topical category (issue #69) to rows that don't have one yet.
@@ -129,6 +142,19 @@ class SupabaseNewsItemRepository(NewsItemRepository):
                 .is_("category", "null")
                 .execute()
             )
+
+    async def list_recent(
+        self, symbols: list[str] | None, since_hours: int, limit: int
+    ) -> list[NewsItem]:
+        client = await self._clients.get()
+        cutoff = datetime.now(UTC) - timedelta(hours=since_hours)
+        query = client.table(_NEWS_ITEMS_TABLE).select("*").gte("published_at", cutoff.isoformat())
+        if symbols:
+            # `related_symbols` is a `text[]` (migration 0009) — `overlaps` is the array
+            # `&&` operator, i.e. "linked to at least one of these instruments".
+            query = query.overlaps("related_symbols", symbols)
+        response = await query.order("published_at", desc=True).limit(limit).execute()
+        return [news_item_from_row(row) for row in response.data]
 
     async def get_by_id(self, news_id: str) -> NewsItem | None:
         client = await self._clients.get()

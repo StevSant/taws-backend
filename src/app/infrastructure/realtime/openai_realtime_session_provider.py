@@ -55,13 +55,7 @@ class OpenAIRealtimeSessionProvider(RealtimeSessionProvider):
                 "model": model,
                 "instructions": instructions,
                 "tools": tools,
-                # "auto", never "required": the model must be free to answer a greeting or
-                # small talk ("¿estás ahí?") with plain speech. "required" forces a tool call
-                # on EVERY turn, so the model floundered on non-tool turns and looped
-                # ("let me pull the analyst view... let me think...") because each forced tool
-                # result demanded yet another tool call. Grounding is guided by the
-                # instructions, not enforced by tool_choice.
-                "tool_choice": "auto",
+                "tool_choice": "required",
                 "audio": {
                     "input": {
                         "transcription": {

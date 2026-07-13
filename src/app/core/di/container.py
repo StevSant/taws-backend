@@ -21,6 +21,8 @@ from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.event_intelligence.use_cases import AnalyzeEventImpact, ProcessIncomingEvent
 from app.application.instruments.use_cases import RegisterInstrument, SearchCoins
 from app.application.macro.use_cases import InterpretMacroEvent
+from app.application.market import NewsFeedRefresher
+from app.application.market.use_cases import IngestNews
 from app.application.profile.use_cases import ResolveLocale
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
 from app.application.scenario.use_cases import (
@@ -247,6 +249,7 @@ class Container:
         self._generate_conversation_title_use_case: GenerateConversationTitle | None = None
         self._notification_channel: NotificationChannel | None = None
         self._alerted_signal_tracker: AlertedSignalTracker | None = None
+        self._news_feed_refresher: NewsFeedRefresher | None = None
         self._telegram_link_repository: TelegramLinkRepository | None = None
         self._telegram_link_token_repository: TelegramLinkTokenRepository | None = None
         self._telegram_messenger: TelegramMessenger | None = None
@@ -575,6 +578,25 @@ class Container:
         if self._alerted_signal_tracker is None:
             self._alerted_signal_tracker = AlertedSignalTracker()
         return self._alerted_signal_tracker
+
+    def get_news_feed_refresher(self) -> NewsFeedRefresher:
+        """Return the cached, process-wide `NewsFeedRefresher` singleton (taws#71).
+
+        Must be a singleton: its in-flight/throttle state is the only thing keeping the
+        radar's polling clients from stampeding the upstream news providers now that
+        `GET /api/v1/news` schedules a refresh on every served request.
+        """
+        if self._news_feed_refresher is None:
+            self._news_feed_refresher = NewsFeedRefresher(
+                ingest_news=IngestNews(
+                    news_provider=self.get_news_provider(),
+                    news_item_repository=self.get_news_item_repository(),
+                    signal_repository=self.get_signal_repository(),
+                ),
+                min_interval_seconds=self._settings.news_refresh_min_interval_seconds,
+                limit=self._settings.news_refresh_limit,
+            )
+        return self._news_feed_refresher
 
     def get_telegram_link_repository(self) -> TelegramLinkRepository:
         if self._telegram_link_repository is None:

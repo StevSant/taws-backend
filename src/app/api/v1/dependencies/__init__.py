@@ -44,6 +44,7 @@ from app.api.v1.dependencies.get_link_telegram_account_use_case import (
 from app.api.v1.dependencies.get_macro_data_provider import get_macro_data_provider
 from app.api.v1.dependencies.get_market_data_provider import get_market_data_provider
 from app.api.v1.dependencies.get_market_pulse_use_case import get_market_pulse_use_case
+from app.api.v1.dependencies.get_news_feed_refresher import get_news_feed_refresher
 from app.api.v1.dependencies.get_news_item_repository import get_news_item_repository
 from app.api.v1.dependencies.get_news_prefilter_policy import get_news_prefilter_policy
 from app.api.v1.dependencies.get_news_provider import get_news_provider
@@ -129,6 +130,7 @@ __all__ = [
     "get_macro_data_provider",
     "get_market_pulse_use_case",
     "get_market_data_provider",
+    "get_news_feed_refresher",
     "get_news_item_repository",
     "get_news_prefilter_policy",
     "get_news_provider",

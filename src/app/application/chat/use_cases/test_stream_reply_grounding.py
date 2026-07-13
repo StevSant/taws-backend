@@ -86,6 +86,11 @@ class _FakeNewsItemRepository(NewsItemRepository):
     async def list_pending(self, limit: int) -> list[NewsItem]:
         return []
 
+    async def list_recent(
+        self, symbols: list[str] | None, since_hours: int, limit: int
+    ) -> list[NewsItem]:
+        return []
+
     async def list_related(self, item: NewsItem, limit: int) -> list[NewsItem]:
         return []
 

@@ -5,6 +5,7 @@ from app.application.market.use_cases.extract_instrument_name_tokens import (
     extract_instrument_name_tokens,
 )
 from app.application.market.use_cases.ingest_news import IngestNews
+from app.application.market.use_cases.list_recent_news import ListRecentNews
 from app.application.market.use_cases.news_asset_impact import NewsAssetImpact
 from app.application.market.use_cases.news_detail import NewsDetail
 
@@ -12,6 +13,7 @@ __all__ = [
     "BrowseNews",
     "BuildNewsDetail",
     "IngestNews",
+    "ListRecentNews",
     "NewsAssetImpact",
     "NewsDetail",
     "classify_news_category",
