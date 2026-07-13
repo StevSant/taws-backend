@@ -1,3 +1,6 @@
+from collections.abc import Callable
+from typing import Any
+
 from app.domain.market.entities import AnalysisStatus, NewsItem, NewsSkipReason
 from app.domain.market.ports import NewsItemRepository
 from app.infrastructure.persistence.news_item_row_mapper import (
@@ -48,6 +51,19 @@ class SupabaseNewsItemRepository(NewsItemRepository):
                     .is_("image_url", "null")
                     .execute()
                 )
+            # Same backfill-only shape as `image_url` above, for the same reason: rows
+            # ingested before `extract_rss_summary` landed were persisted with an empty
+            # summary (the feed's description was never read), and `ignore_duplicates`
+            # means a re-fetch would never repair them. Guarded on `summary = ''` so this
+            # can only ever fill a blank, never overwrite a real one.
+            if item.summary:
+                await (
+                    client.table(_NEWS_ITEMS_TABLE)
+                    .update({"summary": item.summary})
+                    .eq("url", item.url)
+                    .eq("summary", "")
+                    .execute()
+                )
 
         urls = [item.url for item in items]
         response = await client.table(_NEWS_ITEMS_TABLE).select("*").in_("url", urls).execute()
@@ -71,6 +87,53 @@ class SupabaseNewsItemRepository(NewsItemRepository):
             .execute()
         )
         return [news_item_from_row(row) for row in response.data]
+
+    async def list_related(self, item: NewsItem, limit: int) -> list[NewsItem]:
+        """Shared-symbol matches first, then same-source, then plain recency — see the port
+        for why the fallback chain exists. Each tier is a separate query rather than one
+        `or(...)` filter so the tiers stay *ordered by strength*: PostgREST would sort a
+        combined result by `published_at` alone, letting an unrelated-but-newer article
+        outrank a genuine shared-symbol match.
+        """
+        related: list[NewsItem] = []
+        seen = {item.id}
+
+        if item.related_symbols:
+            related += await self._select_related(
+                seen,
+                limit - len(related),
+                lambda query: query.overlaps("related_symbols", item.related_symbols),
+            )
+        if len(related) < limit:
+            related += await self._select_related(
+                seen, limit - len(related), lambda query: query.eq("source", item.source)
+            )
+        if len(related) < limit:
+            related += await self._select_related(seen, limit - len(related), lambda query: query)
+        return related
+
+    async def _select_related(
+        self,
+        seen: set[str],
+        limit: int,
+        narrow: Callable[[Any], Any],
+    ) -> list[NewsItem]:
+        """Run one tier of `list_related`: the newest `limit` items matching `narrow`, minus
+        everything already collected. Mutates `seen` so the next tier can't re-serve them.
+        """
+        if limit <= 0:
+            return []
+        client = await self._clients.get()
+        query = narrow(client.table(_NEWS_ITEMS_TABLE).select("*"))
+        response = (
+            await query.not_.in_("id", list(seen))
+            .order("published_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        items = [news_item_from_row(row) for row in response.data]
+        seen.update(news_item.id for news_item in items)
+        return items
 
     async def update_analysis_status(
         self,
