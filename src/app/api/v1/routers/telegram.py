@@ -219,21 +219,33 @@ async def send_test_news(
     link_repository: Annotated[TelegramLinkRepository, Depends(get_telegram_link_repository)],
     messenger: Annotated[TelegramMessenger | None, Depends(get_telegram_messenger)],
 ) -> SendTestNewsResponse:
-    """Push ONE random news event, fully enriched, to every linked Telegram chat.
+    """Push ONE random news event, fully enriched, to the CALLER's own linked chat.
 
     The "is my Telegram wiring actually working?" button in the frontend. Runs a randomly
     chosen event from the same news source the Sentinel pipeline uses through the SAME
-    `ProcessIncomingEvent` pipeline as `/event-intelligence/demo`, then broadcasts the
-    formatted alert over the shared bot — deliberately ignoring `should_notify`, since the
-    point is to prove delivery, not to judge the event's importance.
+    `ProcessIncomingEvent` pipeline as `/event-intelligence/demo`, then sends the formatted
+    alert over the shared bot — deliberately ignoring `should_notify`, since the point is to
+    prove delivery, not to judge the event's importance.
 
-    Both failure modes are 400s the frontend already renders from `detail`: no news event
-    available, and no `TELEGRAM_BOT_TOKEN` configured (nothing to send through).
+    It answers "is MY wiring working", so it delivers to the caller's chat and nobody else's.
+    Broadcasting to `list_all()` here would mean any user's test button writes into every
+    other user's Telegram — one person checking their setup spams everyone.
+
+    Every failure mode is a 400 the frontend already renders from `detail`: no
+    `TELEGRAM_BOT_TOKEN` configured, the caller hasn't linked their Telegram yet, and no news
+    event available. "Not linked" is precisely the answer the button exists to give.
     """
     if messenger is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Telegram is not configured on this backend (TELEGRAM_BOT_TOKEN is unset).",
+        )
+
+    link = await link_repository.get_by_user_id(user.id)
+    if link is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your Telegram account is not linked yet. Connect it and try again.",
         )
 
     events = await news_provider.fetch_latest_news()
@@ -246,17 +258,18 @@ async def send_test_news(
     enriched = await use_case.execute(random.choice(events))
     text = format_event_alert(enriched)
 
-    # Same per-recipient guard as `/event-intelligence/demo`'s broadcast: one chat failing
-    # (blocked bot, deleted chat) must never abort delivery to everyone after it.
-    for link in await link_repository.list_all():
-        try:
-            await messenger.send_text(link.chat_id, text, parse_mode="HTML")
-        except Exception:
-            logger.exception(
-                "Failed to send test news alert to chat %s (requested by user %s)",
-                link.chat_id,
-                user.id,
-            )
+    try:
+        await messenger.send_text(link.chat_id, text, parse_mode="HTML")
+    except Exception:
+        logger.exception(
+            "Failed to send test news alert to chat %s (requested by user %s)",
+            link.chat_id,
+            user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Telegram rejected the delivery. Check that you have not blocked the bot.",
+        ) from None
 
     return SendTestNewsResponse(status="sent", event_title=enriched.original.title)
 
