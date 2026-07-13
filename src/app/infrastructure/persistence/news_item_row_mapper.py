@@ -1,6 +1,12 @@
 from typing import Any
 
-from app.domain.market.entities import AnalysisStatus, NewsEntity, NewsItem, NewsSkipReason
+from app.domain.market.entities import (
+    AnalysisStatus,
+    NewsCategory,
+    NewsEntity,
+    NewsItem,
+    NewsSkipReason,
+)
 from app.infrastructure.persistence.parse_supabase_timestamp import parse_supabase_timestamp
 
 
@@ -26,7 +32,24 @@ def news_item_from_row(row: Any) -> NewsItem:
         signal_id=row.get("signal_id"),
         image_url=row.get("image_url"),
         skip_reason=_skip_reason_from_row(row.get("skip_reason")),
+        category=_category_from_row(row.get("category")),
     )
+
+
+def _category_from_row(value: str | None) -> NewsCategory | None:
+    """Tolerate an unrecognized `category` rather than failing the whole read — same
+    rolling-deploy rationale as `_skip_reason_from_row`: the column is `check`-constrained
+    (migration 0018), so an unknown value can only mean the DB is ahead of this deploy.
+
+    A `None` here means "nothing has classified this row yet" (a row persisted before 0018),
+    which is *not* the same as `NewsCategory.UNCATEGORIZED` ("classified, but unplaceable").
+    """
+    if value is None:
+        return None
+    try:
+        return NewsCategory(value)
+    except ValueError:
+        return None
 
 
 def _skip_reason_from_row(value: str | None) -> NewsSkipReason | None:
@@ -66,6 +89,7 @@ def news_item_to_insert_row(item: NewsItem) -> dict[str, Any]:
         "signal_id": item.signal_id,
         "image_url": item.image_url,
         "skip_reason": item.skip_reason.value if item.skip_reason else None,
+        "category": item.category.value if item.category else None,
     }
 
 

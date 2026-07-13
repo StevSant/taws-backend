@@ -1,9 +1,11 @@
 import re
+from collections import defaultdict
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
 from postgrest import AsyncSelectRequestBuilder, CountMethod
+from supabase import AsyncClient
 
 from app.domain.market.entities import (
     AnalysisStatus,
@@ -92,11 +94,41 @@ class SupabaseNewsItemRepository(NewsItemRepository):
                     .execute()
                 )
 
+        await self._backfill_categories(client, items)
+
         urls = [item.url for item in items]
         response = await client.table(_NEWS_ITEMS_TABLE).select("*").in_("url", urls).execute()
         persisted = [news_item_from_row(row) for row in response.data]
         by_url = {news_item.url: news_item for news_item in persisted}
         return [by_url[item.url] for item in items if item.url in by_url]
+
+    async def _backfill_categories(self, client: AsyncClient, items: list[NewsItem]) -> None:
+        """Give a topical category (issue #69) to rows that don't have one yet.
+
+        The insert above is `DO NOTHING` on conflict, so a row that predates migration 0018 —
+        or that was persisted before this classifier existed — would keep `category = null`
+        forever without this pass. `.is_("category", "null")` is what makes it a *backfill*
+        rather than an overwrite: a row that already carries a category is never touched, so a
+        human or a future smarter classifier can correct one without ingest stomping it back.
+
+        Batched by category (one UPDATE per distinct category, at most `len(NewsCategory)`),
+        rather than per item like the `image_url` loop above — that one needs a different value
+        per row and has no choice; this one doesn't, and a per-item loop here would double the
+        round trips `GET /api/v1/news` already makes.
+        """
+        urls_by_category: dict[str, list[str]] = defaultdict(list)
+        for item in items:
+            if item.category:
+                urls_by_category[item.category.value].append(item.url)
+
+        for category, urls in urls_by_category.items():
+            await (
+                client.table(_NEWS_ITEMS_TABLE)
+                .update({"category": category})
+                .in_("url", urls)
+                .is_("category", "null")
+                .execute()
+            )
 
     async def get_by_id(self, news_id: str) -> NewsItem | None:
         client = await self._clients.get()
@@ -154,6 +186,8 @@ class SupabaseNewsItemRepository(NewsItemRepository):
             request = request.eq("provider", query.provider)
         if query.analysis_status is not None:
             request = request.eq("analysis_status", query.analysis_status.value)
+        if query.category is not None:
+            request = request.eq("category", query.category.value)
         if query.sentiment is not None:
             request = self._apply_sentiment(request, query.sentiment)
 
