@@ -39,6 +39,7 @@ class _RecordingAgentRunner(AgentRunner):
         thread_id: str,
         message: Message,
         user_id: str,
+        locale: str = "es",
         grounding_context: str | None = None,
     ) -> AsyncIterator[AgentStreamEvent]:
         self.called = True

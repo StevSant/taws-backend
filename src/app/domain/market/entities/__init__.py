@@ -10,6 +10,7 @@ from app.domain.market.entities.macro_indicator import MacroIndicator
 from app.domain.market.entities.macro_observation import MacroObservation
 from app.domain.market.entities.macro_series import MacroSeries
 from app.domain.market.entities.news_browse_query import NewsBrowseQuery
+from app.domain.market.entities.news_category import NewsCategory
 from app.domain.market.entities.news_entity import NewsEntity
 from app.domain.market.entities.news_facets import NewsFacets
 from app.domain.market.entities.news_item import NewsItem
@@ -36,6 +37,7 @@ __all__ = [
     "MacroObservation",
     "MacroSeries",
     "NewsBrowseQuery",
+    "NewsCategory",
     "NewsEntity",
     "NewsFacets",
     "NewsItem",

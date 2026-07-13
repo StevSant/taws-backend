@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from app.domain.market.entities.analysis_status import AnalysisStatus
+from app.domain.market.entities.news_category import NewsCategory
 from app.domain.market.entities.news_sort_field import NewsSortField
 from app.domain.market.entities.sentiment_filter import SentimentFilter
 from app.domain.market.entities.sort_direction import SortDirection
@@ -20,6 +21,7 @@ class NewsBrowseQuery:
     source: str | None = None
     provider: str | None = None
     sentiment: SentimentFilter | None = None
+    category: NewsCategory | None = None
     analysis_status: AnalysisStatus | None = None
     search: str | None = None
     since_hours: int = 48

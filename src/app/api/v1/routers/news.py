@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
 from app.api.v1.dependencies import (
     get_analyze_pending_news_use_case,
@@ -8,6 +8,7 @@ from app.api.v1.dependencies import (
     get_force_analyze_news_item_use_case,
     get_instrument_universe,
     get_market_data_provider,
+    get_news_feed_refresher,
     get_news_item_repository,
     get_news_provider,
     get_signal_repository,
@@ -26,7 +27,13 @@ from app.api.v1.schemas.localize_news_blurbs import (
     LocalizeNewsBlurbsResponse,
     NewsBlurbResponse,
 )
-from app.application.market.use_cases import BrowseNews, BuildNewsDetail, IngestNews
+from app.application.market import NewsFeedRefresher
+from app.application.market.use_cases import (
+    BrowseNews,
+    BuildNewsDetail,
+    IngestNews,
+    ListRecentNews,
+)
 from app.application.market.use_cases.localize_news_blurbs import (
     LocalizeNewsBlurbs,
     NewsBlurbSource,
@@ -40,6 +47,7 @@ from app.domain.market.entities import (
     AnalysisStatus,
     AssetClass,
     NewsBrowseQuery,
+    NewsCategory,
     NewsSortField,
     SentimentFilter,
     SortDirection,
@@ -67,9 +75,13 @@ _MAX_PAGE = 1_000
 
 @router.get("")
 async def list_news(
+    background_tasks: BackgroundTasks,
     news_provider: Annotated[NewsProvider, Depends(get_news_provider)],
     news_item_repository: Annotated[NewsItemRepository, Depends(get_news_item_repository)],
     signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
+    instrument_universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
+    news_feed_refresher: Annotated[NewsFeedRefresher, Depends(get_news_feed_refresher)],
+    settings: Annotated[Settings, Depends(get_settings)],
     symbol: Annotated[str | None, Query()] = None,
     asset_class: Annotated[AssetClass | None, Query()] = None,
     since_hours: Annotated[int, Query(ge=1, le=_MAX_SINCE_HOURS)] = 48,
@@ -80,10 +92,17 @@ async def list_news(
     `published_at`, `related_symbols`, and `analysis_status` (issue #1), optionally
     filtered by instrument symbol / asset class / recency.
 
-    Persist-then-read (issue #1): fetched items are upserted into the `news_items`
-    store (deduped by URL) before being returned, so `analysis_status` reflects
-    whatever a prior `AnalyzePendingNews` run decided and survives across requests
-    instead of being recomputed from scratch.
+    Served DB-first (taws#71): the page comes out of the persisted `news_items` store
+    (`ListRecentNews`), and the upstream provider fan-out that keeps that store fresh runs
+    in a background task *after* this response is flushed (`NewsFeedRefresher`, throttled).
+    Previously this handler re-aggregated Yahoo/RSS/Finnhub synchronously and persisted
+    them before answering, which on a cold cache overshot the radar client's request
+    timeout and took the whole page down with it. A cold store still falls back to that
+    blocking path so the first-ever caller isn't served an empty feed.
+
+    Persist-then-read (issue #1) is unchanged, just moved off the request path:
+    `analysis_status` still reflects whatever a prior `AnalyzePendingNews` run decided,
+    because it is read from the same persisted rows.
 
     `offset` resumes a previous fetch / pages beyond the first `limit` items;
     `has_more` on the response tells the caller whether a further page exists.
@@ -91,18 +110,33 @@ async def list_news(
     `offset` is unchanged (defaults to the first page, `offset=0`).
     """
     symbols = [symbol] if symbol else None
-    use_case = IngestNews(
-        news_provider=news_provider,
+    use_case = ListRecentNews(
         news_item_repository=news_item_repository,
-        signal_repository=signal_repository,
+        instrument_universe=instrument_universe,
+        ingest_news=IngestNews(
+            news_provider=news_provider,
+            news_item_repository=news_item_repository,
+            signal_repository=signal_repository,
+        ),
+        db_first_enabled=settings.news_db_first_enabled,
+        min_persisted_items=settings.news_db_first_min_items,
     )
-    # Ask the pipeline for one item past this page's end so `has_more` can be
-    # derived without a separate, potentially-expensive upstream count query.
+    # Ask for one item past this page's end so `has_more` can be derived without a
+    # separate, potentially-expensive count query.
     items = await use_case.execute(
         symbols=symbols,
         asset_class=asset_class,
         since_hours=since_hours,
         limit=offset + limit + 1,
+    )
+    # Keyed on the *canonical* universe symbol so an unknown `?symbol=` string can't grow
+    # the refresher's throttle map without bound — see `NewsFeedRefresher`.
+    instrument = instrument_universe.by_symbol(symbol) if symbol else None
+    background_tasks.add_task(
+        news_feed_refresher.refresh,
+        symbol=instrument.symbol if instrument else None,
+        asset_class=asset_class,
+        since_hours=since_hours,
     )
     page = items[offset : offset + limit]
     has_more = len(items) > offset + limit
@@ -151,6 +185,7 @@ async def browse_news(
     source: Annotated[str | None, Query()] = None,
     provider: Annotated[str | None, Query()] = None,
     sentiment: Annotated[SentimentFilter | None, Query()] = None,
+    category: Annotated[NewsCategory | None, Query()] = None,
     analysis_status: Annotated[AnalysisStatus | None, Query()] = None,
     q: Annotated[str | None, Query(max_length=_SEARCH_MAX_LEN)] = None,
     since_hours: Annotated[int, Query(ge=1, le=_MAX_SINCE_HOURS)] = 48,
@@ -179,6 +214,7 @@ async def browse_news(
         source=source,
         provider=provider,
         sentiment=sentiment,
+        category=category,
         analysis_status=analysis_status,
         search=q,
         since_hours=since_hours,
@@ -256,6 +292,7 @@ async def get_news_item(
 async def analyze_pending_news(
     use_case: Annotated[AnalyzePendingNews, Depends(get_analyze_pending_news_use_case)],
     settings: Annotated[Settings, Depends(get_settings)],
+    locale: Annotated[str | None, Query(min_length=2, max_length=35)] = None,
 ) -> AnalyzePendingNewsResponse:
     """Analyze every persisted news item still `pending`, server-side (issue #2).
 
@@ -270,8 +307,13 @@ async def analyze_pending_news(
     `NEWS_ANALYSIS_ENABLED`), so this endpoint is a "don't wait for the next tick" trigger
     rather than the only way analysis ever happens. The response's `skipped_by_reason` /
     `failed_by_reason` breakdowns are the fastest way to see whether the gate is tuned right.
+
+    `locale` picks the language the resulting signals are written in (issue #67). Not
+    user-scoped, so there is no `preferred_locale` to fall back to: an omitted `locale` means
+    `Settings.default_locale`, and a caller that wants another language says so — the same
+    contract as `GET /instruments/enriched` and `POST /signals/generate`.
     """
-    result = await use_case.execute(locale=settings.default_locale)
+    result = await use_case.execute(locale=locale or settings.default_locale)
     return AnalyzePendingNewsResponse.model_validate(result)
 
 
@@ -280,6 +322,7 @@ async def force_analyze_news_item(
     news_id: str,
     use_case: Annotated[ForceAnalyzeNewsItem, Depends(get_force_analyze_news_item_use_case)],
     settings: Annotated[Settings, Depends(get_settings)],
+    locale: Annotated[str | None, Query(min_length=2, max_length=35)] = None,
 ) -> NewsItemResponse:
     """Force-classify ONE news item, bypassing the pre-filter — the "Analizar ahora" button
     (issue #27).
@@ -299,10 +342,12 @@ async def force_analyze_news_item(
     `NewsSkipReason` just persisted on the item, so the frontend can explain it rather than
     showing an opaque failure.
 
-    Not user-scoped — same visibility model as the rest of this router.
+    Not user-scoped — same visibility model as the rest of this router. `locale` therefore
+    works exactly as it does on `POST /news/analyze-pending`: the UI sends the language it is
+    displaying, and an omitted value means `Settings.default_locale` (issue #67).
     """
     try:
-        item = await use_case.execute(news_id, locale=settings.default_locale)
+        item = await use_case.execute(news_id, locale=locale or settings.default_locale)
     except NewsItemNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="News item not found"

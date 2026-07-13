@@ -29,10 +29,12 @@ class Settings(BaseSettings):
         "compliance@midas.demo": "compliance",
     }
 
-    # Locale used for LLM-generated content (signals/briefings/scenarios) when a caller
-    # doesn't supply one — e.g. a scheduled job, a chat tool call, or a request that omits
-    # the `locale` field. BCP-47-ish tag, e.g. "en", "es", "es-MX".
-    default_locale: str = "en"
+    # Locale used for LLM-generated content (chat/signals/briefings/scenarios) when neither
+    # the request nor the authenticated user's `preferred_locale` supplies one — e.g. a
+    # scheduled job, an anonymous visitor, or a request that omits the `locale` field.
+    # BCP-47-ish tag, e.g. "en", "es", "es-MX". `es` matches the frontend's default locale
+    # (`core/i18n/translation-service.ts`); the two sides must agree (issue #67).
+    default_locale: str = "es"
 
     openai_api_key: str | None = None
     # --- Tiered LLM models (issue #28) ---
@@ -150,6 +152,25 @@ class Settings(BaseSettings):
     # fixture fallback kicks in (see `AggregatingNewsProvider`).
     news_provider_timeout_seconds: float = 2.5
     news_live_fetch_budget_seconds: float = 3.5
+
+    # --- `GET /api/v1/news` read path (taws#71) ---
+    # Serve the feed from the persisted `news_items` store (`ListRecentNews`) instead of
+    # re-aggregating the upstream providers synchronously on the request path, which on a
+    # cold cache overshot the radar client's request timeout and killed the whole page.
+    # Kill switch: set False to restore the old always-blocking `IngestNews` behavior.
+    news_db_first_enabled: bool = True
+    # Persisted items a window must yield before it is served straight from the store.
+    # Below this the store counts as cold and the request falls back to a blocking upstream
+    # fetch, so the very first caller for a window/symbol still gets news. 1 = only fall
+    # back when the store returns nothing at all.
+    news_db_first_min_items: int = 1
+    # Cadence (seconds) of the post-response upstream refresh that keeps `news_items` warm
+    # (`NewsFeedRefresher`), per (symbol, asset_class, since_hours). The radar polls the
+    # feed on an interval from every open browser; this is what stops those polls from
+    # stampeding the upstream providers.
+    news_refresh_min_interval_seconds: float = 120.0
+    # Items requested from the upstream providers per background refresh run.
+    news_refresh_limit: int = 50
 
     # --- CoinGecko (crypto prices, behind the MarketDataProvider port); no key required ---
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"
@@ -430,6 +451,10 @@ class Settings(BaseSettings):
     # surfaces an honest "analysis unavailable" error state, instead of degrading to a
     # zero-confidence pseudo-result with internal fallback markers.
     scenario_synthesis_max_attempts: int = 2
+    # Six specialist calls fan out in one panel; keep provider pressure bounded while
+    # retaining true parallel execution. Each failure is isolated and recorded.
+    scenario_agent_panel_max_concurrency: int = 6
+    scenario_agent_panel_max_attempts: int = 2
 
     # --- Scenario Monitors (arm a saved ScenarioResult as a Watchdog rule, issue #18) ---
     # How long an armed monitor stays active before auto-expiring with no match. Product

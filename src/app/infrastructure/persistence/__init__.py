@@ -1,3 +1,4 @@
+from app.infrastructure.persistence.in_memory_note_repository import InMemoryNoteRepository
 from app.infrastructure.persistence.sentiment_filter_to_range import (
     SentimentRange,
     sentiment_filter_to_range,
@@ -28,11 +29,15 @@ from app.infrastructure.persistence.supabase_telegram_link_repository import (
 from app.infrastructure.persistence.supabase_telegram_link_token_repository import (
     SupabaseTelegramLinkTokenRepository,
 )
+from app.infrastructure.persistence.supabase_user_profile_repository import (
+    SupabaseUserProfileRepository,
+)
 from app.infrastructure.persistence.supabase_watchlist_repository import (
     SupabaseWatchlistRepository,
 )
 
 __all__ = [
+    "InMemoryNoteRepository",
     "SentimentRange",
     "SupabaseBriefingRepository",
     "SupabaseConversationRepository",
@@ -44,6 +49,7 @@ __all__ = [
     "SupabaseSignalRepository",
     "SupabaseTelegramLinkRepository",
     "SupabaseTelegramLinkTokenRepository",
+    "SupabaseUserProfileRepository",
     "SupabaseWatchlistRepository",
     "sentiment_filter_to_range",
 ]

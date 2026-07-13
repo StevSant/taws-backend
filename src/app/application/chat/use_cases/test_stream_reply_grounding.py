@@ -36,6 +36,7 @@ class _FakeAgentRunner(AgentRunner):
         thread_id: str,
         message: Message,
         user_id: str,
+        locale: str = "es",
         grounding_context: str | None = None,
     ) -> AsyncIterator[AgentStreamEvent]:
         self.called = True
@@ -83,6 +84,11 @@ class _FakeNewsItemRepository(NewsItemRepository):
         return NewsFacets(sources=[], providers=[])
 
     async def list_pending(self, limit: int) -> list[NewsItem]:
+        return []
+
+    async def list_recent(
+        self, symbols: list[str] | None, since_hours: int, limit: int
+    ) -> list[NewsItem]:
         return []
 
     async def list_related(self, item: NewsItem, limit: int) -> list[NewsItem]:
@@ -145,6 +151,7 @@ async def test_asset_symbol_resolves_to_grounding_context() -> None:
             "thread-1",
             Message(role=MessageRole.USER, content="hi"),
             "user-1",
+            "es",
             asset_symbol="AAPL",
         )
     )
@@ -168,6 +175,7 @@ async def test_news_id_resolves_to_grounding_context() -> None:
             "thread-1",
             Message(role=MessageRole.USER, content="hi"),
             "user-1",
+            "es",
             news_id="abc",
         )
     )
@@ -189,6 +197,7 @@ async def test_no_reference_leaves_grounding_context_none() -> None:
             "thread-1",
             Message(role=MessageRole.USER, content="hi"),
             "user-1",
+            "es",
         )
     )
 
@@ -209,6 +218,7 @@ async def test_unknown_symbol_leaves_grounding_context_none() -> None:
             "thread-1",
             Message(role=MessageRole.USER, content="hi"),
             "user-1",
+            "es",
             asset_symbol="ZZZZ",
         )
     )
@@ -229,6 +239,7 @@ async def test_asset_symbol_with_window_grounds_on_period_news() -> None:
             "thread-1",
             Message(role=MessageRole.USER, content="why did it move?"),
             "user-1",
+            "es",
             asset_symbol="AAPL",
             from_date=date(2026, 6, 1),
             to_date=date(2026, 7, 15),
@@ -253,6 +264,7 @@ async def test_unknown_news_id_leaves_grounding_context_none() -> None:
             "thread-1",
             Message(role=MessageRole.USER, content="hi"),
             "user-1",
+            "es",
             news_id="does-not-exist",
         )
     )

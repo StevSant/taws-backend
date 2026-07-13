@@ -17,6 +17,7 @@ class AgentRunner(ABC):
         thread_id: str,
         message: Message,
         user_id: str,
+        locale: str,
         grounding_context: str | None = None,
     ) -> AsyncIterator[AgentStreamEvent]:
         """Run the agent for `thread_id` on `message`, yielding stream events as they arrive.
@@ -24,6 +25,11 @@ class AgentRunner(ABC):
         `user_id` identifies the authenticated caller and is threaded through to the
         underlying graph's config (e.g. for future per-tenant tool access) — it is not
         yet consumed by any node or tool.
+
+        `locale` is the language every specialist must answer in (issue #67). Already
+        resolved by the caller (request locale -> the user's `preferred_locale` ->
+        `Settings.default_locale`, see `application/profile/use_cases/resolve_locale.py`),
+        so implementations never have to reach for a default themselves.
 
         `grounding_context` is an optional pre-formatted string describing one specific
         asset or news article the user is asking about (issue #73). When present, the

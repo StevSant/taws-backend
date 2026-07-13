@@ -21,10 +21,14 @@ from app.application.consequence.use_cases import GenerateConsequenceChain
 from app.application.event_intelligence.use_cases import AnalyzeEventImpact, ProcessIncomingEvent
 from app.application.instruments.use_cases import RegisterInstrument, SearchCoins
 from app.application.macro.use_cases import InterpretMacroEvent
+from app.application.market import NewsFeedRefresher
+from app.application.market.use_cases import IngestNews
+from app.application.profile.use_cases import ResolveLocale
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
 from app.application.scenario.use_cases import (
     ComputeScenarioQuantification,
     GatherScenarioContext,
+    GenerateScenarioAgentContributions,
     NormalizeScenarioIntake,
     SynthesizeScenarioResult,
 )
@@ -72,6 +76,8 @@ from app.domain.market.ports import (
 )
 from app.domain.notes.ports import NoteRepository
 from app.domain.notification.ports import EmailSender, NotificationChannel
+from app.domain.profile.ports import UserProfileRepository
+from app.domain.scenario.entities import ScenarioAgentId
 from app.domain.scenario.ports import ScenarioRepository
 from app.domain.sentiment.ports import FearGreedProvider, SentimentRepository
 from app.domain.signals.ports import SignalRepository
@@ -82,7 +88,15 @@ from app.domain.telegram.ports import (
 )
 from app.domain.watchlist.ports import WatchlistRepository
 from app.infrastructure.agents import LangGraphAgentRunner, build_supervisor_graph
-from app.infrastructure.agents.personas import MIDAS_PERSONA
+from app.infrastructure.agents.personas import (
+    ADVISOR_PERSONA,
+    ANALYST_PERSONA,
+    CONSEQUENCE_PERSONA,
+    MACRO_PERSONA,
+    MIDAS_PERSONA,
+    QUANT_PERSONA,
+    SENTIMENT_PERSONA,
+)
 from app.infrastructure.agents.scenario import ScenarioSimulationRunner, build_scenario_graph
 from app.infrastructure.agents.tools import (
     build_advisor_grounding_tools,
@@ -140,6 +154,7 @@ from app.infrastructure.notification import (
     TelegramNotificationChannel,
 )
 from app.infrastructure.persistence import (
+    InMemoryNoteRepository,
     SupabaseBriefingRepository,
     SupabaseConversationRepository,
     SupabaseInstrumentCatalogRepository,
@@ -150,6 +165,7 @@ from app.infrastructure.persistence import (
     SupabaseSignalRepository,
     SupabaseTelegramLinkRepository,
     SupabaseTelegramLinkTokenRepository,
+    SupabaseUserProfileRepository,
     SupabaseWatchlistRepository,
 )
 from app.infrastructure.realtime import OpenAIRealtimeSessionProvider
@@ -204,6 +220,8 @@ class Container:
         self._watchlist_repository: WatchlistRepository | None = None
         self._reorder_watchlists_use_case: ReorderWatchlists | None = None
         self._note_repository: NoteRepository | None = None
+        self._user_profile_repository: UserProfileRepository | None = None
+        self._resolve_locale_use_case: ResolveLocale | None = None
         self._signal_repository: SignalRepository | None = None
         self._briefing_repository: BriefingRepository | None = None
         self._news_provider: NewsProvider | None = None
@@ -227,6 +245,7 @@ class Container:
         self._generate_conversation_title_use_case: GenerateConversationTitle | None = None
         self._notification_channel: NotificationChannel | None = None
         self._alerted_signal_tracker: AlertedSignalTracker | None = None
+        self._news_feed_refresher: NewsFeedRefresher | None = None
         self._telegram_link_repository: TelegramLinkRepository | None = None
         self._telegram_link_token_repository: TelegramLinkTokenRepository | None = None
         self._telegram_messenger: TelegramMessenger | None = None
@@ -420,16 +439,49 @@ class Container:
         return self._reorder_watchlists_use_case
 
     def get_note_repository(self) -> NoteRepository:
-        """Return the cached per-user NoteRepository (issue #62), Supabase-backed with the
-        same retry/config wiring as the other per-user repositories."""
+        """Return Supabase notes, with process-local storage for unconfigured development."""
         if self._note_repository is None:
-            self._note_repository = SupabaseNoteRepository(
+            supabase_configured = bool(self._settings.supabase_url and self._settings.supabase_key)
+            if self._settings.app_env == "development" and not supabase_configured:
+                logging.getLogger(__name__).warning(
+                    "Supabase notes are not configured; using process-local development storage."
+                )
+                self._note_repository = InMemoryNoteRepository()
+            else:
+                self._note_repository = SupabaseNoteRepository(
+                    supabase_url=self._settings.supabase_url,
+                    supabase_key=self._settings.supabase_key,
+                    retry_max_attempts=self._settings.supabase_retry_max_attempts,
+                    retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
+                )
+        return self._note_repository
+
+    def get_user_profile_repository(self) -> UserProfileRepository:
+        """Return the cached per-user UserProfileRepository (issue #67), Supabase-backed with
+        the same retry/config wiring as the other per-user repositories."""
+        if self._user_profile_repository is None:
+            self._user_profile_repository = SupabaseUserProfileRepository(
                 supabase_url=self._settings.supabase_url,
                 supabase_key=self._settings.supabase_key,
                 retry_max_attempts=self._settings.supabase_retry_max_attempts,
                 retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
             )
-        return self._note_repository
+        return self._user_profile_repository
+
+    def get_resolve_locale_use_case(self) -> ResolveLocale:
+        """Return the cached `ResolveLocale` use case (issue #67).
+
+        The single place that answers "what language does this reply go out in":
+        request locale -> the user's stored `preferred_locale` -> `Settings.default_locale`.
+        Only depends on one repository plus a settings value, so caching one instance is
+        safe — same shape as the other single-port use cases wired here.
+        """
+        if self._resolve_locale_use_case is None:
+            self._resolve_locale_use_case = ResolveLocale(
+                user_profile_repository=self.get_user_profile_repository(),
+                default_locale=self._settings.default_locale,
+            )
+        return self._resolve_locale_use_case
 
     def get_signal_repository(self) -> SignalRepository:
         if self._signal_repository is None:
@@ -519,6 +571,25 @@ class Container:
         if self._alerted_signal_tracker is None:
             self._alerted_signal_tracker = AlertedSignalTracker()
         return self._alerted_signal_tracker
+
+    def get_news_feed_refresher(self) -> NewsFeedRefresher:
+        """Return the cached, process-wide `NewsFeedRefresher` singleton (taws#71).
+
+        Must be a singleton: its in-flight/throttle state is the only thing keeping the
+        radar's polling clients from stampeding the upstream news providers now that
+        `GET /api/v1/news` schedules a refresh on every served request.
+        """
+        if self._news_feed_refresher is None:
+            self._news_feed_refresher = NewsFeedRefresher(
+                ingest_news=IngestNews(
+                    news_provider=self.get_news_provider(),
+                    news_item_repository=self.get_news_item_repository(),
+                    signal_repository=self.get_signal_repository(),
+                ),
+                min_interval_seconds=self._settings.news_refresh_min_interval_seconds,
+                limit=self._settings.news_refresh_limit,
+            )
+        return self._news_feed_refresher
 
     def get_telegram_link_repository(self) -> TelegramLinkRepository:
         if self._telegram_link_repository is None:
@@ -627,8 +698,16 @@ class Container:
         )
 
     def build_chat_message_handler(self, messenger: TelegramMessenger) -> ChatMessageHandler:
-        """A conversational handler replying through `messenger`. See the note above."""
-        return ChatMessageHandler(agent_runner=self.get_agent_runner(), messenger=messenger)
+        """A conversational handler replying through `messenger`. See the note above.
+
+        Telegram has no per-user language preference of its own, so the handler answers in
+        `Settings.default_locale` (issue #67) rather than defaulting to the personas' English.
+        """
+        return ChatMessageHandler(
+            agent_runner=self.get_agent_runner(),
+            messenger=messenger,
+            default_locale=self._settings.default_locale,
+        )
 
     def get_briefing_command_handler(self) -> BriefingCommandHandler | None:
         """Return the main bot's cached `/briefing` handler, or `None` when Telegram isn't
@@ -1274,11 +1353,28 @@ class Container:
                 instrument_universe=self.get_instrument_universe(),
                 max_synthesis_attempts=self._settings.scenario_synthesis_max_attempts,
             )
+            generate_contributions = GenerateScenarioAgentContributions(
+                # Reasoning tier (#28): six independent grounded specialists produce
+                # judgments that the final synthesis must reconcile.
+                llm_provider=self.get_reasoning_llm_provider(),
+                midas_persona=MIDAS_PERSONA,
+                specialist_personas={
+                    ScenarioAgentId.ANALYST: ANALYST_PERSONA,
+                    ScenarioAgentId.QUANT: QUANT_PERSONA,
+                    ScenarioAgentId.MACRO: MACRO_PERSONA,
+                    ScenarioAgentId.SENTIMENT: SENTIMENT_PERSONA,
+                    ScenarioAgentId.CONSEQUENCE: CONSEQUENCE_PERSONA,
+                    ScenarioAgentId.ADVISOR: ADVISOR_PERSONA,
+                },
+                max_concurrency=self._settings.scenario_agent_panel_max_concurrency,
+                max_attempts=self._settings.scenario_agent_panel_max_attempts,
+            )
             graph = build_scenario_graph(
                 normalize_scenario_intake=normalize_intake,
                 gather_scenario_context=gather_context,
                 generate_consequence_chain=self.get_generate_consequence_chain_use_case(),
                 compute_scenario_quantification=compute_quantification,
+                generate_agent_contributions=generate_contributions,
                 synthesize_scenario_result=synthesize_result,
                 scenario_repository=self.get_scenario_repository(),
             )

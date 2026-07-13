@@ -1,6 +1,8 @@
+import asyncio
 import logging
 from dataclasses import replace
 
+from app.application.market.use_cases.classify_news_category import classify_news_category
 from app.domain.market.entities import AnalysisStatus, AssetClass, NewsItem
 from app.domain.market.ports import NewsItemRepository, NewsProvider
 from app.domain.signals.ports import SignalRepository
@@ -41,7 +43,8 @@ class IngestNews:
         fetched = await self._news_provider.fetch_news(
             symbols=symbols, asset_class=asset_class, since_hours=since_hours, limit=limit
         )
-        prepared = await self._backfill_analysis_status(fetched)
+        categorized = self._classify_categories(fetched)
+        prepared = await self._backfill_analysis_status(categorized)
         persisted = await self._persist(prepared)
 
         # `upsert_many` doesn't guarantee input order (it returns rows from a `SELECT ...
@@ -51,6 +54,20 @@ class IngestNews:
         order = {item.url: index for index, item in enumerate(fetched)}
         persisted.sort(key=lambda item: order.get(item.url, len(order)))
         return persisted[:limit]
+
+    def _classify_categories(self, items: list[NewsItem]) -> list[NewsItem]:
+        """Assign each item its topical category (issue #69).
+
+        Runs on the ingest path, *not* the analysis path, which is the whole point: the
+        classifier is a pure keyword scorer with no LLM call, so every item gets a category
+        even when it is later gated out of signal generation and no `Signal` is ever produced
+        for it. Being synchronous and offline, it costs nothing and adds no latency here.
+
+        Providers never populate `category`, so this always computes it; `upsert_many` is what
+        decides whether the value reaches an already-persisted row (it backfills only rows that
+        have none yet, and never overwrites one that does).
+        """
+        return [replace(item, category=classify_news_category(item)) for item in items]
 
     async def _persist(self, prepared: list[NewsItem]) -> list[NewsItem]:
         """Persist-then-read, degrading to the freshly-fetched items when the store is
@@ -77,15 +94,21 @@ class IngestNews:
         that already exist in the store (`upsert_many` never overwrites an existing row's
         `analysis_status`/`signal_id`).
         """
-        symbols = {symbol for item in items for symbol in item.related_symbols}
+        symbols = sorted({symbol for item in items for symbol in item.related_symbols})
         if not symbols:
             return items
 
-        latest_signal_id_by_symbol: dict[str, str] = {}
-        for symbol in symbols:
-            signal_id = await self._latest_signal_id(symbol)
-            if signal_id is not None:
-                latest_signal_id_by_symbol[symbol] = signal_id
+        # One signal-store round-trip per distinct symbol, fanned out concurrently: awaited
+        # in sequence this was the single biggest cost on the `GET /api/v1/news` request
+        # path — a 50-item page can reference dozens of instruments, and each lookup paid a
+        # full Supabase round-trip (taws#71). The lookups are independent, so gathering them
+        # collapses N round-trips into one wall-clock round-trip.
+        signal_ids = await asyncio.gather(*(self._latest_signal_id(symbol) for symbol in symbols))
+        latest_signal_id_by_symbol = {
+            symbol: signal_id
+            for symbol, signal_id in zip(symbols, signal_ids, strict=True)
+            if signal_id is not None
+        }
 
         if not latest_signal_id_by_symbol:
             return items

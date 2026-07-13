@@ -83,6 +83,8 @@ from app.api.v1.schemas.telegram_link_status_response import TelegramLinkStatusR
 from app.api.v1.schemas.telegram_link_token_response import TelegramLinkTokenResponse
 from app.api.v1.schemas.transcription_response import TranscriptionResponse
 from app.api.v1.schemas.unusual_move_response import UnusualMoveResponse
+from app.api.v1.schemas.update_user_profile_request import UpdateUserProfileRequest
+from app.api.v1.schemas.user_profile_response import UserProfileResponse
 from app.api.v1.schemas.volatility_regime_response import VolatilityRegimeResponse
 from app.api.v1.schemas.watchlist_create_request import WatchlistCreateRequest
 from app.api.v1.schemas.watchlist_item_add_request import WatchlistItemAddRequest
@@ -169,6 +171,8 @@ __all__ = [
     "TelegramLinkTokenResponse",
     "TranscriptionResponse",
     "UnusualMoveResponse",
+    "UpdateUserProfileRequest",
+    "UserProfileResponse",
     "VolatilityRegimeResponse",
     "NoteBodyRequest",
     "NoteResponse",
