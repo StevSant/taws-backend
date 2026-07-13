@@ -19,12 +19,29 @@ class SupabaseInstrumentUniverse(InstrumentUniverse):
     override source for `get_market_data_provider`) are adapter-only additions on
     top of the `InstrumentUniverse` ABC — `add()` also satisfies the domain
     `MutableInstrumentUniverse` protocol structurally.
+
+    `add_row()` + `coingecko_id_overrides()`/`yfinance_symbol_overrides()` (CRITICAL
+    fix, post-hoc adversarial review) close a gap `add()` alone could not: `add()`
+    rebuilds a vendor-id-less `InstrumentRow` (`coingecko_id=None`), so a newly
+    registered coin's id never reached `all_rows()`. Worse, `Container.
+    get_market_data_provider` used to build its override dicts as a ONE-TIME
+    snapshot from `all_rows()`, so even a correct row update would never reach the
+    already-constructed, cached `CoinGeckoMarketDataProvider`. The override dicts
+    below are built ONCE in `__init__` and mutated in place by `add_row()` — any
+    caller (e.g. the DI container) holding a reference to the SAME dict object sees
+    every subsequent registration live, with no rebuild and no restart required.
     """
 
     def __init__(self, rows: list[InstrumentRow]) -> None:
         self._rows: dict[str, InstrumentRow] = {row.symbol.upper(): row for row in rows}
         self._instruments: dict[str, Instrument] = {
             symbol: _instrument_from_row(row) for symbol, row in self._rows.items()
+        }
+        self._coingecko_overrides: dict[str, str] = {
+            row.symbol: row.coingecko_id for row in rows if row.coingecko_id
+        }
+        self._yfinance_overrides: dict[str, str] = {
+            row.symbol: row.yfinance_symbol for row in rows if row.yfinance_symbol
         }
 
     @classmethod
@@ -71,6 +88,37 @@ class SupabaseInstrumentUniverse(InstrumentUniverse):
         without a fresh async DB read.
         """
         return list(self._rows.values())
+
+    def add_row(self, row: InstrumentRow) -> None:
+        """Append a newly registered catalog row, preserving vendor-id overrides.
+
+        Unlike `add(instrument)` (which only knows the vendor-id-free `Instrument`
+        entity), this updates `_rows`/`_instruments` from the full `InstrumentRow`
+        the caller already built (with `coingecko_id`/`yfinance_symbol` set), AND
+        mutates the live override dicts in place so any holder of
+        `coingecko_id_overrides()`/`yfinance_symbol_overrides()` observes the
+        registration immediately (CRITICAL fix — see class docstring).
+        """
+        symbol = row.symbol.upper()
+        self._rows[symbol] = row
+        self._instruments[symbol] = _instrument_from_row(row)
+        if row.coingecko_id:
+            self._coingecko_overrides[row.symbol] = row.coingecko_id
+        if row.yfinance_symbol:
+            self._yfinance_overrides[row.symbol] = row.yfinance_symbol
+
+    def coingecko_id_overrides(self) -> dict[str, str]:
+        """Return the LIVE `symbol -> coingecko_id` override dict (not a copy).
+
+        Callers (e.g. `Container.get_market_data_provider`) must hold onto this
+        exact object rather than re-snapshotting it, so registrations made via
+        `add_row()` after the provider was built are still visible.
+        """
+        return self._coingecko_overrides
+
+    def yfinance_symbol_overrides(self) -> dict[str, str]:
+        """Return the LIVE `symbol -> yfinance_symbol` override dict (not a copy)."""
+        return self._yfinance_overrides
 
 
 def _instrument_from_row(row: InstrumentRow) -> Instrument:

@@ -4,7 +4,7 @@ depends on this, never a concrete `SupabaseInstrumentUniverse`/`isinstance` chec
 see design decision #7).
 """
 
-from app.domain.market.entities import Instrument
+from app.domain.market.entities import Instrument, InstrumentRow
 from app.domain.market.entities.asset_class import AssetClass
 from app.domain.market.ports import MutableInstrumentUniverse
 
@@ -14,9 +14,13 @@ class _FakeMutableUniverse:
 
     def __init__(self) -> None:
         self.added: list[Instrument] = []
+        self.added_rows: list[InstrumentRow] = []
 
     def add(self, instrument: Instrument) -> None:
         self.added.append(instrument)
+
+    def add_row(self, row: InstrumentRow) -> None:
+        self.added_rows.append(row)
 
 
 def test_fake_satisfies_the_protocol_structurally() -> None:
@@ -24,11 +28,20 @@ def test_fake_satisfies_the_protocol_structurally() -> None:
     instrument = Instrument(
         symbol="DOGE", name="Dogecoin", asset_class=AssetClass.CRYPTO, currency="USD"
     )
+    row = InstrumentRow(
+        symbol="DOGE",
+        name="Dogecoin",
+        asset_class=AssetClass.CRYPTO,
+        currency="USD",
+        coingecko_id="dogecoin",
+    )
 
     fake.add(instrument)
+    fake.add_row(row)
 
     assert isinstance(fake, MutableInstrumentUniverse)
     assert fake.added == [instrument]  # type: ignore[attr-defined]
+    assert fake.added_rows == [row]  # type: ignore[attr-defined]
 
 
 def test_object_without_add_does_not_satisfy_the_protocol() -> None:

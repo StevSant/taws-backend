@@ -58,12 +58,12 @@ def migrated_db() -> sqlalchemy.Engine:
     }
 
     config = _alembic_config()
-    command.upgrade(config, "0012")
+    command.upgrade(config, "0015")
     engine = _engine()
     try:
         yield engine
     finally:
-        command.downgrade(config, "0011b")
+        command.downgrade(config, "0014")
         engine.dispose()
         for name, logger in manager.loggerDict.items():
             if isinstance(logger, logging.Logger):
@@ -96,7 +96,7 @@ def test_rerunning_seed_insert_is_a_no_op(migrated_db: sqlalchemy.Engine) -> Non
 
 def test_downgrade_drops_the_table(migrated_db: sqlalchemy.Engine) -> None:
     config = _alembic_config()
-    command.downgrade(config, "0011b")
+    command.downgrade(config, "0014")
 
     with migrated_db.connect() as conn:
         exists = conn.execute(
@@ -108,13 +108,13 @@ def test_downgrade_drops_the_table(migrated_db: sqlalchemy.Engine) -> None:
 
     assert exists is False
 
-    command.upgrade(config, "0012")
+    command.upgrade(config, "0015")
 
 
-def test_alembic_heads_includes_0012() -> None:
+def test_alembic_heads_includes_0015() -> None:
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(_alembic_config())
     heads = script.get_heads()
 
-    assert heads == ["0012"]
+    assert heads == ["0015"]

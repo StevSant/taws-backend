@@ -1,3 +1,4 @@
+from app.domain.market.ports.coingecko_search_provider import CoinGeckoSearchProvider
 from app.domain.market.ports.fundamentals_provider import FundamentalsProvider
 from app.domain.market.ports.instrument_catalog_repository import InstrumentCatalogRepository
 from app.domain.market.ports.instrument_universe import InstrumentUniverse
@@ -8,6 +9,7 @@ from app.domain.market.ports.news_item_repository import NewsItemRepository
 from app.domain.market.ports.news_provider import NewsProvider
 
 __all__ = [
+    "CoinGeckoSearchProvider",
     "FundamentalsProvider",
     "InstrumentCatalogRepository",
     "InstrumentUniverse",
