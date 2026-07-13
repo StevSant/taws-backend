@@ -44,8 +44,10 @@ from app.api.v1.schemas.macro_series_response import MacroSeriesResponse
 from app.api.v1.schemas.macro_state_response import MacroStateResponse
 from app.api.v1.schemas.market_pulse_response import MarketPulseResponse
 from app.api.v1.schemas.market_stats_response import MarketStatsResponse
+from app.api.v1.schemas.news_browse_response import NewsBrowseResponse
 from app.api.v1.schemas.news_entity_response import NewsEntityResponse
 from app.api.v1.schemas.news_event_response import NewsEventResponse
+from app.api.v1.schemas.news_facets_response import NewsFacetsResponse
 from app.api.v1.schemas.news_item_response import NewsItemResponse
 from app.api.v1.schemas.news_list_response import NewsListResponse
 from app.api.v1.schemas.note_body_request import NoteBodyRequest
@@ -128,8 +130,10 @@ __all__ = [
     "MacroSeriesResponse",
     "MacroStateResponse",
     "MarketStatsResponse",
+    "NewsBrowseResponse",
     "NewsEntityResponse",
     "NewsEventResponse",
+    "NewsFacetsResponse",
     "NewsItemResponse",
     "NewsListResponse",
     "OpenReviewItemResponse",

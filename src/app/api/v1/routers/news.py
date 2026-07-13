@@ -6,17 +6,24 @@ from app.api.v1.dependencies import (
     get_analyze_pending_news_use_case,
     get_fast_llm_provider,
     get_force_analyze_news_item_use_case,
+    get_instrument_universe,
     get_news_item_repository,
     get_news_provider,
     get_signal_repository,
 )
-from app.api.v1.schemas import AnalyzePendingNewsResponse, NewsItemResponse, NewsListResponse
+from app.api.v1.schemas import (
+    AnalyzePendingNewsResponse,
+    NewsBrowseResponse,
+    NewsFacetsResponse,
+    NewsItemResponse,
+    NewsListResponse,
+)
 from app.api.v1.schemas.localize_news_blurbs import (
     LocalizeNewsBlurbsRequest,
     LocalizeNewsBlurbsResponse,
     NewsBlurbResponse,
 )
-from app.application.market.use_cases import IngestNews
+from app.application.market.use_cases import BrowseNews, IngestNews
 from app.application.market.use_cases.localize_news_blurbs import (
     LocalizeNewsBlurbs,
     NewsBlurbSource,
@@ -25,8 +32,15 @@ from app.application.signals import NewsItemNotAnalyzableError, NewsItemNotFound
 from app.application.signals.use_cases import AnalyzePendingNews, ForceAnalyzeNewsItem
 from app.core.config import Settings, get_settings
 from app.domain.agents.ports import LLMProvider
-from app.domain.market.entities import AssetClass
-from app.domain.market.ports import NewsItemRepository, NewsProvider
+from app.domain.market.entities import (
+    AnalysisStatus,
+    AssetClass,
+    NewsBrowseQuery,
+    NewsSortField,
+    SentimentFilter,
+    SortDirection,
+)
+from app.domain.market.ports import InstrumentUniverse, NewsItemRepository, NewsProvider
 from app.domain.signals.ports import SignalRepository
 
 router = APIRouter(prefix="/news", tags=["news"])
@@ -34,6 +48,12 @@ router = APIRouter(prefix="/news", tags=["news"])
 _MAX_SINCE_HOURS = 24 * 30
 _MAX_LIMIT = 200
 _MAX_OFFSET = 10_000
+# Longest accepted `q`. A headline search is a few words; anything longer is a client bug or
+# an attempt to build an expensive `ilike` scan.
+_SEARCH_MAX_LEN = 60
+# Deepest page the browse pager will serve. `_MAX_OFFSET` bounds the same thing for the
+# offset-based `GET /api/v1/news`; this is its page-based equivalent.
+_MAX_PAGE = 1_000
 
 
 @router.get("")
@@ -108,6 +128,80 @@ async def localize_news_blurbs(
     return LocalizeNewsBlurbsResponse(
         items=[NewsBlurbResponse(id=row.id, blurb=row.blurb) for row in blurbs]
     )
+
+
+@router.get("/browse")
+async def browse_news(
+    news_provider: Annotated[NewsProvider, Depends(get_news_provider)],
+    news_item_repository: Annotated[NewsItemRepository, Depends(get_news_item_repository)],
+    signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
+    instrument_universe: Annotated[InstrumentUniverse, Depends(get_instrument_universe)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    symbol: Annotated[str | None, Query()] = None,
+    asset_class: Annotated[AssetClass | None, Query()] = None,
+    source: Annotated[str | None, Query()] = None,
+    provider: Annotated[str | None, Query()] = None,
+    sentiment: Annotated[SentimentFilter | None, Query()] = None,
+    analysis_status: Annotated[AnalysisStatus | None, Query()] = None,
+    q: Annotated[str | None, Query(max_length=_SEARCH_MAX_LEN)] = None,
+    since_hours: Annotated[int, Query(ge=1, le=_MAX_SINCE_HOURS)] = 48,
+    sort_by: Annotated[NewsSortField, Query()] = NewsSortField.PUBLISHED_AT,
+    sort_dir: Annotated[SortDirection, Query()] = SortDirection.DESC,
+    page: Annotated[int, Query(ge=1, le=_MAX_PAGE)] = 1,
+    page_size: Annotated[int | None, Query(ge=1)] = None,
+) -> NewsBrowseResponse:
+    """Browse the persisted news archive: server-side filter + sort + exact total (issue #70).
+
+    The DB-backed counterpart to `GET /api/v1/news`. That endpoint is provider-fed — it fetches
+    upstreams on every call and slices in Python, so it can only ever say `has_more` and can only
+    order within the slice a provider handed it. This one reads the `news_items` store, so it can
+    report `total` (what a numbered "Página X de Y" pager needs) and sort/filter across the whole
+    corpus.
+
+    Since nothing ingests news on a schedule, a best-effort `IngestNews` refresh runs on **page 1
+    only** — the archive stays fresh without an upstream fetch on every page click, and a failed
+    refresh still serves the DB read.
+    """
+    resolved_page_size = min(
+        page_size or settings.news_browse_default_page_size, settings.news_browse_max_page_size
+    )
+    query = NewsBrowseQuery(
+        symbols=[symbol] if symbol else None,
+        source=source,
+        provider=provider,
+        sentiment=sentiment,
+        analysis_status=analysis_status,
+        search=q,
+        since_hours=since_hours,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        page=page,
+        page_size=resolved_page_size,
+    )
+    use_case = BrowseNews(
+        news_item_repository=news_item_repository,
+        instrument_universe=instrument_universe,
+        ingest_news=IngestNews(
+            news_provider=news_provider,
+            news_item_repository=news_item_repository,
+            signal_repository=signal_repository,
+        ),
+    )
+    result = await use_case.execute(query=query, asset_class=asset_class)
+    return NewsBrowseResponse.model_validate(result)
+
+
+@router.get("/facets")
+async def list_news_facets(
+    news_item_repository: Annotated[NewsItemRepository, Depends(get_news_item_repository)],
+) -> NewsFacetsResponse:
+    """Distinct `source`/`provider` values in the store, for the browse filter dropdowns.
+
+    Read from the corpus rather than hardcoded, so the dropdowns can only ever offer a value
+    that some article actually carries.
+    """
+    facets = await news_item_repository.list_facets()
+    return NewsFacetsResponse.model_validate(facets)
 
 
 @router.get("/{news_id}")
