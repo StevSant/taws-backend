@@ -1,6 +1,7 @@
 import logging
 from dataclasses import replace
 
+from app.application.market.use_cases.classify_news_category import classify_news_category
 from app.domain.market.entities import AnalysisStatus, AssetClass, NewsItem
 from app.domain.market.ports import NewsItemRepository, NewsProvider
 from app.domain.signals.ports import SignalRepository
@@ -41,7 +42,8 @@ class IngestNews:
         fetched = await self._news_provider.fetch_news(
             symbols=symbols, asset_class=asset_class, since_hours=since_hours, limit=limit
         )
-        prepared = await self._backfill_analysis_status(fetched)
+        categorized = self._classify_categories(fetched)
+        prepared = await self._backfill_analysis_status(categorized)
         persisted = await self._persist(prepared)
 
         # `upsert_many` doesn't guarantee input order (it returns rows from a `SELECT ...
@@ -51,6 +53,20 @@ class IngestNews:
         order = {item.url: index for index, item in enumerate(fetched)}
         persisted.sort(key=lambda item: order.get(item.url, len(order)))
         return persisted[:limit]
+
+    def _classify_categories(self, items: list[NewsItem]) -> list[NewsItem]:
+        """Assign each item its topical category (issue #69).
+
+        Runs on the ingest path, *not* the analysis path, which is the whole point: the
+        classifier is a pure keyword scorer with no LLM call, so every item gets a category
+        even when it is later gated out of signal generation and no `Signal` is ever produced
+        for it. Being synchronous and offline, it costs nothing and adds no latency here.
+
+        Providers never populate `category`, so this always computes it; `upsert_many` is what
+        decides whether the value reaches an already-persisted row (it backfills only rows that
+        have none yet, and never overwrites one that does).
+        """
+        return [replace(item, category=classify_news_category(item)) for item in items]
 
     async def _persist(self, prepared: list[NewsItem]) -> list[NewsItem]:
         """Persist-then-read, degrading to the freshly-fetched items when the store is
