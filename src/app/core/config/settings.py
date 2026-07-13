@@ -336,6 +336,18 @@ class Settings(BaseSettings):
     # same APScheduler infra as the Watchdog jobs (`infrastructure/scheduling`).
     news_analysis_poll_interval_minutes: int = 15
 
+    # --- News browse page (issue #70: GET /api/v1/news/browse, the DB-backed archive with
+    # numbered pagination — distinct from the live provider-fed GET /api/v1/news) ---
+    # Page size used when the caller doesn't pass one, and the ceiling it's clamped to, so a
+    # crafted `page_size` can't ask the store for an unbounded page.
+    news_browse_default_page_size: int = 20
+    news_browse_max_page_size: int = 100
+    # abs(sentiment_score) at or below which a news item counts as *neutral* in the browse
+    # sentiment filter; above it, positive/negative. Deliberately mirrors the frontend's
+    # `classifyNewsSentiment` threshold — if the two drift, a card badged "positivo" could
+    # disappear from the "positive" filter.
+    news_sentiment_neutral_threshold: float = 0.15
+
     # --- Historical analogs RAG (behind the VectorStore port, pgvector-backed) ---
     historical_analogs_top_k: int = 3
 

@@ -1,3 +1,7 @@
+from app.infrastructure.persistence.sentiment_filter_to_range import (
+    SentimentRange,
+    sentiment_filter_to_range,
+)
 from app.infrastructure.persistence.supabase_briefing_repository import (
     SupabaseBriefingRepository,
 )
@@ -27,6 +31,7 @@ from app.infrastructure.persistence.supabase_watchlist_repository import (
 )
 
 __all__ = [
+    "SentimentRange",
     "SupabaseBriefingRepository",
     "SupabaseConversationRepository",
     "SupabaseNewsItemRepository",
@@ -38,4 +43,5 @@ __all__ = [
     "SupabaseTelegramLinkTokenRepository",
     "SupabaseUserBotRepository",
     "SupabaseWatchlistRepository",
+    "sentiment_filter_to_range",
 ]

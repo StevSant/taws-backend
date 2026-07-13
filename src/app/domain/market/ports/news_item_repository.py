@@ -1,6 +1,13 @@
 from abc import ABC, abstractmethod
 
-from app.domain.market.entities import AnalysisStatus, NewsItem, NewsSkipReason
+from app.domain.market.entities import (
+    AnalysisStatus,
+    NewsBrowseQuery,
+    NewsFacets,
+    NewsItem,
+    NewsSkipReason,
+    PaginatedNewsItems,
+)
 
 
 class NewsItemRepository(ABC):
@@ -26,6 +33,23 @@ class NewsItemRepository(ABC):
 
         Backs `GET /api/v1/news/{id}` (issue #38) — single-item read by the persisted
         `news_items.id` (not the article `url`)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def browse(self, query: NewsBrowseQuery) -> PaginatedNewsItems:
+        """Return one filtered/sorted page of persisted items plus the total count of the
+        full filtered set (before pagination).
+
+        Backs `GET /api/v1/news/browse` (issue #70) — a pure store read that never touches
+        upstream providers, which is what lets it report an exact `total` and sort globally
+        rather than within whatever slice a provider happened to return.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_facets(self) -> NewsFacets:
+        """Return the distinct `source` and `provider` values present in the store, for the
+        browse page's filter dropdowns."""
         raise NotImplementedError
 
     @abstractmethod
