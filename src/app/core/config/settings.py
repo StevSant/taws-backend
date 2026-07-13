@@ -35,7 +35,16 @@ class Settings(BaseSettings):
     default_locale: str = "en"
 
     openai_api_key: str | None = None
+    # --- Tiered LLM models (issue #28) ---
+    # Fast/default tier: routing, titling, tone scoring, scenario intake, news localization —
+    # structured, low-reasoning calls where a cheap model is already correct.
     openai_model: str = "gpt-4o-mini"
+    # Reasoning tier: impact signals, pending-news batch analysis, scenario synthesis, causal
+    # chains, macro interpretation, watchlist briefings, and the 6 chat specialists. Left unset
+    # ON PURPOSE: `reasoning_model` below falls back to `openai_model`, so behavior is identical
+    # to today until an operator actually configures a stronger model. Never read this field
+    # directly — read `reasoning_model`.
+    openai_model_reasoning: str | None = None
     openai_embedding_model: str = "text-embedding-3-small"
 
     # --- OpenAI Realtime voice agent (ephemeral-session mint + server-side tool dispatch) ---
@@ -424,6 +433,47 @@ class Settings(BaseSettings):
     # from `ComputeMarketStats`, so a monitor armed a long time ago doesn't trigger an
     # unbounded history fetch on every scan.
     scenario_monitor_price_window_max_days: int = 30
+
+    # --- Shared asset-analysis caching (issue #29) — see
+    # `docs/specs/2026-07-12-shared-asset-analysis-caching-design.md`. Analysis is shared, not
+    # per-user, so one LLM run per (instrument, locale) per TTL window is enough; these back the
+    # `FreshnessPolicy` value object built by `Container.get_freshness_policy()`. ---
+    # Freshness TTL per asset class: how long a persisted analysis counts as still current
+    # before a generate call is allowed to spend another LLM run. Crypto moves fastest,
+    # equities slowest; `default` covers the asset classes without a dedicated bucket
+    # (credit, commodity) and any analysis with no instrument (preset scenarios).
+    analysis_ttl_crypto_minutes: int = 15
+    analysis_ttl_equity_minutes: int = 360
+    analysis_ttl_fx_minutes: int = 60
+    analysis_ttl_default_minutes: int = 180
+    # Rows kept per `(instrument_symbol, locale)` after each write — a short audit trail that
+    # stops `signals`/`scenarios`/`sentiment_readings` growing without bound. Older rows are
+    # pruned; `historical_analogs` is a separately-indexed copy, so pruning sources is safe.
+    analysis_retention_keep: int = 5
+    # Master switch for the SCHEDULED refresh tick only (same rationale as
+    # `news_analysis_enabled`): it is the job that spends LLM tokens unattended. Turning it off
+    # leaves `POST /api/v1/analysis/refresh` and the on-demand generate endpoints working.
+    analysis_refresh_enabled: bool = True
+    # Cadence (minutes) of the background `RefreshTrackedAnalysis` tick that keeps every
+    # watchlisted instrument's analysis warm, so user reads never pay for an inline LLM run.
+    # One tick; the TTLs above decide staleness.
+    analysis_refresh_poll_interval_minutes: int = 5
+    # Locales the background job keeps warm. Analysis content is localized and `locale` is part
+    # of the cache key, so a symbol is refreshed once per locale in this set.
+    analysis_refresh_locales: list[str] = ["en", "es"]
+    # Bounds concurrent generations inside one refresh tick, so a large watchlist union can't
+    # fire unbounded concurrent LLM requests (same guard as `news_analysis_max_concurrency`).
+    analysis_refresh_concurrency: int = 4
+
+    @property
+    def reasoning_model(self) -> str:
+        """The model used by the reasoning-tier call sites (issue #28).
+
+        Falls back to `openai_model` when `OPENAI_MODEL_REASONING` is unset, so the tiering
+        is a no-op until a stronger model is actually configured. This property is the ONLY
+        place that fallback lives — no call site reads `openai_model_reasoning` directly.
+        """
+        return self.openai_model_reasoning or self.openai_model
 
 
 @lru_cache

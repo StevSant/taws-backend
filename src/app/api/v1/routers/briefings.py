@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.v1.dependencies import (
     get_briefing_repository,
-    get_llm_provider,
+    get_reasoning_llm_provider,
     get_signal_repository,
     get_watchlist_repository,
     require_current_user,
@@ -60,7 +60,9 @@ async def generate_briefing(
     watchlist_repository: Annotated[WatchlistRepository, Depends(get_watchlist_repository)],
     signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
     briefing_repository: Annotated[BriefingRepository, Depends(get_briefing_repository)],
-    llm_provider: Annotated[LLMProvider, Depends(get_llm_provider)],
+    # Reasoning tier (#28): composing a briefing synthesizes many signals across a watchlist
+    # into one narrative — the Advisor's flagship analytical call.
+    llm_provider: Annotated[LLMProvider, Depends(get_reasoning_llm_provider)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> BriefingResponse:
     """Trigger the Advisor briefing pipeline on-demand for a watchlist (HU3).

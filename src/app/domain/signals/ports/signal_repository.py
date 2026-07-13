@@ -28,6 +28,31 @@ class SignalRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_latest_for_instrument(self, symbol: str, locale: str) -> Signal | None:
+        """Return the newest signal for `(symbol, locale)`, or `None` if there is none.
+
+        The freshness-cache lookup (issue #29) and the "latest signal" read path. A single
+        `order by created_at desc limit 1` — deliberately NOT `list_for_instrument(...)` +
+        `max(...)` in the caller, which pulls every historical row over the wire just to
+        throw all but one away.
+
+        `locale` is part of the key because a `Signal`'s analytical fields are localized;
+        see `Signal.locale`.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def prune_for_instrument(self, symbol: str, locale: str, keep: int) -> int:
+        """Delete all but the `keep` newest signals for `(symbol, locale)`; return how many
+        rows were deleted.
+
+        Retention (issue #29): without this, `signals` grows unboundedly with near-duplicate
+        rows since readers only ever look at the newest. Pruning the source rows is safe —
+        `historical_analogs` holds its own separately-indexed copy of the RAG corpus.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def save_review_state(self, review_state: ReviewState) -> ReviewState:
         """Persist a reviewer decision (reviewed/escalated/discarded) on a signal.
 

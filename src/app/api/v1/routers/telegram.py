@@ -1,22 +1,17 @@
 import logging
-import random
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse
 
-from app.api.middleware.cors_headers import build_cors_headers_for_origin
 from app.api.v1.dependencies import (
     dev_fallback_allowed,
     get_bot_registration,
     get_briefing_command_handler,
     get_chat_message_handler,
-    get_event_news_provider,
     get_impact_command_handler,
     get_link_telegram_account_use_case,
-    get_process_incoming_event_use_case,
     get_signal_command_handler,
     get_simulate_command_handler,
     get_telegram_link_repository,
@@ -29,15 +24,12 @@ from app.api.v1.schemas import (
     CurrentUser,
     RegisterBotRequest,
     RegisterBotResponse,
-    SendTestNewsResponse,
     TelegramLinkStatusResponse,
     TelegramLinkTokenResponse,
 )
-from app.application.event_intelligence.use_cases import ProcessIncomingEvent
 from app.application.telegram.use_cases import LinkTelegramAccount
 from app.core.config import Settings, get_settings
 from app.core.di import Container, get_container
-from app.domain.event_intelligence.ports import NewsProviderPort
 from app.domain.telegram.entities import TelegramLinkToken
 from app.domain.telegram.ports import (
     BotRegistrationPort,
@@ -64,7 +56,6 @@ from app.infrastructure.telegram import (
     format_welcome_reply,
     parse_telegram_command,
 )
-from app.infrastructure.telegram.format_event_alert import format_event_alert
 
 logger = logging.getLogger(__name__)
 
@@ -74,64 +65,33 @@ _telegram_secret_warned = False
 router = APIRouter(prefix="/telegram", tags=["telegram"])
 
 
-@router.post("/register-bot", status_code=status.HTTP_201_CREATED, response_model=None)
+@router.post("/register-bot", status_code=status.HTTP_201_CREATED)
 async def register_bot(
-    request: Request,
     user: Annotated[CurrentUser, Depends(require_current_user)],
     body: RegisterBotRequest,
     registration: Annotated[BotRegistrationPort, Depends(get_bot_registration)],
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> RegisterBotResponse | JSONResponse:
+) -> RegisterBotResponse:
+    """Register a user-owned Telegram bot from BotFather's welcome message.
+
+    The user pastes the full message they received from BotFather after creating
+    their bot. The system:
+    1. Extracts the bot token and username from the text
+    2. Calls `getUpdates` to find the user's chat_id
+    3. Sets up the webhook for this bot
+    4. Persists the bot registration
+
+    The user must send at least one message to their bot before calling this endpoint.
+    """
     try:
         bot = await registration.register(user_id=user.id, botfather_text=body.botfather_text)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
-    except Exception as e:
-        logger.exception("Unexpected error registering bot for user %s", user.id)
-        cors_headers = build_cors_headers_for_origin(request.headers.get("origin"), settings)
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"detail": f"Error interno al registrar el bot: {e}"},
-            headers=cors_headers,
-        )
     return RegisterBotResponse(
         bot_id=bot.id,
         bot_username=bot.bot_username,
         chat_id=bot.chat_id,
         status="ok",
     )
-
-
-@router.post("/send-test-news", status_code=status.HTTP_200_OK)
-async def send_test_news(
-    user: Annotated[CurrentUser, Depends(require_current_user)],
-    bot_repository: Annotated[UserBotRepository, Depends(get_user_bot_repository)],
-    news_provider: Annotated[NewsProviderPort, Depends(get_event_news_provider)],
-    use_case: Annotated[ProcessIncomingEvent, Depends(get_process_incoming_event_use_case)],
-) -> SendTestNewsResponse:
-    """Fetch a random demo news event, analyze it with Gemini, and send it as a
-    Telegram notification to the authenticated user's registered bot."""
-    bot = await bot_repository.get_by_user_id(user.id)
-    if bot is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No tienes un bot de Telegram registrado. Registra uno primero.",
-        )
-
-    news_list = await news_provider.fetch_latest_news()
-    if not news_list:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No hay eventos de noticias disponibles. Intenta de nuevo más tarde.",
-        )
-
-    news_event = random.choice(news_list)
-    enriched = await use_case.execute(news_event)
-    text = format_event_alert(enriched)
-    client = TelegramBotClient(bot_token=bot.bot_token)
-    await client.send_text(bot.chat_id, text, parse_mode="HTML")
-
-    return SendTestNewsResponse(status="ok", event_title=enriched.original.title)
 
 
 @router.post("/link-token", status_code=status.HTTP_201_CREATED)

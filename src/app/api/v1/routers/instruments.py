@@ -29,6 +29,7 @@ from app.application.instruments.use_cases import (
     RegisterInstrument,
     SearchCoins,
 )
+from app.core.config import Settings, get_settings
 from app.domain.market.entities import AssetClass, CoinCandidate
 from app.domain.market.ports import (
     InstrumentMetadataProvider,
@@ -73,6 +74,7 @@ async def list_enriched_instruments(
     instrument_metadata_provider: Annotated[
         InstrumentMetadataProvider, Depends(get_instrument_metadata_provider)
     ],
+    settings: Annotated[Settings, Depends(get_settings)],
     asset_class: Annotated[AssetClass | None, Query()] = None,
     search: Annotated[str | None, Query(max_length=_SEARCH_MAX_LEN)] = None,
     sort_by: Annotated[InstrumentSortField, Query()] = InstrumentSortField.NAME,
@@ -80,6 +82,7 @@ async def list_enriched_instruments(
     page: Annotated[int, Query(ge=1)] = _DEFAULT_PAGE,
     page_size: Annotated[int, Query(ge=1, le=_MAX_PAGE_SIZE)] = _DEFAULT_PAGE_SIZE,
     window_days: Annotated[int, Query(ge=2, le=_MAX_WINDOW_DAYS)] = _DEFAULT_WINDOW_DAYS,
+    locale: Annotated[str | None, Query()] = None,
 ) -> InstrumentPageResponse:
     """Paginated/filterable/sortable enriched instruments listing for the markets explorer.
 
@@ -96,6 +99,9 @@ async def list_enriched_instruments(
         instrument_metadata_provider=instrument_metadata_provider,
     )
     page_result = await use_case.execute(
+        # `locale` selects which localized signal to show per row (issue #29): signals are
+        # cached per `(symbol, locale)`, so the explorer has to say which language it wants.
+        locale=locale or settings.default_locale,
         asset_class=asset_class,
         search=search,
         sort_by=sort_by,

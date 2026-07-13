@@ -4,7 +4,7 @@ from app.application.sentiment.use_cases import AnalyzeSentiment
 from app.infrastructure.agents.tools.analyze_sentiment_tool import build_analyze_sentiment_tool
 
 
-def build_sentiment_tools(use_case: AnalyzeSentiment) -> list[BaseTool]:
+def build_sentiment_tools(use_case: AnalyzeSentiment, default_locale: str) -> list[BaseTool]:
     """Build the tools bound only to the `sentiment` specialist node.
 
     Wraps the reusable `AnalyzeSentiment` use case
@@ -14,4 +14,4 @@ def build_sentiment_tools(use_case: AnalyzeSentiment) -> list[BaseTool]:
     where this gets wired in, and `build_consequence_tools.py` for the sibling pattern
     this mirrors.
     """
-    return [build_analyze_sentiment_tool(use_case)]
+    return [build_analyze_sentiment_tool(use_case, default_locale)]

@@ -169,6 +169,9 @@ class SynthesizeScenarioResult:
             consequence_chain=consequence_chain,
             recommended_actions=extraction.recommended_actions,
             disclaimer=NOT_PERSONALIZED_ADVICE_DISCLAIMER,
+            # Records which language `title`/`narrative`/`recommended_actions` were written
+            # in; half of the `(preset_id, locale)` freshness cache key (issue #29).
+            locale=locale,
         )
 
     async def _synthesize(

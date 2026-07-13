@@ -13,6 +13,7 @@ from app.api.middleware import (
 )
 from app.api.v1.dependencies import dev_fallback_allowed
 from app.api.v1.routers import (
+    analysis_router,
     briefing_export_router,
     briefings_router,
     charts_router,
@@ -161,6 +162,7 @@ def create_app() -> FastAPI:
     app.include_router(telegram_router, prefix="/api/v1")
     app.include_router(sentiment_router, prefix="/api/v1")
     app.include_router(event_intelligence_router, prefix="/api/v1")
+    app.include_router(analysis_router, prefix="/api/v1")
 
     return app
 

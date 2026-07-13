@@ -64,7 +64,13 @@ class ForceAnalyzeNewsItem:
 
         symbol = item.related_symbols[0].upper()
         try:
-            signal = await self._generate_signal.execute(symbol, locale)
+            # `force=True` (issue #29): `GenerateSignal` is freshness-gated now, and this is
+            # the ONE call site that must never be served from cache. The user pressed
+            # "Analizar ahora" on an article the batch gate deliberately skipped — handing
+            # back a cached signal generated minutes ago from *other* news would leave the
+            # button looking broken and the article still unexplained. Forcing here is safe:
+            # it's an explicit human action, not an unauthenticated cache-bust vector.
+            signal = await self._generate_signal.execute(symbol, locale, force=True)
         except UnknownInstrumentError:
             raise await self._reject(
                 item,

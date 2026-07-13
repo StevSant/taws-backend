@@ -4,6 +4,9 @@ from app.api.v1.dependencies.dev_fallback_allowed import dev_fallback_allowed
 from app.api.v1.dependencies.dev_fallback_user import DEV_FALLBACK_USER
 from app.api.v1.dependencies.get_agent_runner import get_agent_runner
 from app.api.v1.dependencies.get_alerted_signal_tracker import get_alerted_signal_tracker
+from app.api.v1.dependencies.get_analyze_pending_news_use_case import (
+    get_analyze_pending_news_use_case,
+)
 from app.api.v1.dependencies.get_analyze_sentiment_use_case import get_analyze_sentiment_use_case
 from app.api.v1.dependencies.get_bot_registration import get_bot_registration
 from app.api.v1.dependencies.get_briefing_command_handler import get_briefing_command_handler
@@ -14,8 +17,11 @@ from app.api.v1.dependencies.get_coingecko_search_provider import get_coingecko_
 from app.api.v1.dependencies.get_conversation_repository import get_conversation_repository
 from app.api.v1.dependencies.get_email_sender import get_email_sender
 from app.api.v1.dependencies.get_embedding_provider import get_embedding_provider
-from app.api.v1.dependencies.get_event_news_provider import get_event_news_provider
+from app.api.v1.dependencies.get_fast_llm_provider import get_fast_llm_provider
 from app.api.v1.dependencies.get_fear_greed_provider import get_fear_greed_provider
+from app.api.v1.dependencies.get_force_analyze_news_item_use_case import (
+    get_force_analyze_news_item_use_case,
+)
 from app.api.v1.dependencies.get_fundamentals_provider import get_fundamentals_provider
 from app.api.v1.dependencies.get_generate_consequence_chain_use_case import (
     get_generate_consequence_chain_use_case,
@@ -23,6 +29,7 @@ from app.api.v1.dependencies.get_generate_consequence_chain_use_case import (
 from app.api.v1.dependencies.get_generate_conversation_title_use_case import (
     get_generate_conversation_title_use_case,
 )
+from app.api.v1.dependencies.get_generate_signal_use_case import get_generate_signal_use_case
 from app.api.v1.dependencies.get_impact_command_handler import get_impact_command_handler
 from app.api.v1.dependencies.get_instrument_metadata_provider import (
     get_instrument_metadata_provider,
@@ -34,7 +41,6 @@ from app.api.v1.dependencies.get_interpret_macro_event_use_case import (
 from app.api.v1.dependencies.get_link_telegram_account_use_case import (
     get_link_telegram_account_use_case,
 )
-from app.api.v1.dependencies.get_llm_provider import get_llm_provider
 from app.api.v1.dependencies.get_macro_data_provider import get_macro_data_provider
 from app.api.v1.dependencies.get_market_data_provider import get_market_data_provider
 from app.api.v1.dependencies.get_market_pulse_use_case import get_market_pulse_use_case
@@ -50,6 +56,10 @@ from app.api.v1.dependencies.get_process_incoming_event_use_case import (
 from app.api.v1.dependencies.get_realtime_session_provider import (
     get_realtime_session_provider,
 )
+from app.api.v1.dependencies.get_reasoning_llm_provider import get_reasoning_llm_provider
+from app.api.v1.dependencies.get_refresh_tracked_analysis_use_case import (
+    get_refresh_tracked_analysis_use_case,
+)
 from app.api.v1.dependencies.get_register_instrument_use_case import (
     get_register_instrument_use_case,
 )
@@ -60,6 +70,7 @@ from app.api.v1.dependencies.get_reorder_watchlists_use_case import (
 from app.api.v1.dependencies.get_scenario_repository import get_scenario_repository
 from app.api.v1.dependencies.get_scenario_simulation_runner import get_scenario_simulation_runner
 from app.api.v1.dependencies.get_search_coins_use_case import get_search_coins_use_case
+from app.api.v1.dependencies.get_sentiment_repository import get_sentiment_repository
 from app.api.v1.dependencies.get_signal_command_handler import get_signal_command_handler
 from app.api.v1.dependencies.get_signal_repository import get_signal_repository
 from app.api.v1.dependencies.get_simulate_command_handler import get_simulate_command_handler
@@ -97,7 +108,6 @@ __all__ = [
     "get_conversation_repository",
     "get_email_sender",
     "get_embedding_provider",
-    "get_event_news_provider",
     "get_fundamentals_provider",
     "get_generate_consequence_chain_use_case",
     "get_generate_conversation_title_use_case",
@@ -107,7 +117,13 @@ __all__ = [
     "get_interpret_macro_event_use_case",
     "get_jwks_client",
     "get_link_telegram_account_use_case",
-    "get_llm_provider",
+    "get_analyze_pending_news_use_case",
+    "get_fast_llm_provider",
+    "get_force_analyze_news_item_use_case",
+    "get_generate_signal_use_case",
+    "get_reasoning_llm_provider",
+    "get_refresh_tracked_analysis_use_case",
+    "get_sentiment_repository",
     "get_macro_data_provider",
     "get_market_pulse_use_case",
     "get_market_data_provider",
