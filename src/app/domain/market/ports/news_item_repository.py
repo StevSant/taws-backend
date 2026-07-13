@@ -36,7 +36,6 @@ class NewsItemRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-<<<<<<< HEAD
     async def list_related(self, item: NewsItem, limit: int) -> list[NewsItem]:
         """Return up to `limit` other persisted items related to `item`, most-recent first.
 
@@ -51,7 +50,9 @@ class NewsItemRepository(ABC):
 
         `item` itself is never included, and no item is returned twice.
         """
-=======
+        raise NotImplementedError
+
+    @abstractmethod
     async def list_for_symbol_in_range(
         self, symbol: str, from_date: date, to_date: date, limit: int
     ) -> list[NewsItem]:
@@ -59,7 +60,6 @@ class NewsItemRepository(ABC):
         `published_at` falls within [from_date, to_date] (inclusive), most-recent first,
         up to `limit`. Backs date-windowed chat grounding — "why did this asset move in
         this period?" (issue #73 follow-up)."""
->>>>>>> d9c5b05 (feat(chat): ground the answer on the asset's news in a selected date window (#73))
         raise NotImplementedError
 
     @abstractmethod
