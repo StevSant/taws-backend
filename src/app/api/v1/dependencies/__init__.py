@@ -13,6 +13,7 @@ from app.api.v1.dependencies.get_chat_message_handler import get_chat_message_ha
 from app.api.v1.dependencies.get_conversation_repository import get_conversation_repository
 from app.api.v1.dependencies.get_email_sender import get_email_sender
 from app.api.v1.dependencies.get_embedding_provider import get_embedding_provider
+from app.api.v1.dependencies.get_event_news_provider import get_event_news_provider
 from app.api.v1.dependencies.get_fear_greed_provider import get_fear_greed_provider
 from app.api.v1.dependencies.get_fundamentals_provider import get_fundamentals_provider
 from app.api.v1.dependencies.get_generate_consequence_chain_use_case import (
@@ -86,6 +87,7 @@ __all__ = [
     "get_conversation_repository",
     "get_email_sender",
     "get_embedding_provider",
+    "get_event_news_provider",
     "get_fundamentals_provider",
     "get_generate_consequence_chain_use_case",
     "get_generate_conversation_title_use_case",

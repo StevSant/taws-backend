@@ -66,6 +66,7 @@ from app.api.v1.schemas.scenario_monitor_response import ScenarioMonitorResponse
 from app.api.v1.schemas.scenario_preset_response import ScenarioPresetResponse
 from app.api.v1.schemas.scenario_result_response import ScenarioResultResponse
 from app.api.v1.schemas.scenario_spec_response import ScenarioSpecResponse
+from app.api.v1.schemas.send_test_news_response import SendTestNewsResponse
 from app.api.v1.schemas.sentiment_reading_response import SentimentReadingResponse
 from app.api.v1.schemas.signal_evidence_response import SignalEvidenceResponse
 from app.api.v1.schemas.signal_response import SignalResponse
@@ -143,6 +144,7 @@ __all__ = [
     "ScenarioPresetResponse",
     "ScenarioResultResponse",
     "ScenarioSpecResponse",
+    "SendTestNewsResponse",
     "SentimentReadingResponse",
     "SignalEvidenceResponse",
     "SignalResponse",
