@@ -248,21 +248,24 @@ async def telegram_webhook_for_bot(
     background_tasks: BackgroundTasks,
     bot_repository: Annotated[UserBotRepository, Depends(get_user_bot_repository)],
     container: Annotated[Container, Depends(get_container)],
-    briefing_handler: Annotated[
-        BriefingCommandHandler | None, Depends(get_briefing_command_handler)
-    ],
-    signal_handler: Annotated[SignalCommandHandler | None, Depends(get_signal_command_handler)],
-    simulate_handler: Annotated[
-        SimulateCommandHandler | None, Depends(get_simulate_command_handler)
-    ],
-    impact_handler: Annotated[ImpactCommandHandler | None, Depends(get_impact_command_handler)],
-    chat_handler: Annotated[ChatMessageHandler | None, Depends(get_chat_message_handler)],
 ) -> dict[str, bool]:
     """Webhook endpoint for a user-registered Telegram bot.
 
-    Identical logic to the main webhook, but uses the registered bot's token
-    to send replies instead of the `.env` bot token. The user's bot is looked
-    up by `bot_id` from the URL path.
+    Identical logic to the main webhook, but every reply goes out through the registered
+    bot's OWN token instead of the `.env` bot's. The bot is looked up by `bot_id` from the
+    URL path (each registration gets its own webhook URL — see
+    `TelegramBotRegistration._set_webhook`).
+
+    Every handler is therefore built here, per bot, via `container.build_*_command_handler(
+    messenger)` — NOT taken from the cached `Depends(get_*_command_handler)` singletons the
+    main webhook uses. Those are bound to the main `.env` messenger, so dispatching to them
+    from here made a user's brand-new bot answer with the main bot's token. In a private chat
+    the `chat_id` is the user's account ID and is identical across every bot, so those replies
+    were still delivered — into the *other* bot's conversation, which is exactly how the bug
+    showed up. Do not reintroduce a `Depends(get_*_command_handler)` on this route.
+
+    Only the handler the command actually needs is built (a `/start` must not have to
+    construct the scenario runner or the instrument universe to say hello).
     """
     bot = await bot_repository.get_by_id(bot_id)
     if bot is None:
@@ -282,29 +285,22 @@ async def telegram_webhook_for_bot(
                 await messenger.send_text(command.chat_id, format_welcome_reply())
                 return {"ok": True}
             case BriefingCommand():
-                if briefing_handler is not None:
-                    await briefing_handler.handle(command)
+                await container.build_briefing_command_handler(messenger).handle(command)
                 return {"ok": True}
             case SignalCommand():
-                if signal_handler is not None:
-                    await signal_handler.handle(command)
+                await container.build_signal_command_handler(messenger).handle(command)
                 return {"ok": True}
             case SimulateCommand():
-                if simulate_handler is not None:
-                    should_run = await simulate_handler.send_acknowledgement(command)
-                    if should_run:
-                        background_tasks.add_task(simulate_handler.deliver_result, command)
+                simulate_handler = container.build_simulate_command_handler(messenger)
+                should_run = await simulate_handler.send_acknowledgement(command)
+                if should_run:
+                    background_tasks.add_task(simulate_handler.deliver_result, command)
                 return {"ok": True}
             case ImpactCommand():
-                if impact_handler is not None:
-                    await impact_handler.handle(command)
+                await container.build_impact_command_handler(messenger).handle(command)
                 return {"ok": True}
             case ChatMessage():
-                handler = chat_handler or ChatMessageHandler(
-                    agent_runner=container.get_agent_runner(),
-                    messenger=messenger,
-                )
-                await handler.handle(command)
+                await container.build_chat_message_handler(messenger).handle(command)
                 return {"ok": True}
             case UnknownCommand():
                 await messenger.send_text(command.chat_id, format_unknown_command_reply())
