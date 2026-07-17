@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Sequence
 from functools import partial
 from typing import Any
 
@@ -87,6 +88,22 @@ class SupabaseSignalRepository(SignalRepository):
             lambda: client.table(_SIGNALS_TABLE).select("*").eq("id", signal_id).execute()
         )
         return signal_from_row(response.data[0]) if response.data else None
+
+    async def get_by_ids(self, signal_ids: Sequence[str]) -> dict[str, Signal]:
+        """Batch-fetch signals with one `.in_("id", [...])` query, keyed by id.
+
+        Missing ids simply produce no row (no exception), matching the port's
+        contract; empty input short-circuits without touching the network.
+        """
+        if not signal_ids:
+            return {}
+        ids = list(signal_ids)
+        client = await self._clients.get()
+        response = await self._retry(
+            lambda: client.table(_SIGNALS_TABLE).select("*").in_("id", ids).execute()
+        )
+        signals = [signal_from_row(row) for row in response.data]
+        return {signal.id: signal for signal in signals}
 
     async def list_for_instrument(self, symbol: str) -> list[Signal]:
         client = await self._clients.get()

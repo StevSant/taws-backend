@@ -45,10 +45,12 @@ async def _to_response(briefing: Briefing, signal_repository: SignalRepository) 
 
     Resolution runs here in the API layer (via the injected port), keeping the domain
     `Briefing` — which carries only the raw ids — unaware of the read-time enrichment.
+    The briefing's own `instrument_breakdown` rides along so ids pruned by retention
+    can still resolve to their instrument symbol.
     """
     response = BriefingResponse.model_validate(briefing)
     response.linked_signals = await resolve_linked_signals(
-        briefing.linked_signal_ids, signal_repository
+        briefing.linked_signal_ids, signal_repository, briefing.instrument_breakdown
     )
     return response
 

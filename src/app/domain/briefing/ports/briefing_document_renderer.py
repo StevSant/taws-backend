@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from app.domain.briefing.entities import Briefing
+from app.domain.briefing.entities import RenderableBriefing
 
 
 class BriefingDocumentRenderer(ABC):
@@ -22,14 +22,19 @@ class BriefingDocumentRenderer(ABC):
     list, and the `disclaimer` footer. The rendered document must never drop the
     disclaimer — the same "never personalized advice" product invariant the source
     `Briefing` already carries must survive into the exported document.
+
+    Takes a `RenderableBriefing` (the briefing plus read-time signal enrichment)
+    rather than a bare `Briefing`: resolving referenced signal ids is I/O and
+    belongs to `ExportBriefingDocument`, keeping every adapter of this port a pure
+    `document -> bytes` function.
     """
 
     @abstractmethod
-    def render(self, briefing: Briefing) -> bytes:
+    def render(self, briefing: RenderableBriefing) -> bytes:
         """Render `briefing` into raw document bytes (e.g. a PDF).
 
-        Synchronous by design: laying out an already-fetched, already-persisted
-        `Briefing` is pure CPU work, no network/DB I/O — unlike the ports in
-        `domain/notification`, which do need to be async because delivery is I/O.
+        Synchronous by design: laying out an already-fetched, already-enriched
+        `RenderableBriefing` is pure CPU work, no network/DB I/O — unlike the ports
+        in `domain/notification`, which do need to be async because delivery is I/O.
         """
         raise NotImplementedError

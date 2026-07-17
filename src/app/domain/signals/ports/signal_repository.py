@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 
 from app.domain.review.entities import ReviewState
 from app.domain.signals.entities import Signal
@@ -20,6 +21,17 @@ class SignalRepository(ABC):
     @abstractmethod
     async def get(self, signal_id: str) -> Signal | None:
         """Return the signal with this id, or `None` if it doesn't exist."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_by_ids(self, signal_ids: Sequence[str]) -> dict[str, Signal]:
+        """Return the signals found for `signal_ids`, keyed by id.
+
+        Batch companion to `get(...)` for the briefing read/export paths, which
+        resolve every signal id a briefing references — N ids must cost one query,
+        not N. Missing ids (pruned by retention, deleted) are simply absent from
+        the result — never an exception — and empty input returns an empty dict.
+        """
         raise NotImplementedError
 
     @abstractmethod

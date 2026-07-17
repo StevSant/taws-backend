@@ -8,13 +8,17 @@ covers the two contracts the frontend relies on:
 
 - a linked id that resolves -> a `LinkedSignalResponse` carrying the signal's symbol,
   impact, confidence, and thesis title;
-- a linked id that no longer resolves (deleted/missing) -> a degraded placeholder row
-  (id preserved, "—" symbol) instead of a crash or a dropped id.
+- a linked id that no longer resolves but is still listed by an
+  `instrument_breakdown` section (retention pruned the row) -> a partial row with
+  the section's real symbol and neutral impact/confidence;
+- a linked id in neither place -> a degraded placeholder row (id preserved, "—"
+  symbol) instead of a crash or a dropped id.
 
 Per `backend/CLAUDE.md`: a minimal targeted test next to the behavior under test, not
 the start of a broad suite.
 """
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
@@ -26,7 +30,7 @@ from app.api.v1.dependencies import (
     require_current_user,
 )
 from app.api.v1.schemas import CurrentUser
-from app.domain.briefing.entities import Briefing
+from app.domain.briefing.entities import Briefing, BriefingInstrumentSection
 from app.domain.review.entities import ReviewState
 from app.domain.signals.entities import ImpactClass, Signal
 from app.domain.signals.ports import SignalRepository
@@ -37,11 +41,12 @@ from app.main import app
 _USER_ID = "dev-user"
 _WATCHLIST_ID = "wl-1"
 _KNOWN_SIGNAL_ID = "sig-known"
+_PRUNED_SIGNAL_ID = "sig-pruned"
 _MISSING_SIGNAL_ID = "sig-missing"
 
 
 class _StubSignalRepository(SignalRepository):
-    """`get` returns a canned signal for the known id and `None` for anything else."""
+    """`get_by_ids` serves canned signals; ids it doesn't know are simply absent."""
 
     def __init__(self, known: dict[str, Signal]) -> None:
         self._known = known
@@ -51,6 +56,13 @@ class _StubSignalRepository(SignalRepository):
 
     async def get(self, signal_id: str) -> Signal | None:
         return self._known.get(signal_id)
+
+    async def get_by_ids(self, signal_ids: Sequence[str]) -> dict[str, Signal]:
+        return {
+            signal_id: self._known[signal_id]
+            for signal_id in signal_ids
+            if signal_id in self._known
+        }
 
     async def list_for_instrument(self, symbol: str) -> list[Signal]:
         raise NotImplementedError
@@ -148,7 +160,10 @@ def _briefing_with_linked_ids() -> Briefing:
         watchlist_id=_WATCHLIST_ID,
         summary="summary",
         disclaimer="not personalized advice",
-        linked_signal_ids=[_KNOWN_SIGNAL_ID, _MISSING_SIGNAL_ID],
+        linked_signal_ids=[_KNOWN_SIGNAL_ID, _PRUNED_SIGNAL_ID, _MISSING_SIGNAL_ID],
+        instrument_breakdown=[
+            BriefingInstrumentSection(symbol="MSFT", narrative="n", signal_ids=[_PRUNED_SIGNAL_ID]),
+        ],
         created_at=datetime.now(UTC),
     )
 
@@ -181,10 +196,14 @@ def test_list_briefings_enriches_linked_signals_and_degrades_for_missing_id() ->
     briefing = body[0]
 
     # Backward-compatible raw ids are preserved.
-    assert briefing["linked_signal_ids"] == [_KNOWN_SIGNAL_ID, _MISSING_SIGNAL_ID]
+    assert briefing["linked_signal_ids"] == [
+        _KNOWN_SIGNAL_ID,
+        _PRUNED_SIGNAL_ID,
+        _MISSING_SIGNAL_ID,
+    ]
 
     linked = briefing["linked_signals"]
-    assert len(linked) == 2
+    assert len(linked) == 3
 
     known = linked[0]
     assert known["signal_id"] == _KNOWN_SIGNAL_ID
@@ -193,8 +212,16 @@ def test_list_briefings_enriches_linked_signals_and_degrades_for_missing_id() ->
     assert known["confidence"] == 0.82
     assert known["title"] == "Apple momentum builds into earnings."
 
-    # Missing id degrades gracefully instead of crashing or being dropped.
-    missing = linked[1]
+    # Pruned id: repository miss, but its breakdown section still knows the symbol.
+    pruned = linked[1]
+    assert pruned["signal_id"] == _PRUNED_SIGNAL_ID
+    assert pruned["symbol"] == "MSFT"
+    assert pruned["impact"] == ImpactClass.UNCERTAIN.value
+    assert pruned["confidence"] == 0.0
+    assert pruned["title"] == ""
+
+    # An id in neither place degrades gracefully instead of crashing or being dropped.
+    missing = linked[2]
     assert missing["signal_id"] == _MISSING_SIGNAL_ID
     assert missing["symbol"] == "—"
     assert missing["confidence"] == 0.0

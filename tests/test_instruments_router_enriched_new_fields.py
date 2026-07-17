@@ -45,6 +45,9 @@ class _FakeSignalRepository(SignalRepository):
     async def get(self, signal_id: str):  # type: ignore[no-untyped-def]
         return None
 
+    async def get_by_ids(self, signal_ids):  # type: ignore[no-untyped-def]
+        return {}
+
     async def list_for_instrument(self, symbol: str):  # type: ignore[no-untyped-def]
         return []
 

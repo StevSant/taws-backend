@@ -19,6 +19,7 @@ minimal test, not the start of a suite. Drives the real `GET /export.pdf` endpoi
 reported: an unhandled 500 at the HTTP layer, not just a renderer-level exception.
 """
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from io import BytesIO
 
@@ -27,6 +28,7 @@ from pypdf import PdfReader
 
 from app.api.v1.dependencies import (
     get_briefing_repository,
+    get_signal_repository,
     get_watchlist_repository,
     require_current_user,
 )
@@ -34,6 +36,8 @@ from app.api.v1.schemas import CurrentUser
 from app.domain.briefing.entities import Briefing, BriefingInstrumentSection
 from app.domain.briefing.ports import BriefingRepository
 from app.domain.review.entities import OpenReviewItem, ReviewedEntityType, ReviewState
+from app.domain.signals.entities import Signal
+from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.entities import Watchlist, WatchlistItem
 from app.domain.watchlist.ports import WatchlistRepository
 from app.main import app
@@ -81,6 +85,34 @@ class _FakeWatchlistRepository(WatchlistRepository):
         raise NotImplementedError
 
     async def remove_item(self, watchlist_id: str, item_id: str) -> None:
+        raise NotImplementedError
+
+
+class _EmptySignalRepository(SignalRepository):
+    """The export route's enrichment finds no signals — labels stay raw-id shaped."""
+
+    async def create(self, signal: Signal) -> Signal:
+        raise NotImplementedError
+
+    async def get(self, signal_id: str) -> Signal | None:
+        return None
+
+    async def get_by_ids(self, signal_ids: Sequence[str]) -> dict[str, Signal]:
+        return {}
+
+    async def list_for_instrument(self, symbol: str) -> list[Signal]:
+        raise NotImplementedError
+
+    async def get_latest_for_instrument(self, symbol: str, locale: str) -> Signal | None:
+        raise NotImplementedError
+
+    async def prune_for_instrument(self, symbol: str, locale: str, keep: int) -> int:
+        raise NotImplementedError
+
+    async def save_review_state(self, review_state: ReviewState) -> ReviewState:
+        raise NotImplementedError
+
+    async def list_review_states(self, signal_id: str) -> list[ReviewState]:
         raise NotImplementedError
 
 
@@ -140,6 +172,7 @@ def _export_pdf_text(briefing: Briefing) -> tuple[int, bytes | None, str]:
     watchlist = Watchlist(id=_WATCHLIST_ID, user_id=_USER_ID, name="Tech watchlist")
     app.dependency_overrides[get_briefing_repository] = lambda: _FakeBriefingRepository(briefing)
     app.dependency_overrides[get_watchlist_repository] = lambda: _FakeWatchlistRepository(watchlist)
+    app.dependency_overrides[get_signal_repository] = lambda: _EmptySignalRepository()
     app.dependency_overrides[require_current_user] = lambda: CurrentUser(
         id=_USER_ID, email="dev@example.com"
     )

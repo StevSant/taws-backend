@@ -60,6 +60,7 @@ import asyncio
 import logging
 import sys
 import uuid
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -153,6 +154,13 @@ class _InMemorySignalRepository(SignalRepository):
 
     async def get(self, signal_id: str) -> Signal | None:
         return self._signals.get(signal_id)
+
+    async def get_by_ids(self, signal_ids: Sequence[str]) -> dict[str, Signal]:
+        return {
+            signal_id: self._signals[signal_id]
+            for signal_id in signal_ids
+            if signal_id in self._signals
+        }
 
     async def list_for_instrument(self, symbol: str) -> list[Signal]:
         return [s for s in self._signals.values() if s.instrument_symbol == symbol]

@@ -6,14 +6,17 @@ from app.api.v1.dependencies import (
     get_briefing_document_renderer,
     get_briefing_repository,
     get_email_sender,
+    get_signal_repository,
     get_watchlist_repository,
     require_current_user,
 )
 from app.api.v1.schemas import BriefingExportEmailRequest, BriefingExportEmailResponse, CurrentUser
 from app.application.briefing.use_cases import ExportBriefingDocument
+from app.core.config import Settings, get_settings
 from app.domain.briefing.entities import Briefing
 from app.domain.briefing.ports import BriefingDocumentRenderer, BriefingRepository
 from app.domain.notification.ports import EmailSender
+from app.domain.signals.ports import SignalRepository
 from app.domain.watchlist.ports import WatchlistRepository
 
 router = APIRouter(prefix="/briefings", tags=["briefings"])
@@ -49,6 +52,8 @@ async def export_briefing_pdf(
     watchlist_repository: Annotated[WatchlistRepository, Depends(get_watchlist_repository)],
     document_renderer: Annotated[BriefingDocumentRenderer, Depends(get_briefing_document_renderer)],
     email_sender: Annotated[EmailSender, Depends(get_email_sender)],
+    signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> Response:
     """Download a briefing as a PDF (issue #22).
 
@@ -56,6 +61,10 @@ async def export_briefing_pdf(
     executive summary, per-instrument breakdown, open review items, and the
     disclaimer footer — see `BriefingDocumentRenderer`'s docstring. Ownership-scoped
     via `_get_owned_briefing`, same 404-either-way contract as the review endpoints.
+
+    `signal_repository` + `settings.frontend_base_url` feed the use case's signal
+    enrichment: open review items and section headers render as `/radar/{symbol}`
+    hyperlinks instead of raw UUIDs.
 
     `email_sender` is DI-resolved (a cached, cheap-to-construct singleton) purely so
     `ExportBriefingDocument` is built the same way on every path — this endpoint's
@@ -65,9 +74,12 @@ async def export_briefing_pdf(
         briefing_id, user, briefing_repository, watchlist_repository
     )
     use_case = ExportBriefingDocument(
-        document_renderer=document_renderer, email_sender=email_sender
+        document_renderer=document_renderer,
+        email_sender=email_sender,
+        signal_repository=signal_repository,
+        frontend_base_url=settings.frontend_base_url,
     )
-    pdf_bytes = use_case.render_pdf(briefing)
+    pdf_bytes = await use_case.render_pdf(briefing)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -86,6 +98,8 @@ async def export_briefing_by_email(
     watchlist_repository: Annotated[WatchlistRepository, Depends(get_watchlist_repository)],
     document_renderer: Annotated[BriefingDocumentRenderer, Depends(get_briefing_document_renderer)],
     email_sender: Annotated[EmailSender, Depends(get_email_sender)],
+    signal_repository: Annotated[SignalRepository, Depends(get_signal_repository)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> BriefingExportEmailResponse:
     """Trigger an email send of a briefing's PDF (issue #22's "and/or trigger an email
     send" acceptance criterion).
@@ -100,7 +114,10 @@ async def export_briefing_by_email(
         briefing_id, user, briefing_repository, watchlist_repository
     )
     use_case = ExportBriefingDocument(
-        document_renderer=document_renderer, email_sender=email_sender
+        document_renderer=document_renderer,
+        email_sender=email_sender,
+        signal_repository=signal_repository,
+        frontend_base_url=settings.frontend_base_url,
     )
     await use_case.send_by_email(briefing, recipient=payload.to)
     return BriefingExportEmailResponse(

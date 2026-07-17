@@ -10,7 +10,7 @@ regression test mid-hackathon, add a minimal pytest test next to the code under
 test" — this is that minimal test, not the start of a suite.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -87,6 +87,9 @@ class _FakeSignalRepository(SignalRepository):
         raise NotImplementedError
 
     async def get(self, signal_id: str) -> Signal | None:
+        raise NotImplementedError
+
+    async def get_by_ids(self, signal_ids: Sequence[str]) -> dict[str, Signal]:
         raise NotImplementedError
 
     async def list_for_instrument(self, symbol: str) -> list[Signal]:
