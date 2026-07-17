@@ -541,7 +541,7 @@ class Settings(BaseSettings):
 
     # --- Gemini (Event Intelligence / Sentinel analyzer) ---
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-3.5-flash"
 
     # --- Sentinel automatic news alerts (poll news -> Gemini -> important? -> Telegram) ---
     # Master switch for the SCHEDULED scan. Off => nothing is broadcast automatically; the

@@ -58,6 +58,7 @@ from app.api.v1.schemas.news_event_response import NewsEventResponse
 from app.api.v1.schemas.news_facets_response import NewsFacetsResponse
 from app.api.v1.schemas.news_item_response import NewsItemResponse
 from app.api.v1.schemas.news_list_response import NewsListResponse
+from app.api.v1.schemas.news_notification_response import NewsNotificationResponse
 from app.api.v1.schemas.note_body_request import NoteBodyRequest
 from app.api.v1.schemas.note_create_request import NoteCreateRequest
 from app.api.v1.schemas.note_response import NoteResponse
@@ -155,6 +156,7 @@ __all__ = [
     "NewsFacetsResponse",
     "NewsItemResponse",
     "NewsListResponse",
+    "NewsNotificationResponse",
     "OpenReviewItemResponse",
     "RealtimeSessionResponse",
     "RealtimeToolRequest",

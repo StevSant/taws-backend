@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -11,22 +12,30 @@ from app.api.v1.dependencies import (
     get_news_feed_refresher,
     get_news_item_repository,
     get_news_provider,
+    get_process_incoming_event_use_case,
     get_signal_repository,
+    get_telegram_link_repository,
+    get_telegram_messenger,
+    require_current_user,
 )
 from app.api.v1.mappers import map_news_detail_to_response
 from app.api.v1.schemas import (
     AnalyzePendingNewsResponse,
+    CurrentUser,
     NewsBrowseResponse,
     NewsDetailResponse,
     NewsFacetsResponse,
     NewsItemResponse,
     NewsListResponse,
+    NewsNotificationResponse,
 )
 from app.api.v1.schemas.localize_news_blurbs import (
     LocalizeNewsBlurbsRequest,
     LocalizeNewsBlurbsResponse,
     NewsBlurbResponse,
 )
+from app.application.event_intelligence import news_event_from_news_item
+from app.application.event_intelligence.use_cases import ProcessIncomingEvent
 from app.application.market import NewsFeedRefresher
 from app.application.market.use_cases import (
     BrowseNews,
@@ -59,6 +68,10 @@ from app.domain.market.ports import (
     NewsProvider,
 )
 from app.domain.signals.ports import SignalRepository
+from app.domain.telegram.ports import TelegramLinkRepository, TelegramMessenger
+from app.infrastructure.telegram import build_event_alert_buttons, format_event_alert
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/news", tags=["news"])
 
@@ -247,6 +260,86 @@ async def list_news_facets(
     """
     facets = await news_item_repository.list_facets()
     return NewsFacetsResponse.model_validate(facets)
+
+
+@router.post("/{news_id}/notify", status_code=status.HTTP_200_OK)
+async def notify_news_item(
+    news_id: str,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    news_item_repository: Annotated[NewsItemRepository, Depends(get_news_item_repository)],
+    process_incoming_event: Annotated[
+        ProcessIncomingEvent, Depends(get_process_incoming_event_use_case)
+    ],
+    link_repository: Annotated[TelegramLinkRepository, Depends(get_telegram_link_repository)],
+    messenger: Annotated[TelegramMessenger | None, Depends(get_telegram_messenger)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> NewsNotificationResponse:
+    """Have Gemini assess one article and notify only the requesting user's Telegram chat.
+
+    This is the per-news-detail manual counterpart to the scheduled Sentinel scan. It uses the
+    exact same Gemini relevance gate (``should_notify`` plus the configured importance floor),
+    but avoids broadcasting a click from one user's detail view to every linked Telegram chat.
+    """
+    item = await news_item_repository.get_by_id(news_id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News item not found")
+    if messenger is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Telegram is not configured on this backend (TELEGRAM_BOT_TOKEN is unset).",
+        )
+
+    link = await link_repository.get_by_user_id(user.id)
+    if link is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your Telegram account is not linked yet. Connect it and try again.",
+        )
+
+    enriched = await process_incoming_event.execute(news_event_from_news_item(item))
+    if not enriched.analysis_available:
+        logger.error("Gemini was unavailable while assessing news item %s", news_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Gemini is unavailable, so this news item could not be assessed. Try again later."
+            ),
+        )
+    is_relevant = (
+        enriched.should_notify
+        and enriched.importance >= settings.sentinel_importance_threshold
+    )
+    logger.info(
+        "Sentinel news assessment: news_id=%s importance=%.2f should_notify=%s threshold=%.2f",
+        news_id,
+        enriched.importance,
+        enriched.should_notify,
+        settings.sentinel_importance_threshold,
+    )
+    if not is_relevant:
+        return NewsNotificationResponse(status="not_relevant", event_title=item.title)
+
+    try:
+        await messenger.send_text(
+            link.chat_id,
+            format_event_alert(enriched),
+            parse_mode="HTML",
+            buttons=build_event_alert_buttons(
+                enriched, settings.frontend_base_url, news_id=news_id
+            ),
+        )
+    except Exception:
+        logger.exception(
+            "Failed to send Sentinel alert to Telegram chat_id=%s for user_id=%s",
+            link.chat_id,
+            user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Telegram rejected the delivery. Check that you have not blocked the bot.",
+        ) from None
+
+    return NewsNotificationResponse(status="sent", event_title=item.title)
 
 
 @router.get("/{news_id}")

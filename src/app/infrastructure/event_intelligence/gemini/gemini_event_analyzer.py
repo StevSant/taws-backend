@@ -12,10 +12,27 @@ from app.domain.event_intelligence.ports import EventAnalyzerPort
 
 logger = logging.getLogger(__name__)
 
-_ANALYSIS_SYSTEM_PROMPT = """You are a financial intelligence analyst. Your job is to analyze \
-news events and determine their relevance and potential impact on financial markets.
+_ANALYSIS_SYSTEM_PROMPT = """You are Sentinel, a senior financial intelligence analyst. Your \
+job is to identify new information that warrants an immediate market alert, not to provide a \
+generic sentiment label.
 
-Given a news event, produce a structured JSON analysis with the following fields:
+Assess the event's novelty, credibility, magnitude, and plausible near-term market transmission. \
+Give priority to concrete catalysts: geopolitical or military escalation, central-bank or fiscal \
+action, inflation/labor data surprises, sanctions or tariffs, sovereign or banking stress, major \
+earnings/guidance, regulatory decisions, exchange/security failures, commodity supply shocks, and \
+unusual moves in a major asset. For example, a new US-Iran military escalation accompanied by a \
+material Bitcoin or oil move normally warrants an alert.
+
+Set shouldNotify=true only when a time-sensitive investor would benefit from knowing now. Do not \
+set it false merely because the directional impact is uncertain. Set shouldNotify=false for stale \
+recaps, routine price commentary, unsupported opinion, minor company updates, or a duplicate with \
+no meaningful new development.
+
+Calibrate importance consistently: 0.90-1.00 = systemic/critical market event; 0.70-0.89 = \
+material market-moving catalyst; 0.40-0.69 = notable but normally no immediate alert; below 0.40 \
+= low relevance. A true shouldNotify result should ordinarily have importance >= 0.70.
+
+Given a news event, produce a structured JSON analysis with these fields:
 - summary: a concise 1-2 sentence summary of the event
 - importance: a float from 0.0 (irrelevant) to 1.0 (critical market-moving event)
 - shouldNotify: boolean indicating whether this event warrants an alert
@@ -96,6 +113,9 @@ class GeminiEventAnalyzer(EventAnalyzerPort):
 
     async def analyze(self, event: NewsEvent) -> EnrichedEvent:
         if self._client is None:
+            logger.error(
+                "Gemini is unavailable for event %s: GEMINI_API_KEY is not configured", event.title
+            )
             return _fallback_enriched(event)
 
         prompt = _build_prompt(event)
@@ -112,6 +132,18 @@ class GeminiEventAnalyzer(EventAnalyzerPort):
             )
             text = response.text
             if text is None:
+                logger.error(
+                    "Gemini returned no text for event %s: prompt_feedback=%s candidates=%s",
+                    event.title,
+                    getattr(response, "prompt_feedback", None),
+                    [
+                        {
+                            "finish_reason": str(getattr(candidate, "finish_reason", None)),
+                            "has_content": getattr(candidate, "content", None) is not None,
+                        }
+                        for candidate in (getattr(response, "candidates", None) or [])
+                    ],
+                )
                 return _fallback_enriched(event)
             data = json.loads(text)
         except Exception:
@@ -207,4 +239,5 @@ def _fallback_enriched(event: NewsEvent) -> EnrichedEvent:
         reasoning="fallback analysis (Gemini unavailable)",
         suggested_questions=[],
         analyzed_at=datetime.now(UTC),
+        analysis_available=False,
     )
