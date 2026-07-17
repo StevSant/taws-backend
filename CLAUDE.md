@@ -68,16 +68,17 @@ Nothing in `application/` or `api/` needs to change — that's the point of the 
 
 ### Swap the LLM provider used by agent graphs (LangGraph)
 
-Agent graphs (`infrastructure/agents/chat_graph.py`) don't go through `LLMProvider` —
+Agent graphs (`infrastructure/agents/supervisor_graph.py`) don't go through `LLMProvider` —
 they run on a LangChain `BaseChatModel`, built by `infrastructure/llm/chat_model_factory.
-build_chat_model(settings)`. **This factory function is the swap point** for agent-side
-providers (OpenAI → Anthropic/Gemini/Ollama/...):
+build_chat_model(settings, model, *, temperature=None)`. **This factory function is the swap
+point** for agent-side providers (OpenAI → Anthropic/Gemini/Ollama/...):
 
 1. Change `build_chat_model` to return a different LangChain chat model (e.g.
    `ChatAnthropic(...)` from `langchain-anthropic`), gated by a `Settings` field if you
-   need to pick at runtime.
-2. Nothing in `chat_graph.py`, `langgraph_agent_runner.py`, or `api/` needs to change —
-   both only depend on LangChain's `BaseChatModel` interface.
+   need to pick at runtime. It currently hardcodes `ChatOpenAI` — the one remaining
+   provider-level hardcode, by design.
+2. Nothing in `supervisor_graph.py`, `langgraph_agent_runner.py`, or `api/` needs to change —
+   all only depend on LangChain's `BaseChatModel` interface.
 3. Without `settings.openai_api_key`, the factory returns a fallback model
    (`infrastructure/llm/fallback_chat_model.build_fallback_chat_model`, a
    `GenericFakeChatModel` from `langchain_core`) that streams a placeholder reply
@@ -148,51 +149,70 @@ uv run pyright
 
 Never use bare `pip`, `python -m`, or a bare `python` invocation — always `uv run`.
 
-## Agent layer (LangGraph Supervisor) and streaming (SSE v2)
+## Agent layer (LangGraph Supervisor) and streaming (SSE)
 
 `POST /api/v1/chat/stream` is routed through the agent layer end to end:
 
 ```
-chat.py router → StreamReply use case → AgentRunner port → LangGraphAgentRunner adapter
-                                                              → compiled Supervisor graph
+chat.py router → StreamAndPersistReply → StreamReply use case → AgentRunner port
+      → LangGraphAgentRunner adapter → compiled Supervisor graph
 ```
 
 ### The Supervisor graph
 
-`infrastructure/agents/supervisor_graph.build_supervisor_graph(model, checkpointer)` builds
-the default chat graph: one **`supervisor`** router node, then a conditional edge to exactly
-one of six specialist nodes (**`analyst`**, **`quant`**, **`advisor`**, **`consequence`**,
-**`macro`**, **`sentiment`** — `infrastructure/agents/supervisor_graph.py:67-103`), then `END`.
+`infrastructure/agents/supervisor_graph.build_supervisor_graph(router_model, specialist_model,
+scope_model, checkpointer, ...)` builds the default chat graph. A cheap **`supervisor`** router
+node classifies each turn into **1–3 routes**, then:
+
+- **1 route** → a conditional edge straight to that node → `END`.
+- **2–3 routes** → a `Send()` fan-out to parallel **`contributor`** workers → a **`synthesizer`**
+  fan-in node that merges them into one coherent answer → `END`.
+
+There are **8 routes** (`infrastructure/agents/supervisor_route.py`, a `StrEnum`): six market
+specialists — **`analyst`**, **`quant`**, **`advisor`**, **`consequence`**, **`macro`**,
+**`sentiment`** — plus two scope terminals **`smalltalk`** and **`out_of_scope`** (built cheaper,
+without boilerplate, on the `scope_model`).
 
 - **State**: `SupervisorState` (`infrastructure/agents/supervisor_state.py`) —
-  `langgraph.graph.MessagesState` (`{"messages": Annotated[list, add_messages]}`) plus a
-  `route: NotRequired[str]` key. The supervisor node writes `route`; `select_specialist_route`
-  (`infrastructure/agents/select_specialist_route.py`) reads it to pick the conditional edge.
+  `langgraph.graph.MessagesState` (`{"messages": Annotated[list, add_messages]}`) plus
+  `routes: list[str]`, `contributor_route: str`, `contributions: Annotated[list[Contribution],
+  add]` (an **additive** reducer, so the parallel contributors can each append without clobbering
+  one another), `grounding_context`, and `locale`. The supervisor node writes `routes`;
+  `select_specialist_routes` (`infrastructure/agents/select_specialist_routes.py`) reads it to
+  return either a single edge or the `Send()` fan-out.
 - **Supervisor node** (`infrastructure/agents/supervisor_router_node.build_supervisor_router_node`):
   calls `model.with_structured_output(RouteDecision)` (`infrastructure/agents/route_decision.py`
-  — `{route: SupervisorRoute, reason: str}`) to pick one specialist. The fallback fake chat
-  model (no `OPENAI_API_KEY`, see below) doesn't implement `bind_tools`, so
-  `with_structured_output(...)` raises `NotImplementedError` immediately — caught and defaulted
-  to `SupervisorRoute.ADVISOR` with detail `"fallback routing (no API key)"`, so routing degrades
-  gracefully instead of crashing.
+  — `{routes: list[SupervisorRoute] (1..3, unique), reason: str}`, with a validator forbidding a
+  scope route from combining with specialists) to pick the routes. The fallback fake chat model
+  (no `OPENAI_API_KEY`, see below) can't do structured output, so it's caught and defaulted to a
+  single `SupervisorRoute.ADVISOR` route with detail `"fallback routing (no API key)"`, so routing
+  degrades gracefully instead of crashing.
 - **Specialist nodes** (`infrastructure/agents/specialist_node_factory.build_specialist_node`):
-  one factory shared by all six — only `agent_name` and `persona` differ. Each persona is a
-  module-level string constant in its own file under `infrastructure/agents/personas/`
-  (`analyst_persona.py`, `quant_persona.py`, `advisor_persona.py`, `consequence_persona.py`,
-  `macro_persona.py`, `sentiment_persona.py`), re-exported from `personas/__init__.py`. The node prepends the persona as a `SystemMessage` for that one
-  `model.ainvoke(...)` call only (never returned in state, so it doesn't accumulate across
-  turns) and returns just the new `AIMessage` — same "let `add_messages` append it" pattern as
-  the old single-node graph.
-- **Routes** live in `SupervisorRoute` (`infrastructure/agents/supervisor_route.py:11-16`, a
-  `StrEnum`: `analyst` / `quant` / `advisor` / `consequence` / `macro` / `sentiment`).
+  one factory shared by all six — only `agent_name`, `persona`, and the bound tool subset differ.
+  Each persona is a module-level string constant in its own file under
+  `infrastructure/agents/personas/`, re-exported from `personas/__init__.py`. The node prepends the
+  persona as a `SystemMessage` for that one turn only (never returned in state) and returns just
+  the new `AIMessage`. When a node has tools bound it runs a **hand-rolled ReAct loop**
+  (`invoke_with_bound_tools.py`, capped at `_MAX_TOOL_ITERATIONS = 3`, each round's tool calls run
+  concurrently via `asyncio.gather`) — there is no `ToolNode` or conditional tool edge.
+- **Parallel path**: `contributor_node.py` runs one specialist as a hidden "evidence contributor"
+  (its tokens are tagged `INTERNAL_CONTRIBUTOR_TAG` so they don't stream to the user) and appends a
+  typed `Contribution`; `synthesizer_node.py` fans them in, writes the final answer, and emits the
+  `contributions`/`citations` frames that drive the frontend Boardroom + verdict meter.
+- **Routes** live in `SupervisorRoute` (`infrastructure/agents/supervisor_route.py`, a `StrEnum`:
+  the six specialists above plus `smalltalk` / `out_of_scope`).
 
 **To add a new specialist:** add a value to `SupervisorRoute`, add a persona file under
-`personas/`, add a `graph.add_node(...)` + `graph.add_edge(<route>, END)` call in
-`supervisor_graph.build_supervisor_graph`, and add the route to the conditional-edge mapping.
-Nothing else in the codebase needs to change.
+`personas/`, register the node + its `graph.add_edge(<route>, END)` in
+`supervisor_graph.build_supervisor_graph`, add the route to the conditional-edge mapping, and — if
+it should join multi-route turns — make sure `select_specialist_routes` and the contributor path
+handle it. Bind its tools in `Container._get_chat_graph()`.
 
-`chat_graph.build_chat_graph` (the original single-node graph) still exists but is no longer
-wired into `Container` — kept only as a minimal reference shape.
+`chat_graph.build_chat_graph` (the original single-node graph) still exists but is no longer wired
+into `Container` — kept only as a minimal reference shape. A separate **linear** Scenario Lab graph
+(`infrastructure/agents/scenario/scenario_graph.py`: `intake → context → causal_chain → quant →
+agent_panel → synthesis → compliance → END`, compiled without a checkpointer) is exposed to chat as
+the `run_scenario_simulation` tool.
 
 ### Locale: two channels, one value (issue #67)
 
@@ -247,6 +267,10 @@ Every node emits `AgentTrace` frames via LangGraph's `get_stream_writer()`
 these three values; `AgentTrace` (`domain/agents/entities/agent_trace.py`) is the pure entity
 `{agent, event, detail}`. Both are domain — no vendor import needed to model them.
 
+Nodes and tools also push **non-trace** payloads over the same `get_stream_writer()` — dicts keyed
+`kind: "chart" | "citations" | "contributions" | "tool"` — which the runner turns into `ChartEvent`
+/ `CitationsEvent` / `ContributionsEvent` / `ToolCallEvent` (see the SSE section).
+
 ### Runner: consuming two stream modes at once
 
 - **`AgentRunner`** (`domain/agents/ports/agent_runner.py`) is the port; **
@@ -258,12 +282,13 @@ these three values; `AgentTrace` (`domain/agents/entities/agent_trace.py`) is th
   - `mode == "messages"`: `payload` is the same `(message_chunk, metadata)` tuple as the
     single-mode case; the adapter extracts `AIMessageChunk.content` (see
     `extract_ai_message_token.py`) and skips everything else.
-  - `mode == "custom"`: `payload` is exactly the dict a node passed to
-    `get_stream_writer()(...)`, untouched by LangGraph — turned into a domain `AgentTrace` by
-    `build_agent_trace_from_payload.py`.
+  - `mode == "custom"`: `payload` is exactly the dict a node or tool passed to
+    `get_stream_writer()(...)`, untouched by LangGraph — dispatched by its `kind` into a domain
+    `TraceEvent`, `ToolCallEvent`, `ChartEvent`, `CitationsEvent`, or `ContributionsEvent`.
 - The adapter yields typed **`AgentStreamEvent`**s (`domain/agents/entities/agent_stream_event.py`
-  — a union of `TokenEvent | TraceEvent | ErrorEvent`, one dataclass per file) instead of raw
-  strings, so the domain layer stays pure while still describing every SSE v2 frame kind.
+  — a union of `TokenEvent | TraceEvent | ToolCallEvent | ChartEvent | CitationsEvent |
+  ContributionsEvent | ErrorEvent`, one dataclass per file) instead of raw strings, so the domain
+  layer stays pure while still describing every SSE frame kind.
   **Any exception during the run is caught and yielded as a single `ErrorEvent`** instead of
   propagating — a mid-stream failure still reaches the client as a well-formed frame instead of
   dropping the connection.
@@ -278,9 +303,11 @@ these three values; `AgentTrace` (`domain/agents/entities/agent_trace.py`) is th
   `Message` and passes `AgentStreamEvent`s straight through — it does not build or persist a
   message list itself, so multi-turn conversations aren't amnesiac between calls with the same
   `thread_id`.
-- **The model itself** comes from `infrastructure/llm/chat_model_factory.build_chat_model`
-  — see "Swap the LLM provider used by agent graphs" above for how to change it. The Supervisor
-  and all six specialists share this one model instance; only the system prompt differs.
+- **The models** come from `infrastructure/llm/chat_model_factory.build_chat_model` — see "Swap
+  the LLM provider used by agent graphs" above for how to change them. There are **two** cached
+  chat models: the router/scope model (`openai_model`, `temperature=router_temperature` = 0.0) and
+  the specialist model (`reasoning_model`, which falls back to `openai_model` until
+  `OPENAI_MODEL_REASONING` is set). Specialists differ only by persona + bound tool subset.
 - **Container caching**: `Container` (`core/di/container.py`) lazily builds and caches each
   adapter (including the chat model, compiled graph, and `AgentRunner`) on first access, so
   they're process-wide singletons — don't reintroduce a "build a new one every call" pattern
@@ -289,11 +316,16 @@ these three values; `AgentTrace` (`domain/agents/entities/agent_trace.py`) is th
 
 ### SSE wire format (protocol v2)
 
-Each frame is JSON-encoded, not a raw token, and is one of exactly four shapes:
+Each frame is JSON-encoded, not a raw token, and is one of these shapes (the
+`tool`/`chart`/`citations`/`contributions` frames were added after the original v2 four):
 
 ```
 data: {"t": "<token>"}\n\n
 data: {"trace": {"agent": "<name>", "event": "routing"|"start"|"done", "detail": "<optional text>"}}\n\n
+data: {"tool": {"agent": "<name>", "name": "<tool>", "event": "start"|"done"}}\n\n
+data: {"chart": { ...ChartSpec wire dict... }}\n\n
+data: {"citations": [ ... ]}\n\n
+data: {"contributions": [{"agent": "...", "stance": "...", "confidence": 0.0, "headline": "..."}]}\n\n
 data: {"error": "<message>"}\n\n
 data: {"done": true}\n\n
 ```
@@ -305,7 +337,8 @@ so clients can rely on `done` to know the stream is over either way. This is del
 `data: <token>\n\n` frame breaks if a token itself contains a newline, corrupting SSE framing.
 The Angular frontend (`SseChatRepository`) reads this with `fetch` + `ReadableStream`, not
 `EventSource` (so it can send a POST body), parses each `data:` line as JSON, and maps it to a
-`ChatStreamEvent` (`{kind: 'token'|'trace'|'error'}`). Keep new streaming endpoints in this same
+`ChatStreamEvent` (`kind: 'token' | 'trace' | 'tool' | 'chart' | 'citations' | 'contributions' | 'error'`).
+Keep new streaming endpoints in this same
 JSON frame shape unless there's a strong reason to change it.
 
 ## Team & ownership

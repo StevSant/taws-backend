@@ -67,7 +67,7 @@ _REALTIME_TOOLS: dict[str, RealtimeTool] = {
         name="generate_signal",
         description=(
             "Run the Analyst pipeline on demand for one instrument and return the newly "
-            "generated impact signal. Slower than list_signals — acknowledge before calling."
+            "generated impact signal. Slower than list_signals."
         ),
         args_model=GenerateSignalArgs,
         handler=handle_generate_signal,

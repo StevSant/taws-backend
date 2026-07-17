@@ -47,8 +47,10 @@ def build_render_comparison_chart_tool(
         name="render_comparison_chart",
         description=(
             "Render an inline chart comparing several instruments' price performance, "
-            "rebased to 100 at the start of the window, from real market data. Use when the "
-            "user asks to compare, overlay, or contrast multiple assets."
+            "rebased to 100 at the start of the window, from real market data. Use whenever "
+            "the turn compares, contrasts, or ranks two or more assets — including implicit "
+            "comparisons like 'how do NVDA and AAPL compare this quarter', not only when the "
+            "user literally says 'chart', 'graph', or 'gráficamente'."
         ),
         args_schema=_Args,
     )

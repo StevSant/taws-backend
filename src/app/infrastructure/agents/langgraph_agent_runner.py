@@ -7,6 +7,7 @@ from app.domain.agents.entities import (
     AgentStreamEvent,
     ChartEvent,
     CitationsEvent,
+    ContributionsEvent,
     ErrorEvent,
     Message,
     TokenEvent,
@@ -106,6 +107,8 @@ class LangGraphAgentRunner(AgentRunner):
                         yield ChartEvent(chart=payload["chart"])
                     elif kind == "citations":
                         yield CitationsEvent(citations=payload["citations"])
+                    elif kind == "contributions":
+                        yield ContributionsEvent(contributions=payload["contributions"])
                     elif kind == "tool":
                         yield ToolCallEvent(tool=build_tool_call_from_payload(payload))
                     else:

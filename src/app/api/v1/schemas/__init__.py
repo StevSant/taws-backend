@@ -67,6 +67,8 @@ from app.api.v1.schemas.open_review_item_response import OpenReviewItemResponse
 from app.api.v1.schemas.realtime_session_response import RealtimeSessionResponse
 from app.api.v1.schemas.realtime_tool_request import RealtimeToolRequest
 from app.api.v1.schemas.realtime_tool_response import RealtimeToolResponse
+from app.api.v1.schemas.realtime_turn import RealtimeTurn
+from app.api.v1.schemas.realtime_turns_request import RealtimeTurnsRequest
 from app.api.v1.schemas.refresh_analysis_response import RefreshAnalysisResponse
 from app.api.v1.schemas.register_instrument_request import RegisterInstrumentRequest
 from app.api.v1.schemas.register_instrument_response import RegisterInstrumentResponse
@@ -77,6 +79,7 @@ from app.api.v1.schemas.scenario_asset_class_impact_response import (
 )
 from app.api.v1.schemas.scenario_evidence_response import ScenarioEvidenceResponse
 from app.api.v1.schemas.scenario_monitor_response import ScenarioMonitorResponse
+from app.api.v1.schemas.scenario_monitor_status_response import ScenarioMonitorStatusResponse
 from app.api.v1.schemas.scenario_preset_response import ScenarioPresetResponse
 from app.api.v1.schemas.scenario_result_response import ScenarioResultResponse
 from app.api.v1.schemas.scenario_spec_response import ScenarioSpecResponse
@@ -161,6 +164,8 @@ __all__ = [
     "RealtimeSessionResponse",
     "RealtimeToolRequest",
     "RealtimeToolResponse",
+    "RealtimeTurn",
+    "RealtimeTurnsRequest",
     "RegisterInstrumentRequest",
     "RegisterInstrumentResponse",
     "ReviewDecisionRequest",
@@ -169,6 +174,7 @@ __all__ = [
     "ScenarioAssetClassImpactResponse",
     "ScenarioEvidenceResponse",
     "ScenarioMonitorResponse",
+    "ScenarioMonitorStatusResponse",
     "ScenarioPresetResponse",
     "ScenarioResultResponse",
     "ScenarioSpecResponse",

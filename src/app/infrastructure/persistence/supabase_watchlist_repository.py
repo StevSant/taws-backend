@@ -1,5 +1,7 @@
 import uuid
+from collections.abc import Sequence
 from functools import partial
+from typing import Any
 
 from supabase import PostgrestAPIError
 
@@ -99,6 +101,90 @@ class SupabaseWatchlistRepository(WatchlistRepository):
         response = await self._retry(lambda: client.table(_WATCHLISTS_TABLE).select("*").execute())
         return [watchlist_from_row(row) for row in response.data]
 
+    async def list_user_ids_tracking(self, symbols: Sequence[str]) -> set[str]:
+        """Distinct owners of any watchlist containing any of `symbols` (case-insensitive).
+
+        One PostgREST read that joins `watchlist_items` up to its parent `watchlists` via the
+        `watchlist_id` FK (`select("watchlists(user_id)")`) and filters on the normalized symbol
+        set. Symbols are stored uppercased (the add-item router uppercases before insert), so an
+        uppercased `in_` filter is the case-insensitive match. Runs under the service-role client,
+        so it sees every user's rows — the whole point of a reverse "who tracks this" lookup.
+        """
+        normalized = {symbol.strip().upper() for symbol in symbols if symbol and symbol.strip()}
+        if not normalized:
+            return set()
+        client = await self._clients.get()
+        response = await self._retry(
+            lambda: (
+                client.table(_WATCHLIST_ITEMS_TABLE)
+                .select("watchlists(user_id)")
+                .in_("symbol", list(normalized))
+                .execute()
+            )
+        )
+        user_ids: set[str] = set()
+        for row in response.data:
+            if isinstance(row, dict):
+                user_ids.update(_extract_user_ids(row.get("watchlists")))
+        return user_ids
+
+    async def list_trackers_by_symbol(self, symbols: Sequence[str]) -> dict[str, set[str]]:
+        """Per-symbol map of who tracks each symbol (see port docstring for the contract).
+
+        One PostgREST read that selects BOTH the item's `symbol` and its parent watchlist's owner
+        (`select("symbol, watchlists(user_id)")`) — the same `watchlist_items -> watchlists` FK
+        embed `list_user_ids_tracking` uses, but keeping the symbol alongside each owner instead of
+        flattening them all together. Filtered on the normalized (uppercased) symbol set, since
+        symbols are stored uppercased by the add-item router. Runs under the service-role client so
+        it sees every user's rows. Symbols nobody tracks never appear as keys.
+        """
+        normalized = {symbol.strip().upper() for symbol in symbols if symbol and symbol.strip()}
+        if not normalized:
+            return {}
+        client = await self._clients.get()
+        response = await self._retry(
+            lambda: (
+                client.table(_WATCHLIST_ITEMS_TABLE)
+                .select("symbol, watchlists(user_id)")
+                .in_("symbol", list(normalized))
+                .execute()
+            )
+        )
+        trackers: dict[str, set[str]] = {}
+        for row in response.data:
+            if not isinstance(row, dict):
+                continue
+            symbol = row.get("symbol")
+            if not isinstance(symbol, str) or not symbol.strip():
+                continue
+            user_ids = _extract_user_ids(row.get("watchlists"))
+            if user_ids:
+                trackers.setdefault(symbol.strip().upper(), set()).update(user_ids)
+        return trackers
+
+    async def list_all_tracked_symbols(self) -> set[str]:
+        """Distinct uppercased symbols across every user's watchlists (see port docstring).
+
+        One PostgREST read of the `symbol` column of `watchlist_items` across all rows — the
+        service-role client bypasses RLS, so it sees every user's items, which is the whole point
+        of a global "what is anyone tracking?" lookup. Symbols are stored uppercased by the
+        add-item router, so the result is already canonical; `.upper()` is a cheap defensive
+        normalization. Deduping happens in the set comprehension rather than via a `distinct`
+        clause PostgREST doesn't expose.
+        """
+        client = await self._clients.get()
+        response = await self._retry(
+            lambda: client.table(_WATCHLIST_ITEMS_TABLE).select("symbol").execute()
+        )
+        symbols: set[str] = set()
+        for row in response.data:
+            if not isinstance(row, dict):
+                continue
+            symbol = row.get("symbol")
+            if isinstance(symbol, str) and symbol.strip():
+                symbols.add(symbol.strip().upper())
+        return symbols
+
     async def rename(self, watchlist_id: str, name: str) -> Watchlist:
         client = await self._clients.get()
         response = await self._retry(
@@ -189,3 +275,19 @@ class SupabaseWatchlistRepository(WatchlistRepository):
             if translated is not None:
                 raise translated from exc
             raise
+
+
+def _extract_user_ids(embedded: Any) -> list[str]:
+    """Pull `user_id`s out of PostgREST's embedded `watchlists(user_id)` payload.
+
+    A many-to-one embed (`watchlist_items -> watchlists`) normally returns a single object
+    (`{"user_id": ...}`), but tolerate a list form too, so `list_user_ids_tracking` doesn't
+    hinge on PostgREST's exact embed shape. Skips missing/blank ids.
+    """
+    if isinstance(embedded, dict):
+        rows = [embedded]
+    elif isinstance(embedded, list):
+        rows = embedded
+    else:
+        return []
+    return [row["user_id"] for row in rows if isinstance(row, dict) and row.get("user_id")]

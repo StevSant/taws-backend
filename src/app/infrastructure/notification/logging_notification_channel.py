@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Mapping, Sequence
 
 from app.domain.event_intelligence.entities import EnrichedEvent
 from app.domain.notification.entities import (
@@ -73,4 +74,23 @@ class LoggingNotificationChannel(NotificationChannel):
             event.original.title,
             event.affected_assets,
             event.affected_sectors,
+        )
+
+    async def send_event_alert_to_user(
+        self,
+        event: EnrichedEvent,
+        user_id: str,
+        watched_symbols: Sequence[str],
+        asset_impacts: Mapping[str, str],
+    ) -> None:
+        logger.info(
+            "important event alert composed for user %s: event=%s importance=%.2f "
+            "title=%r assets=%s watched=%s impacts_for=%s",
+            user_id,
+            event.id,
+            event.importance,
+            event.original.title,
+            event.affected_assets,
+            list(watched_symbols),
+            sorted(asset_impacts),
         )

@@ -19,6 +19,13 @@ FIRST decide scope. Midas covers ONLY markets and money: instruments and prices,
 its market impact, macro and rates, market sentiment, historical market analogs, scenarios, \
 investing and personal-finance questions (including beginner ones like "how do I start \
 investing" or "what should I put money into"), and questions about Midas itself.
+Midas can also RENDER CHARTS of market data, so asking to visualize, chart, graph, plot, or \
+"show it graphically" / "muéstralo gráficamente" an instrument, a comparison, or a metric is \
+IN scope — route it to the specialist that owns the underlying data (quant for \
+prices/performance/volatility, analyst for a news-driven comparison), never out_of_scope. A \
+bare visual follow-up like "muéstralo gráficamente", "y en gráfico", "hazme un gráfico", or \
+"plot it" refers to the PRIOR turn's subject: classify it as that same in-scope market \
+question, now asking for the chart.
 - out_of_scope: anything NOT about markets or money — programming or data structures (e.g. \
 linked lists, sorting algorithms), general software/tech help, math or homework, sports \
 (including the World Cup), trivia, history lessons, science, celebrities, weather, personal \

@@ -38,8 +38,18 @@ class OpenAIRealtimeSessionProvider(RealtimeSessionProvider):
     when unconfigured), so this raise only fires on a real misconfiguration.
     """
 
-    def __init__(self, api_key: str | None) -> None:
+    def __init__(
+        self,
+        api_key: str | None,
+        tool_choice: str = "auto",
+        turn_detection: dict[str, Any] | None = None,
+    ) -> None:
         self._client = AsyncOpenAI(api_key=api_key) if api_key else None
+        # Session config, resolved from Settings by the DI container (never per-request): the
+        # tool-selection mode ("auto" — NOT the loop-prone "required") and the tuned server_vad
+        # turn-detection object. Defaults keep direct/test construction working without them.
+        self._tool_choice = tool_choice
+        self._turn_detection = turn_detection
 
     async def mint_ephemeral_session(
         self,
@@ -55,6 +65,24 @@ class OpenAIRealtimeSessionProvider(RealtimeSessionProvider):
         if self._client is None:
             raise RuntimeError(_NO_KEY_ERROR)
 
+        # `turn_detection` (tuned server_vad) is nested under `audio.input` per the GA
+        # `RealtimeSessionCreateRequestParam` shape — it is NOT a session-top-level field here
+        # (that's the WS/beta `session.update` shape). Only added when configured, so
+        # direct/test construction with no turn_detection keeps the previous audio.input shape.
+        # There is deliberately no `temperature`: the GA `client_secrets.create` session param
+        # has no such field (only the WS transport applies `openai_realtime_temperature`).
+        audio_input: dict[str, Any] = {
+            "transcription": {
+                "model": "gpt-4o-mini-transcribe",
+                # Was hardcoded "es", which mis-transcribed English speakers as
+                # Spanish. Now follows the caller's resolved locale.
+                "language": transcription_language,
+                "prompt": _TRANSCRIPTION_PROMPT,
+            }
+        }
+        if self._turn_detection is not None:
+            audio_input["turn_detection"] = self._turn_detection
+
         # Built as plain dicts (the SDK params are TypedDicts) and cast to the SDK's
         # param types so the call is type-checked at the boundary without pulling vendor
         # types into the rest of the codebase.
@@ -65,17 +93,11 @@ class OpenAIRealtimeSessionProvider(RealtimeSessionProvider):
                 "model": model,
                 "instructions": instructions,
                 "tools": tools,
-                "tool_choice": "required",
+                # "auto" (Settings-driven), NOT "required": forcing a tool call every turn
+                # drove a filler-preamble / self-response loop in the voice agent.
+                "tool_choice": self._tool_choice,
                 "audio": {
-                    "input": {
-                        "transcription": {
-                            "model": "gpt-4o-mini-transcribe",
-                            # Was hardcoded "es", which mis-transcribed English speakers as
-                            # Spanish. Now follows the caller's resolved locale.
-                            "language": transcription_language,
-                            "prompt": _TRANSCRIPTION_PROMPT,
-                        }
-                    },
+                    "input": audio_input,
                     "output": {"voice": voice},
                 },
             },

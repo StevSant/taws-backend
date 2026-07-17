@@ -90,6 +90,18 @@ class ScenarioRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def list_monitors_for_user(self, user_id: str) -> list[ScenarioMonitor]:
+        """Return every monitor owned by `user_id`, any status (`ARMED`/`MATCHED`/`EXPIRED`),
+        most-recently-armed first.
+
+        Backs the authenticated `GET /api/v1/scenarios/monitors` read the in-app notification
+        poller diffs to surface an `ARMED`->`MATCHED` breach in the bell. User-scoped (unlike
+        `list_armed_monitors`, the global Watchdog pass) AND status-inclusive (unlike it,
+        `ARMED`-only) so a just-`MATCHED` monitor is still visible to its owner for the poll
+        tick that reports the match, not silently dropped the moment it stops being armed."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def mark_monitor_matched(self, monitor_id: str, match_reason: str) -> ScenarioMonitor:
         """Transition a monitor to `MATCHED`, recording `match_reason` and `matched_at`
         (now). See `ScenarioMonitor`'s docstring for why this doesn't delete the row."""

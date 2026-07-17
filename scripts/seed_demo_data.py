@@ -121,6 +121,41 @@ class _InMemoryWatchlistRepository(WatchlistRepository):
     async def list_all(self) -> list[Watchlist]:
         return list(self._watchlists.values())
 
+    async def list_user_ids_tracking(self, symbols: Sequence[str]) -> set[str]:
+        wanted = {symbol.strip().upper() for symbol in symbols if symbol and symbol.strip()}
+        if not wanted:
+            return set()
+        user_ids: set[str] = set()
+        for watchlist_id, items in self._items.items():
+            if any(item.symbol.upper() in wanted for item in items):
+                watchlist = self._watchlists.get(watchlist_id)
+                if watchlist is not None:
+                    user_ids.add(watchlist.user_id)
+        return user_ids
+
+    async def list_trackers_by_symbol(self, symbols: Sequence[str]) -> dict[str, set[str]]:
+        wanted = {symbol.strip().upper() for symbol in symbols if symbol and symbol.strip()}
+        if not wanted:
+            return {}
+        trackers: dict[str, set[str]] = {}
+        for watchlist_id, items in self._items.items():
+            watchlist = self._watchlists.get(watchlist_id)
+            if watchlist is None:
+                continue
+            for item in items:
+                canonical = item.symbol.strip().upper()
+                if canonical in wanted:
+                    trackers.setdefault(canonical, set()).add(watchlist.user_id)
+        return trackers
+
+    async def list_all_tracked_symbols(self) -> set[str]:
+        return {
+            item.symbol.strip().upper()
+            for items in self._items.values()
+            for item in items
+            if item.symbol and item.symbol.strip()
+        }
+
     async def rename(self, watchlist_id: str, name: str) -> Watchlist:
         renamed = replace(self._watchlists[watchlist_id], name=name)
         self._watchlists[watchlist_id] = renamed
@@ -231,6 +266,9 @@ class _InMemoryScenarioRepository(ScenarioRepository):
 
     async def list_armed_monitors(self) -> list[ScenarioMonitor]:
         return [m for m in self._monitors.values() if m.status == ScenarioMonitorStatus.ARMED]
+
+    async def list_monitors_for_user(self, user_id: str) -> list[ScenarioMonitor]:
+        return [m for m in self._monitors.values() if m.user_id == user_id]
 
     async def mark_monitor_matched(self, monitor_id: str, match_reason: str) -> ScenarioMonitor:
         matched = replace(

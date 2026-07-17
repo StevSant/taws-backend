@@ -171,6 +171,23 @@ class SupabaseScenarioRepository(ScenarioRepository):
         )
         return [scenario_monitor_from_row(row) for row in response.data]
 
+    async def list_monitors_for_user(self, user_id: str) -> list[ScenarioMonitor]:
+        """Every monitor owned by `user_id`, any status, newest-armed first — covered by the
+        `scenario_monitors_user_id_idx` index (migration 0008). `user_id` is bound as a value
+        via `.eq` (never interpolated into a raw filter), same JWT-safety rule `list_recent`
+        follows."""
+        client = await self._clients.get()
+        response = await self._retry(
+            lambda: (
+                client.table(_SCENARIO_MONITORS_TABLE)
+                .select("*")
+                .eq("user_id", user_id)
+                .order("armed_at", desc=True)
+                .execute()
+            )
+        )
+        return [scenario_monitor_from_row(row) for row in response.data]
+
     async def mark_monitor_matched(self, monitor_id: str, match_reason: str) -> ScenarioMonitor:
         client = await self._clients.get()
         response = await self._retry(

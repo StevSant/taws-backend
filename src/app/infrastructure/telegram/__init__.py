@@ -10,6 +10,9 @@ from app.infrastructure.telegram.event_callback_handler import EventCallbackHand
 from app.infrastructure.telegram.format_briefing_reply import format_briefing_reply
 from app.infrastructure.telegram.format_event_alert import format_event_alert
 from app.infrastructure.telegram.format_impact_reply import format_impact_reply
+from app.infrastructure.telegram.format_personalized_event_alert import (
+    format_personalized_event_alert,
+)
 from app.infrastructure.telegram.format_scenario_result_reply import format_scenario_result_reply
 from app.infrastructure.telegram.format_signal_reply import format_signal_reply
 from app.infrastructure.telegram.format_unknown_command_reply import format_unknown_command_reply
@@ -59,6 +62,7 @@ __all__ = [
     "format_briefing_reply",
     "format_event_alert",
     "format_impact_reply",
+    "format_personalized_event_alert",
     "format_scenario_result_reply",
     "format_signal_reply",
     "format_unknown_command_reply",

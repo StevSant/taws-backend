@@ -58,8 +58,9 @@ class Settings(BaseSettings):
     # Automatic retries ChatOpenAI performs on a transient/5xx/timeout failure before giving up.
     openai_max_retries: int = 2
     # Cap on tokens generated per chat-model completion — bounds the worst-case latency and cost
-    # of a single reply. Raise if specialists start getting truncated mid-answer.
-    chat_max_output_tokens: int = 2048
+    # of a single reply. Passed to ChatOpenAI(max_tokens=...); a long multi-specialist answer that
+    # exceeds it is silently truncated at finish_reason="length" (no error), so keep headroom.
+    chat_max_output_tokens: int = 4096
     # Temperature for the ROUTER's structured route classification only (specialists keep the
     # model default). 0.0 makes the 1-of-6 route pick as deterministic as the provider allows.
     router_temperature: float = 0.0
@@ -95,6 +96,26 @@ class Settings(BaseSettings):
     # TTL (seconds) of a minted ephemeral client secret (`ek_*`) before it expires — the
     # short-lived token the browser holds; the real key never leaves the backend.
     openai_realtime_ttl_seconds: int = 600
+    # Tool-selection mode for the Realtime voice session. "required" forces a tool call on EVERY
+    # turn, which drove a filler-preamble / self-response loop (the model narrating "let me
+    # check…" just to satisfy the forced call); "auto" lets it answer directly and only call a
+    # tool when one is actually needed. The frontend already overrides this to "auto" — this
+    # stops the backend shipping the loop-prone default.
+    openai_realtime_tool_choice: str = "auto"
+    # Sampling temperature for the Realtime voice session. Lower than the text-chat models to
+    # keep spoken replies focused and cut the rambling the loop amplified. NOTE: only the WS
+    # `session.update` transport applies this — the GA `client_secrets.create` mint has no
+    # temperature field (see `openai_realtime_session_provider.py`).
+    openai_realtime_temperature: float = 0.6
+    # server_vad turn-detection tuning for the Realtime session (both transports), replacing the
+    # bare `{"type": "server_vad"}` default. `threshold` is the 0-1 VAD activation level;
+    # `silence_ms` is how long a pause ends the user's turn; `create_response` auto-generates a
+    # reply at end-of-turn; `interrupt_response` lets the user barge in over the model. Tuned to
+    # make end-of-turn detection deterministic and stop the agent talking over itself.
+    openai_realtime_vad_threshold: float = 0.5
+    openai_realtime_vad_silence_ms: int = 500
+    openai_realtime_vad_create_response: bool = True
+    openai_realtime_vad_interrupt_response: bool = True
 
     # --- Text-to-Speech (voice playback of assistant replies, behind the TTSProvider
     # port). Leaving TTS_API_KEY unset disables server-side TTS: chat still works,
@@ -261,11 +282,15 @@ class Settings(BaseSettings):
     fred_rates_series_id: str = "FEDFUNDS"
     fred_cpi_series_id: str = "CPIAUCSL"
     # Additional "Contexto de mercado" indicators (issue #58): daily FRED series so their
-    # sparkline history is dense. Gold = London PM fixing (USD/oz), oil = WTI spot (USD/bbl),
-    # 10Y = 10-Year Treasury constant-maturity yield (%).
-    fred_gold_series_id: str = "GOLDPMGBD228NLBM"
+    # sparkline history is dense. Oil = WTI spot (USD/bbl), 10Y = 10-Year Treasury
+    # constant-maturity yield (%).
     fred_oil_series_id: str = "DCOILWTICO"
     fred_treasury_10y_series_id: str = "DGS10"
+    # DEPRECATED — no longer used. FRED's free daily gold fixing (`GOLDPMGBD228NLBM`, the LBMA
+    # London PM fixing) was discontinued, so gold now comes from yfinance `GC=F` (see
+    # `yfinance_gold_symbol` below and `infrastructure/macro/yfinance_gold_series_source.py`).
+    # Kept only so an existing `FRED_GOLD_SERIES_ID` in a deployed `.env` doesn't error on load.
+    fred_gold_series_id: str = "GOLDPMGBD228NLBM"
     fred_timeout_seconds: float = 10.0
     # Short-TTL in-process cache in front of get_rates/get_cpi/get_volatility_regime (mirrors
     # the CoinGecko cache): these macro series move slowly (rates/CPI monthly, VIX daily) but
@@ -276,6 +301,11 @@ class Settings(BaseSettings):
     # Default/max number of observations returned by GET /api/v1/macro/series/{indicator}.
     macro_series_default_days: int = 90
     macro_series_max_days: int = 365
+
+    # --- Gold "Contexto de mercado" series (MacroDataProvider port; via yfinance, no key
+    # needed) --- COMEX gold futures continuous front-month, replacing the discontinued FRED
+    # gold fixing. Same yfinance mechanism the VIX regime uses.
+    yfinance_gold_symbol: str = "GC=F"
 
     # --- VIX (volatility regime, MacroDataProvider port; via yfinance, no key needed) ---
     vix_symbol: str = "^VIX"
@@ -582,12 +612,51 @@ class Settings(BaseSettings):
     # the model's judgment and can drift with a prompt or model change, and the blast radius
     # here is a push notification to every linked user.
     sentinel_importance_threshold: float = 0.7
+    # High-importance floor (0-1) that ROUTES an already-important event to a market-wide
+    # broadcast instead of watchlist-targeted delivery. An event that clears
+    # `sentinel_importance_threshold` (the "notify at all" gate) but scores BELOW this floor is
+    # sent only to users whose watchlist contains one of its affected assets; an event at or
+    # above this floor is broadcast to every linked chat (a genuinely market-moving event is not
+    # about one person's watchlist). Must be >= `sentinel_importance_threshold`.
+    sentinel_broadcast_importance_threshold: float = 0.90
     # Hard cap on alerts sent per scan, applied AFTER sorting by importance. A chaotic morning
     # can produce a dozen "important" headlines at once; without this the first genuinely busy
     # day carpet-bombs everyone's phone and the bot gets muted. Anything dropped is logged.
     sentinel_max_alerts_per_run: int = 3
     # Max concurrent Gemini analysis calls inside one scan.
     sentinel_max_concurrency: int = 3
+    # --- Sentinel relevance pre-gate (cheap, no-AI filter applied BEFORE any Gemini `analyze`
+    # call, so tokens are only spent on articles that plausibly matter) ---
+    # Track 2 (macro): market-moving keywords. A fetched, non-duplicate article is dropped before
+    # analysis unless its raw title+description hits one of these OR a watchlisted symbol/company
+    # name (track 1, drawn from the union of ALL users' watchlists). Whole-word/phrase matched,
+    # case-insensitive; multi-word entries ("Federal Reserve") match as phrases. An empty list
+    # disables the macro track — the watchlist track still runs.
+    sentinel_macro_keywords: list[str] = [
+        "Federal Reserve",
+        "Fed",
+        "interest rate",
+        "rate cut",
+        "rate hike",
+        "inflation",
+        "CPI",
+        "PCE",
+        "recession",
+        "GDP",
+        "unemployment",
+        "jobs report",
+        "OPEC",
+        "crude oil",
+        "Treasury",
+        "bond yields",
+        "tariff",
+    ]
+    # Shortest tracked-symbol length matched as a BARE ticker in the pre-gate. A 1-2 char ticker
+    # ("A" = Agilent, "IT" = Gartner) collides with ordinary words even under whole-word matching
+    # (the word-boundary anchor still fires on the article word "a"), so tickers shorter than this
+    # are matched only via their canonical company name, never as a bare symbol. Names are always
+    # matched regardless of the symbol's own length, so recall for short-ticker companies is kept.
+    sentinel_min_symbol_match_length: int = 3
 
     # --- Scenario synthesis resilience (issue #64) ---
     # Bounded retry around the Synthesis step's structured-output call. A transient

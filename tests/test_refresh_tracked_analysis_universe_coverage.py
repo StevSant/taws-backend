@@ -9,6 +9,8 @@ The ordering assertion is the load-bearing one: `max_symbols` truncates, so watc
 must be taken FIRST or a big universe would starve the instruments users actually pinned.
 """
 
+from collections.abc import Sequence
+
 from app.application.analysis.use_cases import RefreshTrackedAnalysis
 from app.domain.market.entities import AssetClass, Instrument
 from app.domain.market.ports import InstrumentUniverse
@@ -42,6 +44,15 @@ class _FakeWatchlistRepository(WatchlistRepository):
 
     async def list_all(self):  # type: ignore[no-untyped-def]
         return [Watchlist(id="w1", user_id="u1", name="mine", position=0)]
+
+    async def list_user_ids_tracking(self, symbols: Sequence[str]) -> set[str]:
+        raise NotImplementedError
+
+    async def list_trackers_by_symbol(self, symbols: Sequence[str]) -> dict[str, set[str]]:
+        return {}
+
+    async def list_all_tracked_symbols(self) -> set[str]:
+        return {symbol.strip().upper() for symbol in self._symbols if symbol.strip()}
 
     async def list_items(self, watchlist_id: str):  # type: ignore[no-untyped-def]
         return [

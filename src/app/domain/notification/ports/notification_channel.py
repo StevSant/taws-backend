@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Mapping, Sequence
 
 from app.domain.event_intelligence.entities import EnrichedEvent
 from app.domain.notification.entities import (
@@ -80,5 +81,36 @@ class NotificationChannel(ABC):
         suggested questions that become inline buttons), so a parallel entity would be a
         field-for-field copy with no added meaning. Both types are pure domain, so this stays
         a domain -> domain dependency with no vendor leak.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def send_event_alert_to_user(
+        self,
+        event: EnrichedEvent,
+        user_id: str,
+        watched_symbols: Sequence[str],
+        asset_impacts: Mapping[str, str],
+    ) -> None:
+        """Deliver one important market event to a SINGLE user's linked chat, PERSONALIZED.
+
+        The addressed variant of `broadcast_event_alert`: same event payload and same inline
+        buttons, but routed to exactly one recipient instead of fanned out to everyone AND
+        extended with a "why this matters to you" section. Backs the Sentinel scan's
+        watchlist-targeted path — a mid-importance event (one that cleared the "notify at all"
+        gate but fell below the market-wide broadcast floor) reaches only the users who actually
+        track one of its affected assets, resolved by `BroadcastImportantEvents` via
+        `WatchlistRepository.list_trackers_by_symbol`.
+
+        `watched_symbols` are the event's affected assets THIS user tracks (canonical UPPERCASE);
+        `asset_impacts` is the shared per-asset impact map (asset symbol -> short impact blurb)
+        the use case computes ONCE per event and reuses across every user watching that asset, so
+        the adapter never re-derives per-user impact text. The adapter renders both from
+        `format_personalized_event_alert`. A market-only broadcast has no single "you", so this
+        personalization is deliberately absent from `broadcast_event_alert`.
+
+        No-op if `user_id` has no linked chat. Same never-raise contract as the four methods
+        above — a missing/broken link or a failed send must log and return, never propagate, so
+        one bad recipient can't abort the per-user delivery loop or kill the scheduled scan.
         """
         raise NotImplementedError

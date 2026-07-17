@@ -5,6 +5,8 @@ live reference to. `add(instrument)` alone rebuilds a vendor-id-less
 `InstrumentRow`, silently dropping the id until process restart.
 """
 
+from collections.abc import Sequence
+
 from app.application.instruments.use_cases.register_instrument import RegisterInstrument
 from app.domain.market.entities import AssetClass, CoinCandidate, Instrument, InstrumentRow
 from app.domain.market.ports import InstrumentCatalogRepository
@@ -40,6 +42,15 @@ class _FakeWatchlistRepository(WatchlistRepository):
 
     async def list_all(self):  # noqa: ANN001
         raise NotImplementedError
+
+    async def list_user_ids_tracking(self, symbols: Sequence[str]) -> set[str]:
+        raise NotImplementedError
+
+    async def list_trackers_by_symbol(self, symbols: Sequence[str]) -> dict[str, set[str]]:
+        return {}
+
+    async def list_all_tracked_symbols(self) -> set[str]:
+        return set()
 
     async def rename(self, watchlist_id: str, name: str):  # noqa: ANN001
         raise NotImplementedError

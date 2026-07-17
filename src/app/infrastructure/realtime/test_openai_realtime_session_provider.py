@@ -100,7 +100,9 @@ async def test_mint_passes_model_voice_tools_and_ttl_through() -> None:
     assert session_arg["model"] == "gpt-realtime-2.1-mini"
     assert session_arg["instructions"] == "Custom instructions."
     assert session_arg["tools"] == _TOOLS
-    assert session_arg["tool_choice"] == "required"
+    # Default is "auto" (not the loop-prone "required"): constructed here without a tool_choice
+    # override, so it uses the constructor default the DI container feeds from Settings.
+    assert session_arg["tool_choice"] == "auto"
     assert session_arg["audio"]["input"]["transcription"]["model"] == "gpt-4o-mini-transcribe"
     assert session_arg["audio"]["output"]["voice"] == "verse"
 

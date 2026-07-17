@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Mapping, Sequence
 
 from app.domain.compliance import NOT_PERSONALIZED_ADVICE_DISCLAIMER, disclaimer_for_locale
 from app.domain.event_intelligence.entities import EnrichedEvent
@@ -11,7 +12,11 @@ from app.domain.notification.entities import (
 from app.domain.notification.ports import NotificationChannel
 from app.domain.telegram.ports import TelegramLinkRepository, TelegramMessenger
 from app.domain.watchlist.ports import WatchlistRepository
-from app.infrastructure.telegram import build_event_alert_buttons, format_event_alert
+from app.infrastructure.telegram import (
+    build_event_alert_buttons,
+    format_event_alert,
+    format_personalized_event_alert,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +158,37 @@ class TelegramNotificationChannel(NotificationChannel):
             except Exception:  # noqa: BLE001 — one bad chat must not stop the rest
                 logger.exception("Failed to broadcast event %s to chat %s", event.id, link.chat_id)
         logger.info("event %s broadcast to %d/%d linked chat(s)", event.id, delivered, len(links))
+
+    async def send_event_alert_to_user(
+        self,
+        event: EnrichedEvent,
+        user_id: str,
+        watched_symbols: Sequence[str],
+        asset_impacts: Mapping[str, str],
+    ) -> None:
+        """Deliver one important market event to a single user's linked chat, PERSONALIZED.
+
+        Same inline buttons as `broadcast_event_alert`, addressed to one recipient — the
+        watchlist-targeted delivery path for a mid-importance event — but the body is rendered by
+        `format_personalized_event_alert`, which appends a "why this matters to you" section built
+        from `watched_symbols` (the event's affected assets this user tracks) and the shared
+        `asset_impacts` map. Reuses the existing `_resolve_chat_id_for_user` hop (user_id ->
+        linked chat_id). Never raises: a missing link is a no-op, and a lookup/send failure logs
+        and returns, so `BroadcastImportantEvents`' per-user delivery loop can't be aborted by one
+        bad recipient (mirrors the per-recipient isolation of the broadcast loop above).
+        """
+        try:
+            chat_id = await self._resolve_chat_id_for_user(user_id, context=f"event {event.id}")
+            if chat_id is None:
+                return
+            await self._messenger.send_text(
+                chat_id,
+                format_personalized_event_alert(event, watched_symbols, asset_impacts),
+                parse_mode="HTML",
+                buttons=build_event_alert_buttons(event, self._frontend_base_url),
+            )
+        except Exception:  # noqa: BLE001 — this port must never raise; see class docstring.
+            logger.exception("Failed to deliver Telegram event %s to user %s", event.id, user_id)
 
     async def _resolve_chat_id_for_user(self, user_id: str, *, context: str) -> str | None:
         """Resolve a `user_id` directly to its linked Telegram `chat_id`, or `None` if the

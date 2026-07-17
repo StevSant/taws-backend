@@ -55,10 +55,16 @@ class StreamAndPersistReply:
     at WARNING and swallowed — the same reasoning `ResolveLocale` documents for swallowing
     its own profile-lookup errors around a `StreamingResponse`.
 
-    **Why a failed turn still persists the user's message.** If the agent errored, the reply
-    is not stored (there is no reply), but the user's message is: they did say it, the
-    frontend shows it in the transcript, and dropping it server-side would make a reload
-    silently rewrite the user's own history.
+    **Why a failed turn still persists the user's message — and any partial reply.** If the
+    agent errors mid-answer, the user's message is always stored: they did say it, the frontend
+    shows it in the transcript, and dropping it server-side would make a reload silently rewrite
+    the user's own history. Any NON-EMPTY assistant text generated before the error is stored
+    too — those tokens already reached the client on the wire, so discarding them on reload would
+    erase a reply the user was shown. An error that produced no tokens leaves nothing to store on
+    the assistant side, so only the user message is written. There is no incomplete/status column
+    on `conversation_messages` (migrations 0020/0022/0023) and this class adds no migration, so a
+    salvaged partial is written as an ordinary assistant message — recovering the text rather than
+    flagging its incompleteness.
     """
 
     def __init__(
@@ -142,7 +148,15 @@ class StreamAndPersistReply:
         errored: bool,
     ) -> None:
         turn = [message]
-        if reply and not errored:
+        # Persist any NON-EMPTY assistant text, even when the turn errored mid-answer: those
+        # tokens already reached the client on the wire, so dropping them here would make a reload
+        # silently erase a reply the user was shown — the opposite of durable history. Only when
+        # the error produced no tokens at all (`reply` empty) is there nothing to store on the
+        # assistant side, and just the user message is written. `conversation_messages` has no
+        # incomplete/status column (migrations 0020/0022/0023) and this path adds no migration, so
+        # a salvaged partial is stored as an ordinary assistant message: the text is recovered, its
+        # incompleteness simply isn't flagged.
+        if reply:
             turn.append(
                 Message(
                     role=MessageRole.ASSISTANT,
@@ -151,6 +165,15 @@ class StreamAndPersistReply:
                     citations=citations,
                 )
             )
+            if errored:
+                logger.info(
+                    "Persisting a partial assistant reply (%d chars) for thread %r (user %r): the "
+                    "turn errored mid-answer but those tokens were already streamed to the client, "
+                    "so they are recovered rather than dropped on reload",
+                    len(reply),
+                    thread_id,
+                    user_id,
+                )
 
         # Bounded retry with linear backoff (attempt * base). A turn that fails to persist
         # leaves a "ghost" conversation the frontend can never rehydrate — and the main way

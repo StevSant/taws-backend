@@ -12,7 +12,9 @@ _EXTRACTION_PROMPT = """Extract only claims and evidence explicitly present in t
 specialist response. Never add facts, URLs, dates, identifiers, metrics, or providers. Use \
 news for publisher/title/URL/date evidence; signal for stored impact/confidence; quant for \
 computed metrics; macro for provider-dated indicators. Omit any finding that cannot fill its \
-source schema from the response itself."""
+source schema from the response itself. Also carry through the specialist's own self-reported \
+stance (bull, bear, or neutral), confidence (0.0 to 1.0), and short headline when the response \
+states them; leave stance at neutral, confidence at 0.0, and headline empty when it does not."""
 
 
 async def extract_response_contribution(

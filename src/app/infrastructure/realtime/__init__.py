@@ -1,4 +1,7 @@
 from app.infrastructure.realtime.build_realtime_instructions import build_realtime_instructions
+from app.infrastructure.realtime.build_realtime_turn_detection import (
+    build_realtime_turn_detection,
+)
 from app.infrastructure.realtime.openai_realtime_session_provider import (
     OpenAIRealtimeSessionProvider,
 )
@@ -9,5 +12,6 @@ __all__ = [
     "OpenAIRealtimeSessionProvider",
     "REALTIME_INSTRUCTIONS",
     "build_realtime_instructions",
+    "build_realtime_turn_detection",
     "transcription_language",
 ]

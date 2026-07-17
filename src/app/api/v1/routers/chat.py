@@ -1,7 +1,9 @@
 import json
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Annotated, Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -29,6 +31,7 @@ from app.api.v1.schemas import (
     RealtimeSessionResponse,
     RealtimeToolRequest,
     RealtimeToolResponse,
+    RealtimeTurnsRequest,
     SpeakRequest,
     TranscriptionResponse,
 )
@@ -44,6 +47,7 @@ from app.domain.agents.entities import (
     AgentStreamEvent,
     ChartEvent,
     CitationsEvent,
+    ContributionsEvent,
     ErrorEvent,
     Message,
     MessageRole,
@@ -84,6 +88,9 @@ def _to_sse_frame(event: AgentStreamEvent) -> str:
       "detail": "<optional text>"}}` (`detail` omitted when `None`)
     - `ErrorEvent` -> `{"error": "<message>"}`
     - `ChartEvent` -> `{"chart": {...}}` (a serialized ChartSpec wire dict)
+    - `CitationsEvent` -> `{"citations": [...]}`
+    - `ContributionsEvent` -> `{"contributions": [{"agent", "stance", "confidence", "headline"}]}`
+      (multi-specialist turns only)
     - `ToolCallEvent` -> `{"tool": {"agent": "<name>", "name": "<tool>", "event": "start"|"done"}}`
     """
     payload: dict[str, Any]
@@ -103,6 +110,8 @@ def _to_sse_frame(event: AgentStreamEvent) -> str:
         payload = {"chart": event.chart}
     elif isinstance(event, CitationsEvent):
         payload = {"citations": event.citations}
+    elif isinstance(event, ContributionsEvent):
+        payload = {"contributions": event.contributions}
     elif isinstance(event, ToolCallEvent):
         payload = {
             "tool": {
@@ -302,6 +311,9 @@ async def create_realtime_session(
     provider: Annotated[RealtimeSessionProvider | None, Depends(get_realtime_session_provider)],
     settings: Annotated[Settings, Depends(get_settings)],
     resolve_locale: Annotated[ResolveLocale, Depends(get_resolve_locale_use_case)],
+    conversation_repository: Annotated[
+        ConversationRepository, Depends(get_conversation_repository)
+    ],
     locale: Annotated[str | None, Query(min_length=2, max_length=35)] = None,
 ) -> RealtimeSessionResponse:
     """Mint a short-lived OpenAI Realtime session for the browser's WebRTC connection.
@@ -312,6 +324,11 @@ async def create_realtime_session(
     instructions here — the browser never chooses which tools the session exposes — and
     the acting `user_id` comes from the verified JWT. Only the ephemeral `ek_*` secret is
     returned; the real Realtime API key never leaves the backend.
+
+    A real `conversations` row is created and its id returned as `conversation_id` (issue #6),
+    so the browser can persist completed voice turns to it via `POST /chat/realtime/turns` —
+    voice threads used to live only in frontend Signals and vanished on refresh. The
+    conversation is bound BEFORE the (billed) mint so a mint failure never orphans a row.
 
     `locale` follows the same precedence as `/stream` (explicit request -> the user's stored
     `preferred_locale` -> `Settings.default_locale`) via the shared `ResolveLocale`. Until now
@@ -324,6 +341,9 @@ async def create_realtime_session(
             detail="Realtime voice is not enabled",
         )
 
+    conversation_id = str(uuid4())
+    await conversation_repository.ensure(conversation_id, user.id)
+
     effective_locale = await resolve_locale.execute(user_id=user.id, requested_locale=locale)
     tools = build_realtime_tool_schemas(charts_enabled=settings.charts_enabled)
     session = await provider.mint_ephemeral_session(
@@ -335,12 +355,41 @@ async def create_realtime_session(
         expires_in_seconds=settings.openai_realtime_ttl_seconds,
         transcription_language=transcription_language(effective_locale),
     )
+    session = replace(session, conversation_id=conversation_id)
     return RealtimeSessionResponse(
         client_secret=session.client_secret,
         model=session.model,
         expires_at=session.expires_at,
         tools=session.tools,
+        conversation_id=session.conversation_id,
     )
+
+
+@router.post("/realtime/turns", status_code=status.HTTP_204_NO_CONTENT)
+async def append_realtime_turns(
+    payload: RealtimeTurnsRequest,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    conversation_repository: Annotated[
+        ConversationRepository, Depends(get_conversation_repository)
+    ],
+) -> None:
+    """Append completed voice turns to their bound conversation (issue #6).
+
+    The realtime data path runs browser<->OpenAI directly, so the backend never sees the
+    turns as they happen; the browser calls this after each completed user+assistant exchange
+    (or in a batch on stop) to persist them. Turns are written through the SAME
+    `ConversationRepository.append_messages` the text chat's `StreamAndPersistReply` uses, so
+    a refresh rehydrates a voice thread exactly like a text one via
+    `GET /chat/conversations/{id}`.
+
+    Requires the authenticated user and verifies they own `conversation_id` (404 otherwise,
+    same ownership shape as every other conversation endpoint) so a caller can never write
+    into another user's thread.
+    """
+    await _get_owned_conversation(payload.conversation_id, user, conversation_repository)
+    messages = [Message(role=turn.role, content=turn.content) for turn in payload.turns]
+    if messages:
+        await conversation_repository.append_messages(payload.conversation_id, messages)
 
 
 @router.post("/realtime/tool", response_model=RealtimeToolResponse)

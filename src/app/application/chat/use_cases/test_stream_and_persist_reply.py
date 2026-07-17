@@ -10,7 +10,9 @@ What must stay true:
 - a completed exchange writes BOTH the user message and the assembled assistant reply;
 - the assistant reply is the concatenation of the streamed tokens, written once at the end
   rather than per token;
-- a stream that errored still records the user's own message, but no assistant reply;
+- a stream that errors mid-answer records the user's message AND any non-empty partial reply
+  already generated (those tokens already reached the client); an error before any token
+  records only the user's message;
 - a persistence failure NEVER breaks the stream, because by then the client has already
   received every frame of the answer.
 """
@@ -259,11 +261,42 @@ async def test_only_one_write_per_turn_not_one_per_token() -> None:
     assert len(repository.appended) == 1
 
 
-async def test_errored_stream_persists_the_user_message_but_no_reply() -> None:
+async def test_errored_stream_persists_the_user_message_and_the_partial_reply() -> None:
+    """A stream that errors mid-answer keeps the tokens already generated.
+
+    The user has already seen this partial text on the wire, so discarding it server-side
+    would make a reload silently erase a reply they were shown. A NON-EMPTY partial is
+    therefore persisted as the assistant turn even though the turn errored.
+    """
     repository = _FakeConversationRepository()
     use_case = _build(
         [TokenEvent(token="partial"), ErrorEvent(message="model exploded")], repository
     )
+
+    await _drain(
+        use_case.execute(
+            "thread-1",
+            Message(role=MessageRole.USER, content="hi"),
+            "user-1",
+            "es",
+        )
+    )
+
+    _, messages = repository.appended[0]
+    assert [(m.role, m.content) for m in messages] == [
+        (MessageRole.USER, "hi"),
+        (MessageRole.ASSISTANT, "partial"),
+    ]
+
+
+async def test_errored_stream_with_no_tokens_persists_only_the_user_message() -> None:
+    """An error before any token still records the user's message, but no assistant reply.
+
+    With no assistant text generated there is nothing to salvage, so only the user turn is
+    stored — dropping it server-side would silently rewrite the user's own history.
+    """
+    repository = _FakeConversationRepository()
+    use_case = _build([ErrorEvent(message="model exploded before any token")], repository)
 
     await _drain(
         use_case.execute(

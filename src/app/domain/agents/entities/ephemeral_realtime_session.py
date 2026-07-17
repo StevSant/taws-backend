@@ -12,9 +12,14 @@ class EphemeralRealtimeSession:
     the browser must re-mint after that. `tools` is the exact server-authored tool
     schema list the session was minted with (echoed back so the caller can surface the
     allowlist it will honor on `/chat/realtime/tool`), never a browser-supplied list.
+
+    `conversation_id` binds this voice session to a real `conversations` row (issue #6), so
+    the browser can persist completed voice turns to it via `POST /chat/realtime/turns` and a
+    refresh rehydrates them like a text thread. Empty string when no conversation was bound.
     """
 
     client_secret: str
     model: str
     expires_at: int
     tools: list[dict] = field(default_factory=list)
+    conversation_id: str = ""

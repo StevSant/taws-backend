@@ -17,10 +17,37 @@ from app.infrastructure.agents.invoke_with_bound_tools import invoke_with_bound_
 from app.infrastructure.agents.personas import MIDAS_PERSONA, RESPONSE_FORMAT_GUIDANCE
 from app.infrastructure.agents.supervisor_state import SupervisorState
 
-_CONTRIBUTOR_INSTRUCTION = """Work as an internal evidence contributor. Use your tools before \
+# Soft ceiling for the self-reported `headline`, injected into the prompt below (kept as a named
+# constant, not a bare literal in the prompt string). It's guidance for the model, not a hard
+# validator on `Contribution.headline` — over-length text must never crash the graph.
+HEADLINE_MAX_CHARS = 80
+
+_CONTRIBUTOR_INSTRUCTION = f"""Work as an internal evidence contributor. Use your tools before \
 making factual claims. Return a concise evidence-rich analysis with exact source URLs, dates, \
 providers, signal confidence, and computed metric windows whenever the tools provide them. \
-Another node will synthesize the user-facing answer."""
+Another node will synthesize the user-facing answer. Also self-report your own view for that \
+synthesizer: your stance — bull, bear, or an honest neutral (never force a side you don't hold) \
+— your confidence from 0.0 to 1.0 (a low value is fine and honest, not a failure), and a \
+headline of at most {HEADLINE_MAX_CHARS} characters capturing your take in plain language."""
+
+# Appended ONLY for the contributor that keeps this turn's render_* chart tools (the chart owner
+# — see the dedupe block below). The base `_CONTRIBUTOR_INSTRUCTION` frames the node as an
+# internal evidence-gatherer whose prose another node will synthesize; taken alone that framing
+# suppresses render_* calls, because rendering a chart makes no sense if "another node writes the
+# user answer". A chart is different: it is streamed straight to the user's screen from THIS node
+# (the SSE custom "chart" event is emitted regardless of which node calls the tool), never redrawn
+# downstream. So the chart owner is told to render directly, resolving that tension — otherwise a
+# multi-specialist comparison turn renders no chart at all even though the tool is bound here.
+_CHART_OWNER_INSTRUCTION = """You also own this turn's visuals. Any chart you render with a \
+render_* tool is shown to the user directly on their screen right now — it is NOT internal \
+evidence and is NOT passed to another node to redraw. So when a chart makes the answer clearer \
+(comparing or contrasting assets, one instrument's price history, drawdown/risk, a returns \
+distribution), CALL the render_* tool yourself now — don't defer it to the synthesizer, which \
+has no chart tools. The user need NOT say "chart", "graph", or "gráficamente" to want one: any \
+turn that compares, contrasts, or ranks two or more instruments (e.g. "how do NVDA and AAPL \
+compare this quarter", "which did better") IS a comparison chart request — you MUST call \
+render_comparison_chart with those symbols before finishing, exactly as if the user had said \
+"compare them graphically". Then still return your text analysis as usual for the synthesizer."""
 
 # Token guard for the raw `analysis` field. Each contributor's full grounded response is passed
 # through to the synthesis prompt verbatim; three verbose specialists could otherwise blow it up.
@@ -89,6 +116,12 @@ def build_contributor_node(
             )
         if route != chart_owner and tools:
             tools = [tool for tool in tools if not tool.name.startswith("render_")]
+        # This contributor still holds render_* tools => it is the chart owner. Override the
+        # "internal evidence" framing so it actually renders (see _CHART_OWNER_INSTRUCTION).
+        # Appended last so it lands in the recency slot, below the user turn, like the locale
+        # re-assertion in invoke_with_bound_tools.
+        if tools and any(tool.name.startswith("render_") for tool in tools):
+            messages.append(SystemMessage(content=_CHART_OWNER_INSTRUCTION))
         evidence_messages: list[Any] = []
         response = (
             await invoke_with_bound_tools(

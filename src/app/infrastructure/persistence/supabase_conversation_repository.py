@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from functools import partial
@@ -14,6 +15,8 @@ from app.infrastructure.persistence.conversation_message_row_mapper import (
 from app.infrastructure.persistence.conversation_row_mapper import conversation_from_row
 from app.infrastructure.persistence.supabase_client_cache import SupabaseClientCache
 from app.infrastructure.persistence.with_supabase_retry import with_supabase_retry
+
+logger = logging.getLogger(__name__)
 
 _CONVERSATIONS_TABLE = "conversations"
 _MESSAGES_TABLE = "conversation_messages"
@@ -109,7 +112,22 @@ class SupabaseConversationRepository(ConversationRepository):
             for offset, message in enumerate(messages)
         ]
         await self._retry(lambda: client.table(_MESSAGES_TABLE).insert(rows).execute())
-        await self._touch(client, conversation_id)
+        # The insert above has already COMMITTED the turn; `_touch` only bumps `updated_at` for
+        # the sidebar's most-recently-updated ordering (cosmetic). A transient failure here must
+        # NOT bubble up: `StreamAndPersistReply`'s retry loop would re-run this whole method and
+        # re-insert the turn at fresh ordinals, duplicating the user+assistant pair — the
+        # non-atomic insert+touch edge both this class's and that use case's docstrings note. So
+        # swallow a post-insert touch failure with a warning: a slightly stale sidebar order is
+        # strictly better than a duplicated ("phantom") turn.
+        try:
+            await self._touch(client, conversation_id)
+        except Exception:  # noqa: BLE001 — turn already committed; a touch failure is cosmetic
+            logger.warning(
+                "updated_at bump (_touch) failed for conversation %r after the turn was already "
+                "inserted; leaving updated_at stale to avoid a duplicate-turn re-insert",
+                conversation_id,
+                exc_info=True,
+            )
 
     async def update_title(self, conversation_id: str, title: str) -> None:
         client = await self._clients.get()

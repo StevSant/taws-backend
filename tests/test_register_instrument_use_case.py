@@ -7,6 +7,8 @@ Fakes for `InstrumentCatalogRepository`, `MutableInstrumentUniverse`/
 record calls so the exact order and arguments can be asserted.
 """
 
+from collections.abc import Sequence
+
 import pytest
 
 from app.application.instruments.errors import SymbolCollisionError
@@ -86,6 +88,15 @@ class _FakeWatchlistRepository(WatchlistRepository):
 
     async def list_all(self):  # noqa: ANN001
         raise NotImplementedError
+
+    async def list_user_ids_tracking(self, symbols: Sequence[str]) -> set[str]:
+        raise NotImplementedError
+
+    async def list_trackers_by_symbol(self, symbols: Sequence[str]) -> dict[str, set[str]]:
+        return {}
+
+    async def list_all_tracked_symbols(self) -> set[str]:
+        return set()
 
     async def rename(self, watchlist_id: str, name: str):  # noqa: ANN001
         raise NotImplementedError

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -13,6 +14,7 @@ from app.api.v1.schemas import (
     CurrentUser,
     GenerateScenarioRequest,
     ScenarioMonitorResponse,
+    ScenarioMonitorStatusResponse,
     ScenarioPresetResponse,
     ScenarioResultResponse,
 )
@@ -112,6 +114,37 @@ async def list_recent_scenarios(
     never surfaces in another's history (migration 0025)."""
     results = await scenario_repository.list_recent(current_user.id, limit)
     return [ScenarioResultResponse.model_validate(result) for result in results]
+
+
+@router.get("/monitors")
+async def list_scenario_monitors(
+    current_user: Annotated[CurrentUser, Depends(require_current_user)],
+    scenario_repository: Annotated[ScenarioRepository, Depends(get_scenario_repository)],
+) -> list[ScenarioMonitorStatusResponse]:
+    """List the caller's armed Scenario Monitors with their live status (issue #18 / C3).
+
+    Backs the frontend's in-app notification poller, which diffs this on an interval to raise
+    an `ARMED`->`MATCHED` breach in the notification bell (the matching + Telegram delivery
+    already run server-side via `EvaluateScenarioMonitors`). Reuses the repository's existing
+    reads — `list_monitors_for_user` for the rows, `get` for each row's scenario `title` —
+    rather than adding a use-case pipeline. Registered before `GET /{scenario_id}` so this
+    static path isn't shadowed by that dynamic one, same guard `GET /presets` uses.
+    """
+    monitors = await scenario_repository.list_monitors_for_user(current_user.id)
+    scenarios = await asyncio.gather(
+        *(scenario_repository.get(monitor.scenario_id) for monitor in monitors)
+    )
+    return [
+        ScenarioMonitorStatusResponse(
+            scenario_id=monitor.scenario_id,
+            title=scenario.title if scenario is not None else "",
+            status=monitor.status,
+            armed_at=monitor.armed_at,
+            matched_at=monitor.matched_at,
+            match_reason=monitor.match_reason,
+        )
+        for monitor, scenario in zip(monitors, scenarios, strict=True)
+    ]
 
 
 @router.get("/{scenario_id}")

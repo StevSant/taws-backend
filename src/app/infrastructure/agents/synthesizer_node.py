@@ -9,6 +9,7 @@ from app.domain.agents.entities import AgentTraceEvent
 from app.infrastructure.agents.build_citations_from_contributions import (
     build_citations_from_contributions,
 )
+from app.infrastructure.agents.build_contribution_digests import build_contribution_digests
 from app.infrastructure.agents.personas import (
     ADVISOR_PERSONA,
     MIDAS_PERSONA,
@@ -36,6 +37,12 @@ def build_synthesizer_node(model: BaseChatModel, *, history_max_messages: int) -
     async def synthesizer_node(state: SupervisorState) -> dict[str, Any]:
         writer = get_stream_writer()
         writer({"agent": "advisor", "event": AgentTraceEvent.START.value, "detail": None})
+        # Emit the per-specialist stance digest ONCE at synthesizer entry — this node is only
+        # ever reached on the multi-specialist (parallel contributor -> synthesizer) path, so a
+        # single-route turn (direct specialist -> END) never gets here and never emits the frame.
+        digests = build_contribution_digests(state.get("contributions", []))
+        if digests:
+            writer({"kind": "contributions", "contributions": digests})
         serialized = (
             "["
             + ",".join(

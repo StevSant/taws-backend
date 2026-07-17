@@ -11,7 +11,7 @@
 Uses the `dependency_overrides` pattern from `test_quant_stats_candles.py`.
 """
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 
 import pytest
 from fastapi.testclient import TestClient
@@ -83,6 +83,20 @@ class _FakeWatchlistRepository(WatchlistRepository):
 
     async def list_all(self) -> list[Watchlist]:
         return list(self._watchlists.values())
+
+    async def list_user_ids_tracking(self, symbols: Sequence[str]) -> set[str]:
+        raise NotImplementedError
+
+    async def list_trackers_by_symbol(self, symbols: Sequence[str]) -> dict[str, set[str]]:
+        return {}
+
+    async def list_all_tracked_symbols(self) -> set[str]:
+        return {
+            item.symbol.strip().upper()
+            for items in self._items.values()
+            for item in items
+            if item.symbol.strip()
+        }
 
     async def rename(self, watchlist_id: str, name: str) -> Watchlist:
         raise NotImplementedError

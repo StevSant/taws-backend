@@ -306,8 +306,7 @@ async def notify_news_item(
             ),
         )
     is_relevant = (
-        enriched.should_notify
-        and enriched.importance >= settings.sentinel_importance_threshold
+        enriched.should_notify and enriched.importance >= settings.sentinel_importance_threshold
     )
     logger.info(
         "Sentinel news assessment: news_id=%s importance=%.2f should_notify=%s threshold=%.2f",

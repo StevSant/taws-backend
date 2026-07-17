@@ -4,6 +4,7 @@ from app.infrastructure.agents.build_agent_trace_from_payload import (
 from app.infrastructure.agents.build_citations_from_contributions import (
     build_citations_from_contributions,
 )
+from app.infrastructure.agents.build_contribution_digests import build_contribution_digests
 from app.infrastructure.agents.chat_graph import build_chat_graph
 from app.infrastructure.agents.contribution import Contribution
 from app.infrastructure.agents.contributor_node import build_contributor_node
@@ -46,6 +47,7 @@ __all__ = [
     "Source",
     "build_agent_trace_from_payload",
     "build_citations_from_contributions",
+    "build_contribution_digests",
     "build_chat_graph",
     "build_contributor_node",
     "build_specialist_node",

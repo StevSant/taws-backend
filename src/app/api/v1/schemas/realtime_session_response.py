@@ -14,3 +14,11 @@ class RealtimeSessionResponse(BaseModel):
     model: str
     expires_at: int = Field(description="Unix epoch seconds when the secret expires.")
     tools: list[dict] = Field(default_factory=list)
+    conversation_id: str = Field(
+        default="",
+        description=(
+            "Real conversations row bound to this voice session; the browser persists "
+            "completed voice turns to it via POST /chat/realtime/turns so a refresh rehydrates "
+            "them."
+        ),
+    )

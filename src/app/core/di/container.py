@@ -150,8 +150,10 @@ from app.infrastructure.fundamentals import (
 )
 from app.infrastructure.llm import OpenAIProvider, build_chat_model
 from app.infrastructure.macro import (
+    CompositeMacroDataProvider,
     FredMacroDataProvider,
     RoutingMacroDataProvider,
+    YFinanceGoldSeriesSource,
 )
 from app.infrastructure.marketdata import (
     CoinGeckoCoinSearchProvider,
@@ -195,7 +197,10 @@ from app.infrastructure.persistence import (
     SupabaseUserProfileRepository,
     SupabaseWatchlistRepository,
 )
-from app.infrastructure.realtime import OpenAIRealtimeSessionProvider
+from app.infrastructure.realtime import (
+    OpenAIRealtimeSessionProvider,
+    build_realtime_turn_detection,
+)
 from app.infrastructure.seeds import load_preset_scenarios_seed
 from app.infrastructure.sentiment import (
     AlternativeMeFearGreedProvider,
@@ -1477,14 +1482,17 @@ class Container:
         invented rates and CPI prints. See `infrastructure/macro/routing_macro_data_provider.py`.
         """
         if self._macro_data_provider is None:
+            # Gold is NOT FRED-backed anymore: FRED's free daily gold fixing
+            # (`GOLDPMGBD228NLBM`) was discontinued, so its history 503'd. It now comes from
+            # yfinance `GC=F` (see `CompositeMacroDataProvider` / `YFinanceGoldSeriesSource`),
+            # mirroring how the volatility regime already bypasses FRED for `^VIX`.
             indicator_series_ids = {
                 MacroIndicator.RATES: self._settings.fred_rates_series_id,
                 MacroIndicator.CPI: self._settings.fred_cpi_series_id,
-                MacroIndicator.GOLD: self._settings.fred_gold_series_id,
                 MacroIndicator.OIL: self._settings.fred_oil_series_id,
                 MacroIndicator.TREASURY_10Y: self._settings.fred_treasury_10y_series_id,
             }
-            live_provider = FredMacroDataProvider(
+            fred_provider = FredMacroDataProvider(
                 api_key=self._settings.fred_api_key,
                 base_url=self._settings.fred_base_url,
                 rates_series_id=self._settings.fred_rates_series_id,
@@ -1497,7 +1505,11 @@ class Container:
                 timeout_seconds=self._settings.fred_timeout_seconds,
                 http_client=self.get_http_client(),
             )
-            self._macro_data_provider = RoutingMacroDataProvider(live_provider=live_provider)
+            gold_source = YFinanceGoldSeriesSource(symbol=self._settings.yfinance_gold_symbol)
+            composite = CompositeMacroDataProvider(
+                fred_provider=fred_provider, gold_source=gold_source
+            )
+            self._macro_data_provider = RoutingMacroDataProvider(live_provider=composite)
         return self._macro_data_provider
 
     def get_interpret_macro_event_use_case(self) -> InterpretMacroEvent:
@@ -1628,9 +1640,22 @@ class Container:
                 process_incoming_event=self.get_process_incoming_event_use_case(),
                 notification_channel=self.get_notification_channel(),
                 processed_event_tracker=self.get_processed_event_tracker(),
+                watchlist_repository=self.get_watchlist_repository(),
+                # Safe to resolve eagerly: this use case is only ever built lazily on the first
+                # scheduled Sentinel tick, which runs well after `build_instrument_universe()` in
+                # the startup lifespan — never on a request path that could precede the warmup.
+                instrument_universe=self.get_instrument_universe(),
+                # Same analyzer the pipeline uses for `analyze` — reused here for the per-asset
+                # `analyze_impact` blurbs on personalized watchlist-targeted alerts.
+                event_analyzer=self.get_event_analyzer(),
                 importance_threshold=self._settings.sentinel_importance_threshold,
+                broadcast_importance_threshold=(
+                    self._settings.sentinel_broadcast_importance_threshold
+                ),
                 max_alerts_per_run=self._settings.sentinel_max_alerts_per_run,
                 max_concurrency=self._settings.sentinel_max_concurrency,
+                macro_keywords=self._settings.sentinel_macro_keywords,
+                min_symbol_match_length=self._settings.sentinel_min_symbol_match_length,
             )
         return self._broadcast_important_events_use_case
 
@@ -1954,7 +1979,11 @@ class Container:
         api_key = self._settings.openai_realtime_api_key or self._settings.openai_api_key
         if not api_key:
             return None
-        self._realtime_session_provider = OpenAIRealtimeSessionProvider(api_key=api_key)
+        self._realtime_session_provider = OpenAIRealtimeSessionProvider(
+            api_key=api_key,
+            tool_choice=self._settings.openai_realtime_tool_choice,
+            turn_detection=build_realtime_turn_detection(self._settings),
+        )
         return self._realtime_session_provider
 
     def _get_router_chat_model(self) -> BaseChatModel:

@@ -2,6 +2,9 @@ from typing import Any
 
 from app.core.config import Settings
 from app.infrastructure.realtime.build_realtime_instructions import build_realtime_instructions
+from app.infrastructure.realtime.build_realtime_turn_detection import (
+    build_realtime_turn_detection,
+)
 from app.infrastructure.realtime.tools import build_realtime_tool_schemas
 from app.infrastructure.realtime.transcription_language import transcription_language
 from app.infrastructure.realtime.ws.openai_events import (
@@ -38,7 +41,12 @@ def build_realtime_session_update(settings: Settings, locale: str) -> dict[str, 
                 "language": transcription_language(locale),
             },
             "voice": settings.openai_realtime_voice,
-            "turn_detection": {"type": "server_vad"},
+            # Tuned server_vad (Settings-driven), replacing the bare `{"type": "server_vad"}`:
+            # deterministic end-of-turn detection + barge-in so the agent stops talking over
+            # itself. `temperature` (valid on this beta `session.update` shape, unlike the GA
+            # mint) keeps spoken replies focused. Both target the voice self-response loop.
+            "temperature": settings.openai_realtime_temperature,
+            "turn_detection": build_realtime_turn_detection(settings),
             "modalities": ["text", "audio"],
         },
     }
