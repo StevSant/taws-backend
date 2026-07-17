@@ -7,6 +7,7 @@ from app.infrastructure.telegram.build_event_callback_data import (
     build_event_callback_data,
 )
 from app.infrastructure.telegram.event_callback_action import EventCallbackAction
+from app.infrastructure.telegram.is_telegram_compatible_url import is_telegram_compatible_url
 
 # Telegram renders long button labels by truncating them mid-word; a suggested question is a
 # full sentence, so it has to be shortened deliberately rather than left to the client.
@@ -16,26 +17,20 @@ _MAX_QUESTION_BUTTONS = 3
 
 
 def build_event_alert_buttons(
-    event: EnrichedEvent, frontend_base_url: str
+    event: EnrichedEvent, frontend_base_url: str, *, news_id: str | None = None
 ) -> list[list[InlineButton]]:
-    """Build the inline keyboard under a broadcast news alert.
+    """Build the inline keyboard under a Sentinel alert.
 
-    Three kinds of action, one per row group:
-
-    - **Ver en TAWS** — a plain URL button into the web app. No server round-trip.
-    - **Analizar impacto** — a callback that runs the existing `AnalyzeEventImpact` (Gemini)
-      pass on this event and replies in-thread.
-    - **Suggested questions** — the analyzer already generates `suggested_questions` on every
-      event and they were previously rendered as inert bullet text in the message body. As
-      buttons they become one tap into the conversational agent, which already handles free
-      text from Telegram.
-
-    A question whose token would blow the 64-byte `callback_data` budget is skipped rather than
-    allowed to fail the whole `sendMessage` — losing one button beats losing the alert.
+    When the caller knows the persisted news id, the web-app button opens that article's detail;
+    scheduled alerts without that id fall back to the news list. Local frontend URLs cannot be
+    opened by Telegram, so the web-app button is omitted in local development. The callback
+    buttons remain available because Telegram sends those updates to the configured bot webhook.
     """
-    rows: list[list[InlineButton]] = [
-        [InlineButton(text="📊 Ver en TAWS", url=f"{frontend_base_url.rstrip('/')}/radar/news")]
-    ]
+    rows: list[list[InlineButton]] = []
+    news_path = f"/radar/news/{news_id}" if news_id else "/radar/news"
+    news_url = f"{frontend_base_url.rstrip('/')}{news_path}"
+    if is_telegram_compatible_url(news_url):
+        rows.append([InlineButton(text="📊 Ver en TAWS", url=news_url)])
 
     with suppress(CallbackDataTooLongError):
         rows.append(

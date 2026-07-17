@@ -16,6 +16,7 @@ from app.infrastructure.telegram.format_unknown_command_reply import format_unkn
 from app.infrastructure.telegram.format_welcome_reply import format_welcome_reply
 from app.infrastructure.telegram.impact_command import ImpactCommand
 from app.infrastructure.telegram.impact_command_handler import ImpactCommandHandler
+from app.infrastructure.telegram.is_telegram_compatible_url import is_telegram_compatible_url
 from app.infrastructure.telegram.parse_briefing_command import parse_briefing_command
 from app.infrastructure.telegram.parse_chat_message import parse_chat_message
 from app.infrastructure.telegram.parse_event_callback import parse_event_callback
@@ -44,6 +45,7 @@ __all__ = [
     "EventCallbackHandler",
     "ImpactCommand",
     "ImpactCommandHandler",
+    "is_telegram_compatible_url",
     "SignalCommand",
     "SignalCommandHandler",
     "SimulateCommand",

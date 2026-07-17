@@ -5,6 +5,9 @@ from app.domain.event_intelligence.ports import EventRepositoryPort
 from app.infrastructure.event_intelligence.repositories.event_row_mapper import (
     enriched_event_from_row,
 )
+from app.infrastructure.event_intelligence.repositories.remove_postgres_null_characters import (
+    remove_postgres_null_characters,
+)
 from app.infrastructure.persistence.supabase_client_cache import SupabaseClientCache
 from app.infrastructure.persistence.with_supabase_retry import with_supabase_retry
 
@@ -66,7 +69,10 @@ class SupabaseEventRepository(EventRepositoryPort):
             "suggested_questions": event.suggested_questions,
             "analyzed_at": event.analyzed_at.isoformat(),
         }
-        await self._retry(lambda: client.table(_EVENTS_TABLE).upsert(row).execute())
+        sanitized_row = {
+            column: remove_postgres_null_characters(value) for column, value in row.items()
+        }
+        await self._retry(lambda: client.table(_EVENTS_TABLE).upsert(sanitized_row).execute())
 
     async def list_all(self) -> list[EnrichedEvent]:
         client = await self._clients.get()

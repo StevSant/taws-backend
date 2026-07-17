@@ -22,3 +22,6 @@ class EnrichedEvent:
     reasoning: str
     suggested_questions: list[str]
     analyzed_at: datetime
+    # Distinguishes a real "not relevant" judgement from the safe fallback used when Gemini
+    # could not answer. Callers must never present an unavailable analysis as an LLM decision.
+    analysis_available: bool = True
