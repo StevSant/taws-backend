@@ -42,6 +42,7 @@ def scenario_to_row(result: ScenarioResult) -> dict[str, Any]:
         "consensus": _consensus_to_row(result.consensus) if result.consensus else None,
         "disclaimer": result.disclaimer,
         "locale": result.locale,
+        "author_id": result.author_id,
         "created_at": result.created_at.isoformat(),
     }
 
@@ -63,6 +64,7 @@ def scenario_from_row(row: Any) -> ScenarioResult:
         recommended_actions=row.get("recommended_actions") or [],
         disclaimer=row["disclaimer"],
         locale=row.get("locale") or "",
+        author_id=row.get("author_id"),
         agent_contributions=[
             _contribution_from_row(item) for item in row.get("agent_contributions") or []
         ],

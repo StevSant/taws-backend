@@ -33,12 +33,16 @@ class ScenarioRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def list_recent(self, limit: int = _DEFAULT_RECENT_LIMIT) -> list[ScenarioResult]:
-        """Return the most recently generated scenario results, most-recent first.
+    async def list_recent(
+        self, user_id: str, limit: int = _DEFAULT_RECENT_LIMIT
+    ) -> list[ScenarioResult]:
+        """Return the most recently generated scenario results VISIBLE to `user_id`,
+        most-recent first: every global/shared run (`author_id is null` — presets and
+        chat-tool runs) plus this user's own free-form runs (`author_id = user_id`).
 
-        Backs a basic Scenario Lab history view (`GET /api/v1/scenarios`) — not in the
-        issue's explicit acceptance criteria, but needed for any "basic UI" to show past
-        runs without the client tracking every generated id itself.
+        Backs the Scenario Lab history view (`GET /api/v1/scenarios`). The `user_id` scope
+        is what stops one user's free-form "what if" text from surfacing under another
+        user's "Mis escenarios" — see migration 0025 and the adapter for the exact filter.
         """
         raise NotImplementedError
 

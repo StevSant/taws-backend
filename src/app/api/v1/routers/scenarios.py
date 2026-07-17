@@ -3,6 +3,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.v1.dependencies import (
+    get_notification_channel,
     get_preset_scenario_rows,
     get_scenario_repository,
     get_scenario_simulation_runner,
@@ -18,12 +19,14 @@ from app.api.v1.schemas import (
 from app.application.compliance import ComplianceViolationError
 from app.application.scenario import (
     InvalidScenarioIntakeError,
+    ScenarioOutOfScopeError,
     ScenarioSynthesisUnavailableError,
     UnknownPresetError,
     scenario_unavailable_message,
 )
 from app.application.scenario.use_cases import ArmScenarioMonitor
 from app.core.config import Settings, get_settings
+from app.domain.notification.ports import NotificationChannel
 from app.domain.scenario.ports import ScenarioRepository
 from app.infrastructure.agents.scenario import ScenarioSimulationRunner
 
@@ -47,6 +50,7 @@ async def list_scenario_presets(
 @router.post("/generate", status_code=status.HTTP_201_CREATED)
 async def generate_scenario(
     payload: GenerateScenarioRequest,
+    current_user: Annotated[CurrentUser, Depends(require_current_user)],
     scenario_simulation_runner: Annotated[
         ScenarioSimulationRunner, Depends(get_scenario_simulation_runner)
     ],
@@ -56,16 +60,27 @@ async def generate_scenario(
     gathering -> Causal chain -> Quantification -> Synthesis -> Compliance — for either a
     curated preset id or free-form text, and return the persisted `ScenarioResult`.
 
-    Not user-scoped (no `require_current_user`): a scenario run is shared/global research,
-    not per-user data — same visibility model as `POST /api/v1/signals/generate`. See
-    `ScenarioRepository`'s docstring for the full ownership rationale.
+    Authenticated: previously anonymous, which left a public URL fanning out to a six-node
+    LLM pipeline on every call. Auth also gives us the author to scope by — a PRESET run is
+    still global/shared research (`author_id` stays null), but a FREE-FORM run is stamped
+    with `current_user.id` so the user's own typed "what if" stays private to them (migration
+    0025) instead of appearing in everyone's "Mis escenarios".
     """
     locale = payload.locale or settings.default_locale
     try:
         result = await scenario_simulation_runner.execute(
-            preset_id=payload.preset_id, free_text=payload.free_text, locale=locale
+            preset_id=payload.preset_id,
+            free_text=payload.free_text,
+            locale=locale,
+            user_id=current_user.id,
         )
     except InvalidScenarioIntakeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except ScenarioOutOfScopeError as exc:
+        # The prompt has no market/financial dimension (e.g. a personal/relationship "what
+        # if"). Refuse with the model's localized reason instead of fabricating an analysis.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
@@ -88,22 +103,30 @@ async def generate_scenario(
 
 @router.get("")
 async def list_recent_scenarios(
+    current_user: Annotated[CurrentUser, Depends(require_current_user)],
     scenario_repository: Annotated[ScenarioRepository, Depends(get_scenario_repository)],
     limit: Annotated[int, Query(ge=1, le=_MAX_RECENT_LIMIT)] = _DEFAULT_RECENT_LIMIT,
 ) -> list[ScenarioResultResponse]:
-    """List the most recently generated scenario results, most-recent first."""
-    results = await scenario_repository.list_recent(limit)
+    """List the scenario results visible to the caller, most-recent first: every global/
+    shared run plus this user's own free-form runs. Scoped so one user's private "what if"
+    never surfaces in another's history (migration 0025)."""
+    results = await scenario_repository.list_recent(current_user.id, limit)
     return [ScenarioResultResponse.model_validate(result) for result in results]
 
 
 @router.get("/{scenario_id}")
 async def get_scenario(
     scenario_id: str,
+    current_user: Annotated[CurrentUser, Depends(require_current_user)],
     scenario_repository: Annotated[ScenarioRepository, Depends(get_scenario_repository)],
 ) -> ScenarioResultResponse:
-    """Retrieve a single persisted scenario result by id."""
+    """Retrieve a single persisted scenario result by id.
+
+    A free-form run is private to its author: 404 (not 403) for anyone else, so the endpoint
+    doesn't even leak that the id exists. Global runs (`author_id is null`) are readable by
+    any authenticated user, same as before."""
     result = await scenario_repository.get(scenario_id)
-    if result is None:
+    if result is None or (result.author_id is not None and result.author_id != current_user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario not found")
     return ScenarioResultResponse.model_validate(result)
 
@@ -113,19 +136,22 @@ async def arm_scenario_monitor(
     scenario_id: str,
     current_user: Annotated[CurrentUser, Depends(require_current_user)],
     scenario_repository: Annotated[ScenarioRepository, Depends(get_scenario_repository)],
+    notification_channel: Annotated[NotificationChannel, Depends(get_notification_channel)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ScenarioMonitorResponse:
     """ "Arm monitor" action on a saved `ScenarioResult` (issue #18) — turns it into a
     standing Watchdog rule that pings the requesting user over Telegram if the scenario
-    looks like it's materializing. Authenticated (unlike scenario generation itself):
-    arming ties to a specific user for delivery, see `ScenarioMonitor`'s docstring.
+    looks like it's materializing, and sends an immediate confirmation that the watch is on.
 
     Idempotent per `(scenario_id, user_id)` — re-arming (including re-arming a `matched`
     or `expired` monitor) resets it back to `armed` with a fresh window; see
     `ArmScenarioMonitor`.
     """
     use_case = ArmScenarioMonitor(
-        scenario_repository=scenario_repository, ttl_days=settings.scenario_monitor_ttl_days
+        scenario_repository=scenario_repository,
+        ttl_days=settings.scenario_monitor_ttl_days,
+        notification_channel=notification_channel,
+        frontend_base_url=settings.frontend_base_url,
     )
     monitor = await use_case.execute(scenario_id=scenario_id, user_id=current_user.id)
     if monitor is None:

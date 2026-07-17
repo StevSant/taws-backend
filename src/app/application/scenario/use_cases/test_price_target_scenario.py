@@ -20,6 +20,7 @@ from app.domain.scenario.entities import (
 def test_scenario_extraction_preserves_numeric_intent() -> None:
     extraction = ScenarioSpecExtraction.model_validate(
         {
+            "is_market_relevant": True,
             "entity": "Bitcoin",
             "event_type": "price_shock",
             "magnitude": "high",

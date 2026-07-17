@@ -30,6 +30,11 @@ class ScenarioResult:
     is part of the freshness cache key for PRESET runs — `(spec.preset_id, locale)`, issue
     #29. Free-form runs have no `preset_id` and are therefore never cached (a free-text
     scenario has no stable key to cache under); they still record their locale.
+
+    `author_id` scopes visibility (migration 0025): `None` means a global/shared run (every
+    preset run, plus chat-tool runs) that any authenticated user can list; a set `author_id`
+    means a FREE-FORM run private to the user who typed it, so their own words don't leak
+    into everyone else's "Mis escenarios". See `SupabaseScenarioRepository.list_recent`.
     """
 
     id: str
@@ -41,6 +46,7 @@ class ScenarioResult:
     recommended_actions: list[str]
     disclaimer: str
     locale: str = ""
+    author_id: str | None = None
     agent_contributions: list[ScenarioAgentContribution] = field(default_factory=list)
     consensus: ScenarioConsensus | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))

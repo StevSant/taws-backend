@@ -4,6 +4,7 @@ from app.domain.event_intelligence.entities import EnrichedEvent
 from app.domain.notification.entities import (
     Alert,
     BriefingReadyNotification,
+    ScenarioArmedNotification,
     ScenarioMatchNotification,
 )
 
@@ -49,6 +50,14 @@ class NotificationChannel(ABC):
         """Deliver one "scenario materializing" match notification. Same never-raise
         contract as `send`/`send_briefing_ready` — one user's missing/broken Telegram link
         must never break Watchdog's scheduled monitor evaluation pass for anyone else."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def send_scenario_armed(self, notification: ScenarioArmedNotification) -> None:
+        """Deliver one "you're now monitoring this scenario" confirmation, right after the
+        user arms it (issue #18). Same `user_id`-keyed routing and never-raise contract as
+        `send_scenario_match` — a missing/broken Telegram link must never turn the arm
+        request itself into a failure."""
         raise NotImplementedError
 
     @abstractmethod

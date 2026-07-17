@@ -1,3 +1,4 @@
+from dataclasses import replace
 from typing import Any
 
 from app.application.compliance import ComplianceViolationError
@@ -38,7 +39,11 @@ def build_compliance_node(scenario_repository: ScenarioRepository) -> Any:
                 source=f"scenario:{result.id}", violations=compliance_result.violations
             )
 
-        persisted = await scenario_repository.create(result)
+        # Stamp the run's author right before persistence — this is the single point where the
+        # result is written. `author_id` is `None` for preset/chat-tool runs (global) and the
+        # requesting user for a free-form REST run (private), threaded in via the initial state.
+        owned_result = replace(result, author_id=state.get("author_id"))
+        persisted = await scenario_repository.create(owned_result)
         return {"result": persisted}
 
     return _node

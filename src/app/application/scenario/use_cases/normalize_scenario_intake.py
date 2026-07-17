@@ -9,6 +9,7 @@ from app.application.scenario.extract_scenario_numeric_intent import (
 )
 from app.application.scenario.invalid_scenario_intake_error import InvalidScenarioIntakeError
 from app.application.scenario.resolve_affected_symbols import resolve_affected_symbols
+from app.application.scenario.scenario_out_of_scope_error import ScenarioOutOfScopeError
 from app.application.scenario.scenario_spec_extraction import ScenarioSpecExtraction
 from app.application.scenario.unknown_preset_error import UnknownPresetError
 from app.domain.agents.entities import Message, MessageRole
@@ -22,7 +23,16 @@ _INTAKE_SYSTEM_PROMPT_TEMPLATE = """You are the Scenario Lab Intake normalizer �
 intelligence agent that turns a free-form "what if" market scenario description into a \
 structured `ScenarioSpec`.
 
-Given a user's free-form scenario description, normalize it: identify the core entity/sector/ \
+First, decide scope: is this a MARKET, ECONOMIC, or FINANCIAL scenario at all — an event about \
+instruments, sectors, macro conditions, commodities, rates, companies, or policy that could \
+plausibly move markets? If it is NOT (for example personal life, relationships, sports, or \
+entertainment), set `is_market_relevant` to false and put ONE short, polite sentence in \
+`rejection_reason`, written in the user's language, saying the Scenario Lab only analyzes market \
+and economic scenarios — you may leave the remaining fields at trivial placeholder values, they \
+will be discarded. Only when it IS market-relevant, set `is_market_relevant` to true, leave \
+`rejection_reason` empty, and fill in the rest.
+
+Given a market-relevant scenario description, normalize it: identify the core entity/sector/ \
 theme, classify the kind of event, estimate its magnitude and time horizon, write a short title \
 and a one-paragraph grounded restatement, and list which tracked instruments it would plausibly \
 affect. Preserve explicit numeric intent: when the user names a target instrument price, extract \
@@ -38,6 +48,13 @@ invent a symbol that isn't in it):
 
 _FALLBACK_TITLE_MAX_LENGTH = 80
 _FALLBACK_EVENT_TYPE = "uncertain_event"
+
+# Shown only when the model flags a prompt as out of scope but returns an empty reason — a
+# rare belt-and-braces fallback. In the product's default locale (Spanish); the model's own
+# `rejection_reason` (written in the user's language) is preferred whenever present.
+_DEFAULT_OUT_OF_SCOPE_MESSAGE = (
+    "El Scenario Lab solo analiza escenarios de mercado, económicos o financieros."
+)
 
 
 class NormalizeScenarioIntake:
@@ -122,6 +139,14 @@ class NormalizeScenarioIntake:
             # crashing the pipeline — same broad-catch shape as `generate_signal.py`'s
             # `_classify_impact` guard.
             return _fallback_spec(free_text)
+
+        # Scope gate — raised OUTSIDE the try above on purpose: an out-of-scope prompt is a
+        # deliberate refusal to propagate to the caller (422 / chat reply), not an extraction
+        # failure to swallow into a fallback spec.
+        if not extraction.is_market_relevant:
+            raise ScenarioOutOfScopeError(
+                extraction.rejection_reason.strip() or _DEFAULT_OUT_OF_SCOPE_MESSAGE
+            )
 
         affected_symbols, affected_asset_classes = resolve_affected_symbols(
             extraction.affected_symbols, self._instrument_universe

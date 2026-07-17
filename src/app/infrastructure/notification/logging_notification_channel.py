@@ -4,6 +4,7 @@ from app.domain.event_intelligence.entities import EnrichedEvent
 from app.domain.notification.entities import (
     Alert,
     BriefingReadyNotification,
+    ScenarioArmedNotification,
     ScenarioMatchNotification,
 )
 from app.domain.notification.ports import NotificationChannel
@@ -47,6 +48,18 @@ class LoggingNotificationChannel(NotificationChannel):
             notification.scenario_id,
             notification.user_id,
             notification.match_reason,
+            notification.link_url,
+        )
+
+    async def send_scenario_armed(self, notification: ScenarioArmedNotification) -> None:
+        logger.info(
+            "scenario armed confirmation composed: monitor=%s scenario=%s user=%s title=%r "
+            "expires=%s link=%s",
+            notification.monitor_id,
+            notification.scenario_id,
+            notification.user_id,
+            notification.scenario_title,
+            notification.expires_at.isoformat(),
             notification.link_url,
         )
 

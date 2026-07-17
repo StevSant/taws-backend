@@ -3,7 +3,11 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from app.application.compliance import ComplianceViolationError
-from app.application.scenario import InvalidScenarioIntakeError, UnknownPresetError
+from app.application.scenario import (
+    InvalidScenarioIntakeError,
+    ScenarioOutOfScopeError,
+    UnknownPresetError,
+)
 from app.domain.scenario.entities import ScenarioResult
 from app.infrastructure.agents.scenario import ScenarioSimulationRunner
 from app.infrastructure.agents.tools.resolve_tool_locale import resolve_tool_locale
@@ -67,6 +71,8 @@ def build_run_scenario_simulation_tool(
                 locale=resolve_tool_locale(config, default_locale),
             )
         except InvalidScenarioIntakeError as exc:
+            return str(exc)
+        except ScenarioOutOfScopeError as exc:
             return str(exc)
         except UnknownPresetError as exc:
             return str(exc)

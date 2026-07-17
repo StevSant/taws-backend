@@ -12,6 +12,7 @@ this layer per `backend/CLAUDE.md`'s hexagonal rule).
 """
 
 from app.application.scenario.invalid_scenario_intake_error import InvalidScenarioIntakeError
+from app.application.scenario.scenario_out_of_scope_error import ScenarioOutOfScopeError
 from app.application.scenario.scenario_synthesis_unavailable_error import (
     ScenarioSynthesisUnavailableError,
 )
@@ -20,6 +21,7 @@ from app.application.scenario.unknown_preset_error import UnknownPresetError
 
 __all__ = [
     "InvalidScenarioIntakeError",
+    "ScenarioOutOfScopeError",
     "ScenarioSynthesisUnavailableError",
     "UnknownPresetError",
     "scenario_unavailable_message",

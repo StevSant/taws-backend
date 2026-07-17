@@ -21,9 +21,10 @@ class SupabaseScenarioRepository(ScenarioRepository):
     """ScenarioRepository adapter backed by Supabase Postgres via `supabase-py`.
 
     Written by the Scenario Simulation graph's Compliance step (issue #12). See migration
-    `0006_scenarios.py` for the `scenarios` schema and RLS policy — mirrors `signals`'
-    shape exactly (not user-owned; service-role writes bypass RLS, any authenticated user
-    can read).
+    `0006_scenarios.py` for the base `scenarios` schema and `0025_scenario_author.py` for the
+    `author_id` visibility split: service-role writes bypass RLS, and reads are scoped in
+    `list_recent`/the router — global rows (`author_id is null`: presets, chat-tool runs) are
+    readable by anyone, while a free-form run is private to its author.
 
     The `scenario_monitors` methods (issue #18) below back `ScenarioMonitor` persistence —
     see migration `0008_scenario_monitors.py` for that table's schema/RLS.
@@ -60,18 +61,39 @@ class SupabaseScenarioRepository(ScenarioRepository):
         )
         return scenario_from_row(response.data[0]) if response.data else None
 
-    async def list_recent(self, limit: int = _DEFAULT_RECENT_LIMIT) -> list[ScenarioResult]:
+    async def list_recent(
+        self, user_id: str, limit: int = _DEFAULT_RECENT_LIMIT
+    ) -> list[ScenarioResult]:
+        """Global rows (`author_id is null`) UNION this user's own free-form rows, most
+        recent first. Two parametric queries merged in-process rather than one `.or_()`
+        string: `user_id` comes from a JWT that is only signature-verified in production
+        (dev-fallback reads it unverified), so it must never be interpolated into a raw
+        PostgREST filter expression — `.is_`/`.eq` bind it as a value instead."""
         client = await self._clients.get()
-        response = await self._retry(
+        global_response = await self._retry(
             lambda: (
                 client.table(_SCENARIOS_TABLE)
                 .select("*")
+                .is_("author_id", "null")
                 .order("created_at", desc=True)
                 .limit(limit)
                 .execute()
             )
         )
-        return [scenario_from_row(row) for row in response.data]
+        own_response = await self._retry(
+            lambda: (
+                client.table(_SCENARIOS_TABLE)
+                .select("*")
+                .eq("author_id", user_id)
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+        )
+        results = [scenario_from_row(row) for row in [*global_response.data, *own_response.data]]
+        merged = {result.id: result for result in results}
+        ordered = sorted(merged.values(), key=lambda result: result.created_at, reverse=True)
+        return ordered[:limit]
 
     async def get_latest_for_preset(self, preset_id: str, locale: str) -> ScenarioResult | None:
         """Single newest row for `(preset_id, locale)` — covered by the composite index

@@ -25,6 +25,7 @@ class ScenarioGraphState(TypedDict):
     preset_id: NotRequired[str | None]
     free_text: NotRequired[str | None]
     locale: NotRequired[str]
+    author_id: NotRequired[str | None]
     spec: NotRequired[ScenarioSpec]
     context: NotRequired[ScenarioContext]
     consequence_chain: NotRequired[ConsequenceChain]

@@ -49,6 +49,7 @@ class ScenarioSimulationRunner:
         preset_id: str | None = None,
         free_text: str | None = None,
         locale: str,
+        user_id: str | None = None,
         force: bool = False,
     ) -> ScenarioResult:
         """Run one scenario end to end and return its persisted `ScenarioResult`.
@@ -65,6 +66,11 @@ class ScenarioSimulationRunner:
         key to cache under, and pretending otherwise would risk serving one user's answer to
         another user's different question. `force` bypasses the gate (internal use only, same
         rationale as `GenerateSignal.execute`).
+
+        `user_id` scopes a FREE-FORM run to its author (migration 0025): the resulting
+        `ScenarioResult.author_id` is set to it so the run stays private to that user. Preset
+        runs ignore it (they're global, `author_id = None`), as does the chat-tool path, which
+        passes no `user_id`.
 
         Raises `InvalidScenarioIntakeError` if neither `preset_id` nor `free_text` is
         given, `UnknownPresetError` for an unrecognized `preset_id`, and
@@ -85,8 +91,16 @@ class ScenarioSimulationRunner:
                 )
                 return cached
 
+        # Preset runs are global research (no owner); a free-form run belongs to the user
+        # who typed it. `user_id` is None on the chat-tool path, which keeps those global too.
+        author_id = None if preset_id else user_id
         final_state = await self._graph.ainvoke(
-            {"preset_id": preset_id, "free_text": free_text, "locale": locale}
+            {
+                "preset_id": preset_id,
+                "free_text": free_text,
+                "locale": locale,
+                "author_id": author_id,
+            }
         )
         result = final_state.get("result")
         if result is None:

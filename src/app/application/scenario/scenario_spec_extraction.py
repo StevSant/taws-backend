@@ -13,8 +13,30 @@ class ScenarioSpecExtraction(BaseModel):
     included in the Intake system prompt (see `NormalizeScenarioIntake`) — the model is
     instructed never to invent a symbol; `resolve_affected_symbols` re-validates this
     afterward regardless, dropping anything that isn't actually in the universe.
+
+    `is_market_relevant` is a scope gate decided FIRST (it's the first field so the model
+    commits to it before normalizing the rest): the Scenario Lab analyzes market/economic/
+    financial "what ifs", not personal, relationship, sports, or entertainment ones. When it
+    is false, `NormalizeScenarioIntake` refuses the run with `rejection_reason` rather than
+    fabricating a market analysis of an off-topic prompt.
     """
 
+    is_market_relevant: bool = Field(
+        description=(
+            "True only if this describes a MARKET, ECONOMIC, or FINANCIAL scenario — an "
+            "event about instruments, sectors, macro conditions, commodities, rates, "
+            "companies, or policy that could plausibly move markets. False for anything with "
+            "no market dimension (personal life, relationships, sports, entertainment, etc.)."
+        )
+    )
+    rejection_reason: str = Field(
+        default="",
+        description=(
+            "When is_market_relevant is false: one short, polite sentence, WRITTEN IN THE "
+            "USER'S LANGUAGE, telling them the Scenario Lab only analyzes market and economic "
+            "scenarios. Empty string when is_market_relevant is true."
+        ),
+    )
     entity: str = Field(
         description=(
             "The core instrument, sector, or theme this scenario is about, e.g. 'NVDA', "

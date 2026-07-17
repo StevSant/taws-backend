@@ -5,6 +5,7 @@ from app.domain.event_intelligence.entities import EnrichedEvent
 from app.domain.notification.entities import (
     Alert,
     BriefingReadyNotification,
+    ScenarioArmedNotification,
     ScenarioMatchNotification,
 )
 from app.domain.notification.ports import NotificationChannel
@@ -102,6 +103,21 @@ class TelegramNotificationChannel(NotificationChannel):
         except Exception:  # noqa: BLE001 — this port must never raise; see class docstring.
             logger.exception(
                 "Failed to deliver Telegram scenario-match notification %s for user %s",
+                notification.monitor_id,
+                notification.user_id,
+            )
+
+    async def send_scenario_armed(self, notification: ScenarioArmedNotification) -> None:
+        try:
+            chat_id = await self._resolve_chat_id_for_user(
+                notification.user_id, context=f"scenario armed {notification.monitor_id}"
+            )
+            if chat_id is None:
+                return
+            await self._messenger.send_text(chat_id, _format_scenario_armed(notification))
+        except Exception:  # noqa: BLE001 — this port must never raise; see class docstring.
+            logger.exception(
+                "Failed to deliver Telegram scenario-armed confirmation %s for user %s",
                 notification.monitor_id,
                 notification.user_id,
             )
@@ -219,4 +235,35 @@ def _format_scenario_match(notification: ScenarioMatchNotification) -> str:
         f"{notification.match_reason}\n\n"
         f"View scenario: {notification.link_url}\n\n"
         f"{NOT_PERSONALIZED_ADVICE_DISCLAIMER}"
+    )
+
+
+# Localized chrome for the arm confirmation. Keyed by primary language subtag so `es-MX`
+# resolves to Spanish; this is user-facing copy, so it follows the scenario's own locale
+# rather than being hardcoded English like the (pre-locale) formatters above.
+_SCENARIO_ARMED_CHROME = {
+    "es": {
+        "header": "Vigilancia activada",
+        "body": "Vigilaré este escenario y te avisaré si empieza a materializarse.",
+        "expires_label": "Vence",
+        "link_label": "Ver escenario",
+    },
+    "en": {
+        "header": "Monitoring activated",
+        "body": "I'll watch this scenario and alert you if it starts to materialize.",
+        "expires_label": "Expires",
+        "link_label": "View scenario",
+    },
+}
+
+
+def _format_scenario_armed(notification: ScenarioArmedNotification) -> str:
+    language = notification.locale.split("-", 1)[0].strip().lower()
+    chrome = _SCENARIO_ARMED_CHROME.get(language, _SCENARIO_ARMED_CHROME["en"])
+    return (
+        f"{chrome['header']} — {notification.scenario_title}\n\n"
+        f"{chrome['body']}\n\n"
+        f"{chrome['expires_label']}: {notification.expires_at:%Y-%m-%d}\n\n"
+        f"{chrome['link_label']}: {notification.link_url}\n\n"
+        f"{disclaimer_for_locale(notification.locale)}"
     )

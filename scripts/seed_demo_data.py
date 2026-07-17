@@ -212,8 +212,11 @@ class _InMemoryScenarioRepository(ScenarioRepository):
     async def get(self, scenario_id: str) -> ScenarioResult | None:
         return self._results.get(scenario_id)
 
-    async def list_recent(self, limit: int = 20) -> list[ScenarioResult]:
-        ordered = sorted(self._results.values(), key=lambda r: r.created_at, reverse=True)
+    async def list_recent(self, user_id: str, limit: int = 20) -> list[ScenarioResult]:
+        visible = [
+            r for r in self._results.values() if r.author_id is None or r.author_id == user_id
+        ]
+        ordered = sorted(visible, key=lambda r: r.created_at, reverse=True)
         return ordered[:limit]
 
     async def arm_monitor(self, monitor: ScenarioMonitor) -> ScenarioMonitor:
@@ -360,6 +363,8 @@ async def _generate_and_arm_demo_scenario(container: Container) -> None:
     arm_use_case = ArmScenarioMonitor(
         scenario_repository=container.get_scenario_repository(),
         ttl_days=settings.scenario_monitor_ttl_days,
+        notification_channel=container.get_notification_channel(),
+        frontend_base_url=settings.frontend_base_url,
     )
     monitor = await arm_use_case.execute(scenario_id=result.id, user_id=DEMO_USER_ID)
     if monitor is None:
