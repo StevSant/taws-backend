@@ -50,4 +50,3 @@ def test_summary_explains_rebased_values_as_returns_over_actual_window() -> None
     assert "2026-01-15 to 2026-07-15" in summary
     assert "BTC: 100.00 -> 67.00 (-33.00%)" in summary
     assert "BNB: 100.00 -> 59.00 (-41.00%)" in summary
-

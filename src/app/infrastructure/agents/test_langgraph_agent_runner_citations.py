@@ -14,22 +14,28 @@ class _FakeGraph:
         config: dict[str, Any],
         stream_mode: list[str],
     ) -> AsyncIterator[tuple[str, Any]]:
-        yield "messages", (
-            AIMessageChunk(content="hidden"),
-            {"tags": [INTERNAL_CONTRIBUTOR_TAG]},
+        yield (
+            "messages",
+            (
+                AIMessageChunk(content="hidden"),
+                {"tags": [INTERNAL_CONTRIBUTOR_TAG]},
+            ),
         )
         yield "messages", (AIMessageChunk(content="visible"), {"tags": []})
-        yield "custom", {
-            "kind": "citations",
-            "citations": [
-                {
-                    "kind": "quant",
-                    "claim": "Computed return",
-                    "metric": "return",
-                    "value": "-33%",
-                }
-            ],
-        }
+        yield (
+            "custom",
+            {
+                "kind": "citations",
+                "citations": [
+                    {
+                        "kind": "quant",
+                        "claim": "Computed return",
+                        "metric": "return",
+                        "value": "-33%",
+                    }
+                ],
+            },
+        )
 
 
 async def test_runner_hides_contributor_tokens_and_yields_citations() -> None:

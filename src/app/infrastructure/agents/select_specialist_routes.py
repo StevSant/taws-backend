@@ -19,6 +19,4 @@ def select_specialist_routes(state: SupervisorState) -> str | list[Send]:
         shared["locale"] = locale
     if grounding_context := state.get("grounding_context"):
         shared["grounding_context"] = grounding_context
-    return [
-        Send(_CONTRIBUTOR_NODE, {**shared, "contributor_route": route}) for route in routes
-    ]
+    return [Send(_CONTRIBUTOR_NODE, {**shared, "contributor_route": route}) for route in routes]

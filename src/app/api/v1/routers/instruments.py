@@ -61,9 +61,7 @@ async def list_instruments(
 
 @router.get("/enriched")
 async def list_enriched_instruments(
-    use_case: Annotated[
-        ListEnrichedInstruments, Depends(get_list_enriched_instruments_use_case)
-    ],
+    use_case: Annotated[ListEnrichedInstruments, Depends(get_list_enriched_instruments_use_case)],
     settings: Annotated[Settings, Depends(get_settings)],
     asset_class: Annotated[AssetClass | None, Query()] = None,
     search: Annotated[str | None, Query(max_length=_SEARCH_MAX_LEN)] = None,

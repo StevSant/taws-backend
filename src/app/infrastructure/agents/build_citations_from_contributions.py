@@ -14,9 +14,7 @@ def build_citations_from_contributions(
         for finding in contribution.findings:
             source = finding.source.model_dump(mode="json", exclude_none=True)
             key = (
-                str(source.get("url"))
-                if source.get("url")
-                else json.dumps(source, sort_keys=True)
+                str(source.get("url")) if source.get("url") else json.dumps(source, sort_keys=True)
             )
             if key in seen:
                 continue

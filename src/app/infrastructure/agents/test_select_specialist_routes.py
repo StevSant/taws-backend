@@ -9,9 +9,7 @@ from app.infrastructure.agents.supervisor_route import SupervisorRoute
 
 
 def test_single_route_keeps_direct_specialist_path() -> None:
-    selected = select_specialist_routes(
-        {"messages": [], "routes": ["quant"], "contributions": []}
-    )
+    selected = select_specialist_routes({"messages": [], "routes": ["quant"], "contributions": []})
 
     assert selected == "quant"
 
@@ -35,9 +33,7 @@ def test_multiple_routes_fan_out_to_contributors() -> None:
 
 def test_route_decision_rejects_duplicates_and_more_than_three_routes() -> None:
     with pytest.raises(ValidationError):
-        RouteDecision(
-            routes=[SupervisorRoute.QUANT, SupervisorRoute.QUANT], reason="duplicate"
-        )
+        RouteDecision(routes=[SupervisorRoute.QUANT, SupervisorRoute.QUANT], reason="duplicate")
 
     with pytest.raises(ValidationError):
         RouteDecision(

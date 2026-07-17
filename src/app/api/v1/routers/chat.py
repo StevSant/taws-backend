@@ -131,9 +131,7 @@ async def _get_owned_conversation(
     """
     conversation = await repository.get(conversation_id)
     if conversation is None or conversation.user_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
     return conversation
 
 
