@@ -14,6 +14,7 @@ from app.api.v1.dependencies.get_briefing_repository import get_briefing_reposit
 from app.api.v1.dependencies.get_chat_message_handler import get_chat_message_handler
 from app.api.v1.dependencies.get_coingecko_search_provider import get_coingecko_search_provider
 from app.api.v1.dependencies.get_conversation_repository import get_conversation_repository
+from app.api.v1.dependencies.get_create_note import get_create_note
 from app.api.v1.dependencies.get_email_sender import get_email_sender
 from app.api.v1.dependencies.get_embedding_provider import get_embedding_provider
 from app.api.v1.dependencies.get_event_callback_handler import get_event_callback_handler
@@ -54,6 +55,7 @@ from app.api.v1.dependencies.get_news_item_repository import get_news_item_repos
 from app.api.v1.dependencies.get_news_prefilter_policy import get_news_prefilter_policy
 from app.api.v1.dependencies.get_news_provider import get_news_provider
 from app.api.v1.dependencies.get_note_repository import get_note_repository
+from app.api.v1.dependencies.get_note_target_resolver import get_note_target_resolver
 from app.api.v1.dependencies.get_notification_channel import get_notification_channel
 from app.api.v1.dependencies.get_preset_scenario_rows import get_preset_scenario_rows
 from app.api.v1.dependencies.get_process_incoming_event_use_case import (
@@ -113,6 +115,7 @@ __all__ = [
     "get_coingecko_search_provider",
     "get_briefing_repository",
     "get_conversation_repository",
+    "get_create_note",
     "get_email_sender",
     "get_event_callback_handler",
     "get_event_repository",
@@ -165,6 +168,7 @@ __all__ = [
     "get_tts_provider",
     "get_vector_store",
     "get_note_repository",
+    "get_note_target_resolver",
     "get_watchlist_repository",
     "require_compliance",
     "require_current_user",

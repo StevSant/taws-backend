@@ -1,10 +1,11 @@
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.v1.dependencies import get_note_repository, require_current_user
-from app.api.v1.schemas import CurrentUser, NoteBodyRequest, NoteResponse
+from app.api.v1.dependencies import get_create_note, get_note_repository, require_current_user
+from app.api.v1.schemas import CurrentUser, NoteBodyRequest, NoteCreateRequest, NoteResponse
+from app.application.notes import NoteTargetNotFoundError
+from app.application.notes.use_cases import CreateNote
 from app.domain.notes.entities import Note
 from app.domain.notes.ports import NoteRepository
 
@@ -36,13 +37,26 @@ async def list_notes(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_note(
-    payload: NoteBodyRequest,
+    payload: NoteCreateRequest,
     user: Annotated[CurrentUser, Depends(require_current_user)],
-    repository: Annotated[NoteRepository, Depends(get_note_repository)],
+    use_case: Annotated[CreateNote, Depends(get_create_note)],
 ) -> NoteResponse:
-    """Create a new note owned by the authenticated user."""
-    note = Note(id=str(uuid.uuid4()), user_id=user.id, body=payload.body)
-    created = await repository.create(note)
+    """Create a note owned by the authenticated user, optionally about a target.
+
+    A target that does not exist is a 422, not a silently-unlinked note: the user asked to
+    annotate a specific thing, and quietly dropping the link would lie about what happened.
+    """
+    try:
+        created = await use_case.execute(
+            user_id=user.id,
+            body=payload.body,
+            target_kind=payload.target_kind,
+            target_id=payload.target_id,
+        )
+    except NoteTargetNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
     return NoteResponse.model_validate(created)
 
 

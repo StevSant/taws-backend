@@ -33,6 +33,7 @@ from app.application.instruments.use_cases import (
 from app.application.macro.use_cases import InterpretMacroEvent
 from app.application.market import NewsFeedRefresher
 from app.application.market.use_cases import IngestNews, ScoreNewsSentiment
+from app.application.notes.use_cases import CreateNote
 from app.application.profile.use_cases import ResolveLocale
 from app.application.quant.use_cases import ComputeEventStudy, ComputeMarketStats
 from app.application.scenario.use_cases import (
@@ -84,7 +85,7 @@ from app.domain.market.ports import (
     NewsItemRepository,
     NewsProvider,
 )
-from app.domain.notes.ports import NoteRepository
+from app.domain.notes.ports import NoteRepository, NoteTargetResolver
 from app.domain.notification.ports import EmailSender, NotificationChannel
 from app.domain.profile.ports import UserProfileRepository
 from app.domain.scenario.entities import ScenarioAgentId
@@ -167,6 +168,7 @@ from app.infrastructure.news import (
     RssNewsProvider,
     SecEdgarNewsProvider,
 )
+from app.infrastructure.notes import CompositeNoteTargetResolver
 from app.infrastructure.notification import (
     LoggingEmailSender,
     LoggingNotificationChannel,
@@ -260,6 +262,8 @@ class Container:
         self._watchlist_repository: WatchlistRepository | None = None
         self._reorder_watchlists_use_case: ReorderWatchlists | None = None
         self._note_repository: NoteRepository | None = None
+        self._note_target_resolver: NoteTargetResolver | None = None
+        self._create_note: CreateNote | None = None
         self._user_profile_repository: UserProfileRepository | None = None
         self._resolve_locale_use_case: ResolveLocale | None = None
         self._signal_repository: SignalRepository | None = None
@@ -641,6 +645,25 @@ class Container:
                     retry_backoff_base_seconds=self._settings.supabase_retry_backoff_base_seconds,
                 )
         return self._note_repository
+
+    def get_note_target_resolver(self) -> NoteTargetResolver:
+        """Return the resolver mapping a note's (kind, id) to its display label."""
+        if self._note_target_resolver is None:
+            self._note_target_resolver = CompositeNoteTargetResolver(
+                briefing_repository=self.get_briefing_repository(),
+                scenario_repository=self.get_scenario_repository(),
+                instrument_universe=self.get_instrument_universe(),
+            )
+        return self._note_target_resolver
+
+    def get_create_note(self) -> CreateNote:
+        """Return the use case creating notes, resolving any target server-side."""
+        if self._create_note is None:
+            self._create_note = CreateNote(
+                note_repository=self.get_note_repository(),
+                note_target_resolver=self.get_note_target_resolver(),
+            )
+        return self._create_note
 
     def get_user_profile_repository(self) -> UserProfileRepository:
         """Return the cached per-user UserProfileRepository (issue #67), Supabase-backed with

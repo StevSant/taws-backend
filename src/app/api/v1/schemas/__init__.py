@@ -59,7 +59,9 @@ from app.api.v1.schemas.news_facets_response import NewsFacetsResponse
 from app.api.v1.schemas.news_item_response import NewsItemResponse
 from app.api.v1.schemas.news_list_response import NewsListResponse
 from app.api.v1.schemas.note_body_request import NoteBodyRequest
+from app.api.v1.schemas.note_create_request import NoteCreateRequest
 from app.api.v1.schemas.note_response import NoteResponse
+from app.api.v1.schemas.note_target_response import NoteTargetResponse
 from app.api.v1.schemas.open_review_item_response import OpenReviewItemResponse
 from app.api.v1.schemas.realtime_session_response import RealtimeSessionResponse
 from app.api.v1.schemas.realtime_tool_request import RealtimeToolRequest
@@ -181,7 +183,9 @@ __all__ = [
     "UserProfileResponse",
     "VolatilityRegimeResponse",
     "NoteBodyRequest",
+    "NoteCreateRequest",
     "NoteResponse",
+    "NoteTargetResponse",
     "WatchlistCreateRequest",
     "WatchlistItemAddRequest",
     "WatchlistItemResponse",
