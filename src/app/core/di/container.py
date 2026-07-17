@@ -13,8 +13,10 @@ from app.application.charts.use_cases import (
     BuildDistributionChart,
     BuildDrawdownChart,
     BuildMacroChart,
+    BuildMoversChart,
     BuildPriceChart,
     BuildSentimentGauge,
+    BuildWatchlistHeatmap,
     RenderChart,
 )
 from app.application.chat.use_cases import GenerateConversationTitle
@@ -50,7 +52,7 @@ from app.application.signals.use_cases import (
     ForceAnalyzeNewsItem,
     GenerateSignal,
 )
-from app.application.telegram.use_cases import LinkTelegramAccount
+from app.application.telegram.use_cases import LinkTelegramAccount, ResolveTelegramChatIdentity
 from app.application.watchdog import AlertedSignalTracker
 from app.application.watchlist.use_cases import ReorderWatchlists
 from app.core.config import Settings, get_settings
@@ -66,6 +68,7 @@ from app.domain.agents.ports import (
 )
 from app.domain.briefing.ports import BriefingDocumentRenderer, BriefingRepository
 from app.domain.charts.entities import ChartConfig
+from app.domain.charts.ports import ChartImageRenderer
 from app.domain.chat.ports import ConversationRepository
 from app.domain.event_intelligence.ports import (
     EventAnalyzerPort,
@@ -125,12 +128,15 @@ from app.infrastructure.agents.tools import (
     build_render_distribution_chart_tool,
     build_render_drawdown_chart_tool,
     build_render_macro_chart_tool,
+    build_render_market_movers_chart_tool,
     build_render_price_chart_tool,
     build_render_sentiment_gauge_tool,
+    build_render_watchlist_heatmap_tool,
     build_scenario_tools,
     build_sentiment_tools,
 )
 from app.infrastructure.briefing import ReportLabBriefingPdfRenderer
+from app.infrastructure.charts import ChartImageStyle, MatplotlibChartImageRenderer
 from app.infrastructure.embeddings import OpenAIEmbeddings
 from app.infrastructure.event_intelligence.gemini import GeminiEventAnalyzer
 from app.infrastructure.event_intelligence.providers import MarketNewsEventProvider
@@ -295,6 +301,8 @@ class Container:
         self._telegram_link_token_repository: TelegramLinkTokenRepository | None = None
         self._telegram_messenger: TelegramMessenger | None = None
         self._link_telegram_account_use_case: LinkTelegramAccount | None = None
+        self._resolve_telegram_chat_identity_use_case: ResolveTelegramChatIdentity | None = None
+        self._chart_image_renderer: ChartImageRenderer | None = None
         self._scenario_repository: ScenarioRepository | None = None
         self._scenario_simulation_runner: ScenarioSimulationRunner | None = None
         self._briefing_command_handler: BriefingCommandHandler | None = None
@@ -321,6 +329,8 @@ class Container:
         self._build_distribution_chart_use_case: BuildDistributionChart | None = None
         self._build_macro_chart_use_case: BuildMacroChart | None = None
         self._build_sentiment_gauge_use_case: BuildSentimentGauge | None = None
+        self._build_movers_chart_use_case: BuildMoversChart | None = None
+        self._build_watchlist_heatmap_use_case: BuildWatchlistHeatmap | None = None
         self._render_chart_use_case: RenderChart | None = None
 
     def get_fast_llm_provider(self) -> LLMProvider:
@@ -927,16 +937,36 @@ class Container:
             messenger=messenger,
         )
 
+    def get_resolve_telegram_chat_identity_use_case(self) -> ResolveTelegramChatIdentity:
+        """Return the cached `ResolveTelegramChatIdentity` use case (issue #2).
+
+        Maps an inbound Telegram `chat_id` to the linked `(user_id, preferred_locale)`, so the
+        chat handler can stream as the linked user instead of anonymously. Depends only on
+        cached repositories plus a settings value, so caching one instance is safe.
+        """
+        if self._resolve_telegram_chat_identity_use_case is None:
+            self._resolve_telegram_chat_identity_use_case = ResolveTelegramChatIdentity(
+                link_repository=self.get_telegram_link_repository(),
+                user_profile_repository=self.get_user_profile_repository(),
+                default_locale=self._settings.default_locale,
+            )
+        return self._resolve_telegram_chat_identity_use_case
+
     def build_chat_message_handler(self, messenger: TelegramMessenger) -> ChatMessageHandler:
         """A conversational handler replying through `messenger`. See the note above.
 
-        Telegram has no per-user language preference of its own, so the handler answers in
-        `Settings.default_locale` (issue #67) rather than defaulting to the personas' English.
+        Resolves the linked `(user_id, locale)` for the chat (issue #2) so per-user tools work
+        over Telegram and a linked user is answered in their own `preferred_locale`; an
+        unlinked chat falls back to `Settings.default_locale`. Charts the agent produces are
+        rendered to PNGs by the injected `ChartImageRenderer` and sent via `sendPhoto`
+        (issue #1).
         """
         return ChatMessageHandler(
             agent_runner=self.get_agent_runner(),
             messenger=messenger,
             default_locale=self._settings.default_locale,
+            resolve_identity=self.get_resolve_telegram_chat_identity_use_case(),
+            chart_image_renderer=self.get_chart_image_renderer(),
         )
 
     def get_briefing_command_handler(self) -> BriefingCommandHandler | None:
@@ -1283,6 +1313,8 @@ class Container:
                 market_data_provider=self.get_market_data_provider(),
                 instrument_universe=self.get_instrument_universe(),
                 chart_config=self.get_chart_config(),
+                market_source_crypto=self._settings.market_source_crypto,
+                market_source_equity=self._settings.market_source_equity,
             )
         return self._build_price_chart_use_case
 
@@ -1293,6 +1325,8 @@ class Container:
                 market_data_provider=self.get_market_data_provider(),
                 instrument_universe=self.get_instrument_universe(),
                 chart_config=self.get_chart_config(),
+                market_source_crypto=self._settings.market_source_crypto,
+                market_source_equity=self._settings.market_source_equity,
             )
         return self._build_comparison_chart_use_case
 
@@ -1303,6 +1337,8 @@ class Container:
                 market_data_provider=self.get_market_data_provider(),
                 instrument_universe=self.get_instrument_universe(),
                 chart_config=self.get_chart_config(),
+                market_source_crypto=self._settings.market_source_crypto,
+                market_source_equity=self._settings.market_source_equity,
             )
         return self._build_drawdown_chart_use_case
 
@@ -1313,6 +1349,8 @@ class Container:
                 market_data_provider=self.get_market_data_provider(),
                 instrument_universe=self.get_instrument_universe(),
                 chart_config=self.get_chart_config(),
+                market_source_crypto=self._settings.market_source_crypto,
+                market_source_equity=self._settings.market_source_equity,
             )
         return self._build_distribution_chart_use_case
 
@@ -1334,6 +1372,30 @@ class Container:
             )
         return self._build_sentiment_gauge_use_case
 
+    def get_build_movers_chart_use_case(self) -> BuildMoversChart:
+        """Return the cached BuildMoversChart use case (top-movers bar chart, issue #3)."""
+        if self._build_movers_chart_use_case is None:
+            self._build_movers_chart_use_case = BuildMoversChart(
+                list_enriched_instruments=self.get_list_enriched_instruments_use_case(),
+                market_source_crypto=self._settings.market_source_crypto,
+                market_source_equity=self._settings.market_source_equity,
+            )
+        return self._build_movers_chart_use_case
+
+    def get_build_watchlist_heatmap_use_case(self) -> BuildWatchlistHeatmap:
+        """Return the cached BuildWatchlistHeatmap use case (per-user heatmap, issue #3)."""
+        if self._build_watchlist_heatmap_use_case is None:
+            self._build_watchlist_heatmap_use_case = BuildWatchlistHeatmap(
+                watchlist_repository=self.get_watchlist_repository(),
+                compute_market_stats=ComputeMarketStats(
+                    market_data_provider=self.get_market_data_provider(),
+                    instrument_universe=self.get_instrument_universe(),
+                ),
+                market_source_crypto=self._settings.market_source_crypto,
+                market_source_equity=self._settings.market_source_equity,
+            )
+        return self._build_watchlist_heatmap_use_case
+
     def get_render_chart_use_case(self) -> RenderChart:
         """Return the cached RenderChart dispatcher (timeframe-toggle endpoint)."""
         if self._render_chart_use_case is None:
@@ -1346,6 +1408,30 @@ class Container:
                 build_sentiment_gauge=self.get_build_sentiment_gauge_use_case(),
             )
         return self._render_chart_use_case
+
+    def get_chart_image_renderer(self) -> ChartImageRenderer:
+        """Return the cached matplotlib `ChartImageRenderer` (server-side ChartSpec -> PNG).
+
+        The single adapter that rasterizes a `ChartSpec` for image-only channels (Telegram
+        `sendPhoto` today, email/alert snapshots later). Built with a `ChartImageStyle`
+        assembled entirely from `Settings`, so no geometry or color is hardcoded in the
+        adapter. Injected into the Telegram chat handler (`build_chat_message_handler`).
+        """
+        if self._chart_image_renderer is None:
+            self._chart_image_renderer = MatplotlibChartImageRenderer(
+                style=ChartImageStyle(
+                    width_px=self._settings.chart_image_width_px,
+                    height_px=self._settings.chart_image_height_px,
+                    dpi=self._settings.chart_image_dpi,
+                    background_color=self._settings.chart_image_background_color,
+                    text_color=self._settings.chart_image_text_color,
+                    grid_color=self._settings.chart_image_grid_color,
+                    accent_color=self._settings.chart_image_accent_color,
+                    up_color=self._settings.chart_image_up_color,
+                    down_color=self._settings.chart_image_down_color,
+                )
+            )
+        return self._chart_image_renderer
 
     def get_generate_consequence_chain_use_case(self) -> GenerateConsequenceChain:
         """Return the cached Consequence Chain Analyst use case (issue #8).
@@ -2033,12 +2119,28 @@ class Container:
                         build_drawdown_chart=self.get_build_drawdown_chart_use_case(),
                         chart_config=config,
                     ),
+                    # The analyst also owns the market-overview answer, so it gets the movers
+                    # bar chart too (mirrors get_market_movers being bound to both specialists).
+                    build_render_market_movers_chart_tool(
+                        build_movers_chart=self.get_build_movers_chart_use_case(),
+                        default_locale=self._settings.default_locale,
+                    ),
                 ]
                 advisor_tools = advisor_tools + [
                     build_render_comparison_chart_tool(
                         build_comparison_chart=self.get_build_comparison_chart_use_case(),
                         chart_config=config,
-                    )
+                    ),
+                    # Whole-universe movers bar + the caller's own watchlist heatmap (issue #3):
+                    # the advisor is the catch-all where "what moved today?" / "how's my
+                    # watchlist?" land, mirroring where get_market_movers / get_watchlist bind.
+                    build_render_market_movers_chart_tool(
+                        build_movers_chart=self.get_build_movers_chart_use_case(),
+                        default_locale=self._settings.default_locale,
+                    ),
+                    build_render_watchlist_heatmap_tool(
+                        build_watchlist_heatmap=self.get_build_watchlist_heatmap_use_case(),
+                    ),
                 ]
                 consequence_tools = consequence_tools + [
                     build_render_price_chart_tool(

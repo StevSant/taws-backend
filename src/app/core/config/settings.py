@@ -491,6 +491,25 @@ class Settings(BaseSettings):
     }
     # Downsample cap: max points/bars shipped to the browser per series (perf guard).
     chart_max_points: int = 500
+    # Real data-source vendor labels stamped into `ChartMeta.source` (never the old generic
+    # "market data"): crypto is priced by CoinGecko, every other asset class by Yahoo Finance
+    # — the exact split `RoutingMarketDataProvider` routes on. Rendered as `Source: {…}`.
+    market_source_crypto: str = "CoinGecko"
+    market_source_equity: str = "Yahoo Finance"
+
+    # --- Server-side chart image rendering (Telegram sendPhoto, behind ChartImageRenderer) ---
+    # PNG canvas geometry for the matplotlib renderer. figsize(inches) = px / dpi.
+    chart_image_width_px: int = 1000
+    chart_image_height_px: int = 600
+    chart_image_dpi: int = 100
+    # On-brand dark/gold theme for the rendered PNGs. All colors come from here so the
+    # matplotlib adapter hardcodes none of them.
+    chart_image_background_color: str = "#0e1116"
+    chart_image_text_color: str = "#e6e6e6"
+    chart_image_grid_color: str = "#2a2f3a"
+    chart_image_accent_color: str = "#d4af37"
+    chart_image_up_color: str = "#16c784"
+    chart_image_down_color: str = "#ea3943"
 
     # --- Track-5 seed data paths (packaged with the app) ---
     # These seed the instrument UNIVERSE and the scenario PRESETS — configuration, i.e. which

@@ -42,6 +42,26 @@ class TelegramMessenger(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def send_photo(
+        self,
+        chat_id: str,
+        image: bytes,
+        caption: str | None = None,
+        *,
+        parse_mode: str | None = None,
+    ) -> None:
+        """Send a PNG `image` to `chat_id` with an optional `caption` (`sendPhoto`).
+
+        Added for server-side chart images (issue #1): the Telegram chat handler renders a
+        `ChartSpec` to PNG bytes and delivers it here. Telegram caps a photo caption at 1024
+        characters, so callers must truncate `caption` before calling (see
+        `truncate_telegram_caption`). Like `send_text`, this MAY raise on delivery failure —
+        callers with a no-crash requirement catch and log, so one failed chart never breaks
+        the text reply that already went out.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def answer_callback(self, callback_query_id: str, text: str | None = None) -> None:
         """Acknowledge a tapped inline button (`answerCallbackQuery`).
 

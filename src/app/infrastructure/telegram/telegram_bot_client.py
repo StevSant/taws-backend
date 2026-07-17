@@ -36,6 +36,21 @@ class TelegramBotClient(TelegramMessenger):
             reply_markup=_to_markup(buttons),
         )
 
+    async def send_photo(
+        self,
+        chat_id: str,
+        image: bytes,
+        caption: str | None = None,
+        *,
+        parse_mode: str | None = None,
+    ) -> None:
+        await self._bot.send_photo(
+            chat_id=int(chat_id),
+            photo=image,
+            caption=caption,
+            parse_mode=parse_mode,
+        )
+
     async def answer_callback(self, callback_query_id: str, text: str | None = None) -> None:
         await self._bot.answer_callback_query(callback_query_id=callback_query_id, text=text)
 

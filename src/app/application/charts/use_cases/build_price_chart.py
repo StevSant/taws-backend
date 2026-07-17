@@ -2,6 +2,7 @@ from datetime import UTC, date, datetime
 
 from app.application.charts.downsample_candles import downsample_candles
 from app.application.charts.parse_date_range import parse_date_range
+from app.application.charts.resolve_market_source import resolve_market_source
 from app.application.charts.slice_candles_by_date_range import slice_candles_by_date_range
 from app.application.quant.unknown_instrument_error import UnknownInstrumentError
 from app.domain.charts.entities import (
@@ -37,10 +38,14 @@ class BuildPriceChart:
         market_data_provider: MarketDataProvider,
         instrument_universe: InstrumentUniverse,
         chart_config: ChartConfig,
+        market_source_crypto: str,
+        market_source_equity: str,
     ) -> None:
         self._market_data_provider = market_data_provider
         self._instrument_universe = instrument_universe
         self._chart_config = chart_config
+        self._market_source_crypto = market_source_crypto
+        self._market_source_equity = market_source_equity
 
     async def execute(
         self,
@@ -94,7 +99,11 @@ class BuildPriceChart:
             ),
             meta=ChartMeta(
                 title=_chart_title(instrument.symbol, timeframe, applied_from, applied_to),
-                source="market data",
+                source=resolve_market_source(
+                    instrument.asset_class,
+                    self._market_source_crypto,
+                    self._market_source_equity,
+                ),
                 symbol=instrument.symbol,
                 timeframe=timeframe,
                 timeframes=list(self._chart_config.available_timeframes),

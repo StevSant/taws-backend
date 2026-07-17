@@ -12,3 +12,5 @@ class ChartType(StrEnum):
     DISTRIBUTION = "distribution"
     DRAWDOWN = "drawdown"
     GAUGE = "gauge"
+    BAR = "bar"
+    HEATMAP = "heatmap"

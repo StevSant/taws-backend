@@ -10,7 +10,7 @@ def serialize_chart_spec(spec: ChartSpec) -> dict[str, Any]:
     over the SSE custom channel) and `POST /charts/render` (which returns it) call this,
     so backend and frontend never drift. Kept as a plain function (not `dataclasses.asdict`)
     so the key casing (`xAxis`/`yAxis`) and the points-vs-bars split are explicit."""
-    return {
+    payload: dict[str, Any] = {
         "type": spec.type.value,
         "series": [_serialize_series(series) for series in spec.series],
         "xAxis": {
@@ -39,6 +39,11 @@ def serialize_chart_spec(spec: ChartSpec) -> dict[str, Any]:
             },
         },
     }
+    # `cells` is heatmap-only: emit it (camelCase, `[{label, value}]`) only when present, so
+    # every other chart type's wire dict is byte-for-byte unchanged.
+    if spec.cells is not None:
+        payload["cells"] = [{"label": cell.label, "value": cell.value} for cell in spec.cells]
+    return payload
 
 
 def _serialize_series(series: ChartSeries) -> dict[str, Any]:

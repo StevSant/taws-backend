@@ -123,6 +123,8 @@ async def test_price_chart_tool_reports_unavailable_and_emits_no_chart() -> None
             market_data_provider=_routing(_ExplodingProvider()),
             instrument_universe=_StubUniverse(),
             chart_config=_CHART_CONFIG,
+            market_source_crypto="CoinGecko",
+            market_source_equity="Yahoo Finance",
         ),
         _CHART_CONFIG,
     )

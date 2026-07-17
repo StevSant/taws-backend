@@ -1,4 +1,5 @@
 from app.application.charts.downsample_candles import downsample_candles
+from app.application.charts.resolve_market_source import resolve_market_source
 from app.application.quant.unknown_instrument_error import UnknownInstrumentError
 from app.domain.charts.entities import (
     ChartAxis,
@@ -23,10 +24,14 @@ class BuildDrawdownChart:
         market_data_provider: MarketDataProvider,
         instrument_universe: InstrumentUniverse,
         chart_config: ChartConfig,
+        market_source_crypto: str,
+        market_source_equity: str,
     ) -> None:
         self._market_data_provider = market_data_provider
         self._instrument_universe = instrument_universe
         self._chart_config = chart_config
+        self._market_source_crypto = market_source_crypto
+        self._market_source_equity = market_source_equity
 
     async def execute(self, instrument_symbol: str, timeframe: str) -> ChartSpec:
         instrument = self._instrument_universe.by_symbol(instrument_symbol)
@@ -51,7 +56,11 @@ class BuildDrawdownChart:
             y_axis=ChartAxis(label="Drawdown", type="value", format="percent"),
             meta=ChartMeta(
                 title=f"{instrument.symbol} drawdown — {timeframe.upper()}",
-                source="market data",
+                source=resolve_market_source(
+                    instrument.asset_class,
+                    self._market_source_crypto,
+                    self._market_source_equity,
+                ),
                 symbol=instrument.symbol,
                 timeframe=timeframe,
                 timeframes=list(self._chart_config.available_timeframes),

@@ -53,9 +53,15 @@ from app.infrastructure.agents.tools.render_drawdown_chart_tool import (
     build_render_drawdown_chart_tool,
 )
 from app.infrastructure.agents.tools.render_macro_chart_tool import build_render_macro_chart_tool
+from app.infrastructure.agents.tools.render_market_movers_chart_tool import (
+    build_render_market_movers_chart_tool,
+)
 from app.infrastructure.agents.tools.render_price_chart_tool import build_render_price_chart_tool
 from app.infrastructure.agents.tools.render_sentiment_gauge_tool import (
     build_render_sentiment_gauge_tool,
+)
+from app.infrastructure.agents.tools.render_watchlist_heatmap_tool import (
+    build_render_watchlist_heatmap_tool,
 )
 from app.infrastructure.agents.tools.resolve_tool_locale import resolve_tool_locale
 from app.infrastructure.agents.tools.resolve_tool_user_id import resolve_tool_user_id
@@ -88,8 +94,10 @@ __all__ = [
     "build_render_drawdown_chart_tool",
     "market_data_unavailable_message",
     "build_render_macro_chart_tool",
+    "build_render_market_movers_chart_tool",
     "build_render_price_chart_tool",
     "build_render_sentiment_gauge_tool",
+    "build_render_watchlist_heatmap_tool",
     "build_run_scenario_simulation_tool",
     "build_scenario_tools",
     "build_sentiment_tools",

@@ -13,3 +13,5 @@ class ChartRequestKind(StrEnum):
     DRAWDOWN = "drawdown"
     DISTRIBUTION = "distribution"
     SENTIMENT_GAUGE = "sentiment_gauge"
+    MARKET_MOVERS = "market_movers"
+    WATCHLIST_HEATMAP = "watchlist_heatmap"

@@ -76,6 +76,16 @@ class RecordingMessenger(TelegramMessenger):
         self.chat_ids.append(chat_id)
         self.buttons.append(buttons)
 
+    async def send_photo(
+        self,
+        chat_id: str,
+        image: bytes,
+        caption: str | None = None,
+        *,
+        parse_mode: str | None = None,
+    ) -> None:
+        self.chat_ids.append(chat_id)
+
     async def answer_callback(self, callback_query_id: str, text: str | None = None) -> None:
         self.answered.append(callback_query_id)
 
