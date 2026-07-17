@@ -3,7 +3,7 @@ from functools import partial
 
 from app.domain.notes.entities import Note
 from app.domain.notes.ports import NoteRepository
-from app.infrastructure.persistence.note_row_mapper import note_from_row
+from app.infrastructure.persistence.note_row_mapper import note_from_row, note_target_columns
 from app.infrastructure.persistence.supabase_client_cache import SupabaseClientCache
 from app.infrastructure.persistence.with_supabase_retry import with_supabase_retry
 
@@ -65,6 +65,7 @@ class SupabaseNoteRepository(NoteRepository):
                         "body": note.body,
                         "created_at": note.created_at.isoformat(),
                         "updated_at": note.updated_at.isoformat(),
+                        **note_target_columns(note.target),
                     }
                 )
                 .execute()
